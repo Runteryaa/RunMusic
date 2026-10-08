@@ -18,6 +18,7 @@ import TrackPlayer from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { TrackArtwork } from '../components/TrackArtwork';
 
 type SortOption =
   | 'name_asc'
@@ -191,6 +192,7 @@ export default function LibraryScreen() {
         url: asset.uri,
         title: cleanTitle(asset.filename),
         artist: 'Local Audio',
+        artwork: asset.albumId ? `content://media/external/audio/albumart/${asset.albumId}` : undefined,
       }));
 
       await TrackPlayer.add(tracks);
@@ -211,24 +213,28 @@ export default function LibraryScreen() {
     setIsSearchOpen(false);
   };
 
-  const renderItem = ({ item }: { item: MediaLibrary.Asset }) => (
-    <TouchableOpacity style={styles.trackItem} onPress={() => playTrack(item)}>
-      <View style={styles.iconContainer}>
-        <Ionicons name="musical-note" size={20} color="#3b82f6" />
-      </View>
-      <View style={styles.trackInfo}>
-        <Text style={styles.trackTitle} numberOfLines={1}>
-          {cleanTitle(item.filename)}
-        </Text>
-        <Text style={styles.trackDuration}>
-          {Math.floor(item.duration / 60)}:
-          {Math.floor(item.duration % 60)
-            .toString()
-            .padStart(2, '0')}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
+  const renderItem = ({ item }: { item: MediaLibrary.Asset }) => {
+    const artworkUri = item.albumId ? `content://media/external/audio/albumart/${item.albumId}` : undefined;
+
+    return (
+      <TouchableOpacity style={styles.trackItem} onPress={() => playTrack(item)}>
+        <View style={{ marginRight: 12 }}>
+          <TrackArtwork uri={artworkUri} size={42} borderRadius={10} iconSize={20} />
+        </View>
+        <View style={styles.trackInfo}>
+          <Text style={styles.trackTitle} numberOfLines={1}>
+            {cleanTitle(item.filename)}
+          </Text>
+          <Text style={styles.trackDuration}>
+            {Math.floor(item.duration / 60)}:
+            {Math.floor(item.duration % 60)
+              .toString()
+              .padStart(2, '0')}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.container}>

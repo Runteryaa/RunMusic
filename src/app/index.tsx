@@ -18,6 +18,7 @@ import TrackPlayer, {
   Track,
 } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
+import { TrackArtwork } from '../components/TrackArtwork';
 
 export default function PlayerScreen() {
   const activeTrack = useActiveTrack();
@@ -192,11 +193,12 @@ export default function PlayerScreen() {
         style={[styles.queueItemRow, isCurrent && styles.queueItemRowActive]}
         onPress={() => handlePlayFromQueue(index)}>
         <View style={styles.queueItemLeft}>
-          <View style={[styles.queueItemIconBox, isCurrent && styles.queueItemIconBoxActive]}>
-            <Ionicons
-              name={isCurrent ? 'volume-high' : 'musical-note'}
-              size={18}
-              color={isCurrent ? '#3b82f6' : '#71717a'}
+          <View style={{ marginRight: 12 }}>
+            <TrackArtwork
+              uri={item.artwork}
+              size={40}
+              borderRadius={8}
+              iconSize={18}
             />
           </View>
           <View style={styles.queueItemInfo}>
@@ -225,11 +227,15 @@ export default function PlayerScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Minimalist Art Card */}
+      {/* Album Art Card */}
       <View style={styles.albumArtContainer}>
-        <View style={styles.albumArtBox}>
-          <Ionicons name="musical-notes" size={90} color="#3b82f6" />
-        </View>
+        <TrackArtwork
+          uri={activeTrack?.artwork}
+          size={250}
+          borderRadius={24}
+          iconSize={90}
+          shadow={true}
+        />
       </View>
 
       {/* Track Info */}
