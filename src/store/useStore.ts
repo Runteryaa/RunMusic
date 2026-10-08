@@ -14,7 +14,15 @@ export interface FilterSettings {
 interface AppState {
   settings: FilterSettings;
   updateSettings: (settings: Partial<FilterSettings>) => void;
-  
+
+  allAssets: MediaLibrary.Asset[];
+  setAllAssets: (assets: MediaLibrary.Asset[]) => void;
+
+  hiddenTrackIds: string[];
+  hideTrack: (id: string) => void;
+  unhideTrack: (id: string) => void;
+  unhideAllTracks: () => void;
+
   library: MediaLibrary.Asset[];
   setLibrary: (assets: MediaLibrary.Asset[]) => void;
   isScanning: boolean;
@@ -37,9 +45,45 @@ export const useStore = create<AppState>()(
       },
       updateSettings: (newSettings) =>
         set((state) => ({ settings: { ...state.settings, ...newSettings } })),
-      
+
+      allAssets: [],
+      setAllAssets: (assets) =>
+        set((state) => ({
+          allAssets: assets,
+          library: assets.filter((a) => !state.hiddenTrackIds.includes(a.id)),
+        })),
+
+      hiddenTrackIds: [],
+      hideTrack: (id) =>
+        set((state) => {
+          const hiddenTrackIds = state.hiddenTrackIds.includes(id)
+            ? state.hiddenTrackIds
+            : [...state.hiddenTrackIds, id];
+          return {
+            hiddenTrackIds,
+            library: state.allAssets.filter((a) => !hiddenTrackIds.includes(a.id)),
+          };
+        }),
+      unhideTrack: (id) =>
+        set((state) => {
+          const hiddenTrackIds = state.hiddenTrackIds.filter((x) => x !== id);
+          return {
+            hiddenTrackIds,
+            library: state.allAssets.filter((a) => !hiddenTrackIds.includes(a.id)),
+          };
+        }),
+      unhideAllTracks: () =>
+        set((state) => ({
+          hiddenTrackIds: [],
+          library: state.allAssets,
+        })),
+
       library: [],
-      setLibrary: (library) => set({ library }),
+      setLibrary: (assets) =>
+        set((state) => ({
+          allAssets: assets,
+          library: assets.filter((a) => !state.hiddenTrackIds.includes(a.id)),
+        })),
       isScanning: false,
       setIsScanning: (isScanning) => set({ isScanning }),
 
@@ -55,7 +99,14 @@ export const useStore = create<AppState>()(
         settings: state.settings,
         isShuffle: state.isShuffle,
         repeatMode: state.repeatMode,
+        hiddenTrackIds: state.hiddenTrackIds,
+        allAssets: state.allAssets,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (state && state.allAssets) {
+          state.library = state.allAssets.filter((a) => !(state.hiddenTrackIds || []).includes(a.id));
+        }
+      },
     }
   )
 );

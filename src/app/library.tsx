@@ -44,7 +44,7 @@ const SORT_OPTIONS: SortItem[] = [
 ];
 
 export default function LibraryScreen() {
-  const { library, setLibrary, isScanning, setIsScanning, settings } = useStore();
+  const { library, setLibrary, isScanning, setIsScanning, settings, hideTrack } = useStore();
   const [statusMessage, setStatusMessage] = useState<string>('');
   const router = useRouter();
 
@@ -56,7 +56,32 @@ export default function LibraryScreen() {
   const [sortOption, setSortOption] = useState<SortOption>('name_asc');
   const [isSortModalOpen, setIsSortModalOpen] = useState(false);
 
+  // Track action menu state
+  const [selectedTrackForMenu, setSelectedTrackForMenu] = useState<MediaLibrary.Asset | null>(null);
+
   const cleanTitle = (raw: string) => raw.replace(/\.[^/.]+$/, '');
+
+  const handleHideTrack = async (asset: MediaLibrary.Asset) => {
+    setSelectedTrackForMenu(null);
+    try {
+      const currentActive = await TrackPlayer.getActiveTrack();
+      if (currentActive && (currentActive.id === asset.id || currentActive.url === asset.uri)) {
+        try {
+          await TrackPlayer.skipToNext();
+        } catch {
+          await TrackPlayer.pause();
+        }
+      }
+      const queue = await TrackPlayer.getQueue();
+      const trackIdx = queue.findIndex((t) => t.id === asset.id || t.url === asset.uri);
+      if (trackIdx !== -1) {
+        await TrackPlayer.remove(trackIdx);
+      }
+    } catch (e) {
+      console.warn('TrackPlayer update on hide failed', e);
+    }
+    hideTrack(asset.id);
+  };
 
   const scanMedia = useCallback(async () => {
     setIsScanning(true);
@@ -217,22 +242,33 @@ export default function LibraryScreen() {
     const artworkUri = item.albumId ? `content://media/external/audio/albumart/${item.albumId}` : undefined;
 
     return (
-      <TouchableOpacity style={styles.trackItem} onPress={() => playTrack(item)}>
-        <View style={{ marginRight: 12 }}>
-          <TrackArtwork uri={artworkUri} size={42} borderRadius={10} iconSize={20} />
-        </View>
-        <View style={styles.trackInfo}>
-          <Text style={styles.trackTitle} numberOfLines={1}>
-            {cleanTitle(item.filename)}
-          </Text>
-          <Text style={styles.trackDuration}>
-            {Math.floor(item.duration / 60)}:
-            {Math.floor(item.duration % 60)
-              .toString()
-              .padStart(2, '0')}
-          </Text>
-        </View>
-      </TouchableOpacity>
+      <View style={styles.trackItem}>
+        <TouchableOpacity
+          style={styles.trackMainContent}
+          activeOpacity={0.7}
+          onPress={() => playTrack(item)}>
+          <View style={{ marginRight: 12 }}>
+            <TrackArtwork uri={artworkUri} size={42} borderRadius={10} iconSize={20} />
+          </View>
+          <View style={styles.trackInfo}>
+            <Text style={styles.trackTitle} numberOfLines={1}>
+              {cleanTitle(item.filename)}
+            </Text>
+            <Text style={styles.trackDuration}>
+              {Math.floor(item.duration / 60)}:
+              {Math.floor(item.duration % 60)
+                .toString()
+                .padStart(2, '0')}
+            </Text>
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.trackMoreBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          onPress={() => setSelectedTrackForMenu(item)}>
+          <Ionicons name="ellipsis-vertical" size={18} color="#a1a1aa" />
+        </TouchableOpacity>
+      </View>
     );
   };
 
@@ -386,6 +422,67 @@ export default function LibraryScreen() {
                 );
               })}
             </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Track Options Action Sheet Modal */}
+      <Modal
+        visible={selectedTrackForMenu !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setSelectedTrackForMenu(null)}>
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setSelectedTrackForMenu(null)}>
+          <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+            {selectedTrackForMenu && (
+              <>
+                <View style={styles.trackModalHeader}>
+                  <TrackArtwork
+                    uri={
+                      selectedTrackForMenu.albumId
+                        ? `content://media/external/audio/albumart/${selectedTrackForMenu.albumId}`
+                        : undefined
+                    }
+                    size={46}
+                    borderRadius={10}
+                    iconSize={22}
+                  />
+                  <View style={styles.trackModalHeaderInfo}>
+                    <Text style={styles.trackModalTitle} numberOfLines={1}>
+                      {cleanTitle(selectedTrackForMenu.filename)}
+                    </Text>
+                    <Text style={styles.trackModalDuration}>
+                      {Math.floor(selectedTrackForMenu.duration / 60)}:
+                      {Math.floor(selectedTrackForMenu.duration % 60)
+                        .toString()
+                        .padStart(2, '0')}
+                    </Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setSelectedTrackForMenu(null)}>
+                    <Ionicons name="close" size={24} color="#a1a1aa" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.trackActionList}>
+                  <TouchableOpacity
+                    style={styles.trackActionItem}
+                    activeOpacity={0.7}
+                    onPress={() => handleHideTrack(selectedTrackForMenu)}>
+                    <View style={styles.trackActionIconWrapper}>
+                      <Ionicons name="eye-off-outline" size={20} color="#ef4444" />
+                    </View>
+                    <View style={styles.trackActionTextWrapper}>
+                      <Text style={styles.trackActionTitleDanger}>Bu Şarkıyı Gizle</Text>
+                      <Text style={styles.trackActionDesc}>
+                        Kütüphaneden gizler. Ayarlardan dilediğiniz zaman geri getirebilirsiniz.
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </Pressable>
         </Pressable>
       </Modal>
@@ -612,5 +709,72 @@ const styles = StyleSheet.create({
   sortOptionLabelSelected: {
     color: '#ffffff',
     fontWeight: '600',
+  },
+  trackMainContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  trackMoreBtn: {
+    padding: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+  },
+  trackModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+  },
+  trackModalHeaderInfo: {
+    flex: 1,
+    marginLeft: 12,
+    marginRight: 8,
+  },
+  trackModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 3,
+  },
+  trackModalDuration: {
+    fontSize: 13,
+    color: '#71717a',
+  },
+  trackActionList: {
+    gap: 8,
+  },
+  trackActionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#27272a44',
+  },
+  trackActionIconWrapper: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  trackActionTextWrapper: {
+    flex: 1,
+  },
+  trackActionTitleDanger: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ef4444',
+    marginBottom: 2,
+  },
+  trackActionDesc: {
+    fontSize: 12,
+    color: '#71717a',
   },
 });
