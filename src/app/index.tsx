@@ -25,7 +25,7 @@ export default function PlayerScreen() {
   const { playing } = useIsPlaying();
   const progress = useProgress(250);
 
-  const { isShuffle, setIsShuffle, repeatMode, setRepeatMode } = useStore();
+  const { isShuffle, setIsShuffle, repeatMode, setRepeatMode, artworkMap } = useStore();
 
   const [barWidth, setBarWidth] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -68,6 +68,14 @@ export default function PlayerScreen() {
       refreshQueue();
     }
   }, [activeTrack]);
+
+  useEffect(() => {
+    if (activeTrack && activeTrack.id && artworkMap[activeTrack.id] && !activeTrack.artwork) {
+      TrackPlayer.updateMetadataForTrack(activeIndex, {
+        artwork: artworkMap[activeTrack.id],
+      }).catch(() => {});
+    }
+  }, [activeTrack, activeIndex, artworkMap]);
 
   const handleTouchCalc = (e: GestureResponderEvent) => {
     if (barWidth <= 0 || duration <= 0) return 0;
@@ -195,7 +203,9 @@ export default function PlayerScreen() {
         <View style={styles.queueItemLeft}>
           <View style={{ marginRight: 12 }}>
             <TrackArtwork
-              uri={item.artwork}
+              uri={(item.id && artworkMap[item.id]) || item.artwork}
+              trackId={item.id}
+              trackUri={item.url}
               size={40}
               borderRadius={8}
               iconSize={18}
@@ -230,7 +240,9 @@ export default function PlayerScreen() {
       {/* Album Art Card */}
       <View style={styles.albumArtContainer}>
         <TrackArtwork
-          uri={activeTrack?.artwork}
+          uri={(activeTrack?.id && artworkMap[activeTrack.id]) || activeTrack?.artwork}
+          trackId={activeTrack?.id}
+          trackUri={activeTrack?.url}
           size={250}
           borderRadius={24}
           iconSize={90}

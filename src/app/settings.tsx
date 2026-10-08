@@ -19,6 +19,7 @@ export default function SettingsScreen() {
     allAssets,
     unhideTrack,
     unhideAllTracks,
+    artworkMap,
   } = useStore();
 
   const [isExpanded, setIsExpanded] = useState(false);
@@ -83,11 +84,9 @@ export default function SettingsScreen() {
                   {hiddenTrackItems.map((item) => (
                     <View key={item.id} style={styles.hiddenTrackItem}>
                       <TrackArtwork
-                        uri={
-                          item.albumId
-                            ? `content://media/external/audio/albumart/${item.albumId}`
-                            : undefined
-                        }
+                        uri={artworkMap[item.id]}
+                        trackId={item.id}
+                        trackUri={item.asset?.uri}
                         size={38}
                         borderRadius={8}
                         iconSize={18}

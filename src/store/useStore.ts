@@ -23,6 +23,10 @@ interface AppState {
   unhideTrack: (id: string) => void;
   unhideAllTracks: () => void;
 
+  artworkMap: Record<string, string>;
+  setArtwork: (id: string, uri: string) => void;
+  setBatchArtworks: (artworks: Record<string, string>) => void;
+
   library: MediaLibrary.Asset[];
   setLibrary: (assets: MediaLibrary.Asset[]) => void;
   isScanning: boolean;
@@ -37,6 +41,16 @@ interface AppState {
 export const useStore = create<AppState>()(
   persist(
     (set) => ({
+      artworkMap: {},
+      setArtwork: (id, uri) =>
+        set((state) => ({
+          artworkMap: { ...state.artworkMap, [id]: uri },
+        })),
+      setBatchArtworks: (artworks) =>
+        set((state) => ({
+          artworkMap: { ...state.artworkMap, ...artworks },
+        })),
+
       settings: {
         minLengthSec: null,
         maxLengthSec: null,
@@ -101,6 +115,7 @@ export const useStore = create<AppState>()(
         repeatMode: state.repeatMode,
         hiddenTrackIds: state.hiddenTrackIds,
         allAssets: state.allAssets,
+        artworkMap: state.artworkMap,
       }),
       onRehydrateStorage: () => (state) => {
         if (state && state.allAssets) {

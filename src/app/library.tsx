@@ -19,6 +19,7 @@ import { useStore } from '../store/useStore';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { TrackArtwork } from '../components/TrackArtwork';
+import { getBatchArtworksAsync } from '../../modules/audio-artwork/src';
 
 type SortOption =
   | 'name_asc'
@@ -44,7 +45,16 @@ const SORT_OPTIONS: SortItem[] = [
 ];
 
 export default function LibraryScreen() {
-  const { library, setLibrary, isScanning, setIsScanning, settings, hideTrack } = useStore();
+  const {
+    library,
+    setLibrary,
+    isScanning,
+    setIsScanning,
+    settings,
+    hideTrack,
+    artworkMap,
+    setBatchArtworks,
+  } = useStore();
   const [statusMessage, setStatusMessage] = useState<string>('');
   const router = useRouter();
 
@@ -157,6 +167,23 @@ export default function LibraryScreen() {
 
       setLibrary(validAudio);
       setStatusMessage(`Found ${validAudio.length} track(s).`);
+
+      // Background extraction of missing artworks
+      (async () => {
+        try {
+          const currentMap = useStore.getState().artworkMap;
+          const missing = validAudio.filter((a) => !currentMap[a.id]);
+          for (let i = 0; i < missing.length; i += 25) {
+            const chunk = missing.slice(i, i + 25).map((a) => ({ id: a.id, uri: a.uri }));
+            const arts = await getBatchArtworksAsync(chunk);
+            if (Object.keys(arts).length > 0) {
+              setBatchArtworks(arts);
+            }
+          }
+        } catch (e) {
+          console.warn('Batch artwork extraction error:', e);
+        }
+      })();
     } catch (e: any) {
       console.error('Scan error:', e);
       setStatusMessage(`Error scanning: ${e?.message || e}`);
@@ -164,7 +191,7 @@ export default function LibraryScreen() {
     } finally {
       setIsScanning(false);
     }
-  }, [settings, setLibrary, setIsScanning]);
+  }, [settings, setLibrary, setIsScanning, setBatchArtworks]);
 
   useEffect(() => {
     scanMedia();
@@ -211,13 +238,13 @@ export default function LibraryScreen() {
     try {
       await TrackPlayer.reset();
 
-      // Add the entire sorted library into queue so playback continues smoothly
+      // Add the entire sorted library into queue with extracted cover art
       const tracks = fullSortedList.map((asset) => ({
         id: asset.id,
         url: asset.uri,
         title: cleanTitle(asset.filename),
         artist: 'Local Audio',
-        artwork: asset.albumId ? `content://media/external/audio/albumart/${asset.albumId}` : undefined,
+        artwork: artworkMap[asset.id] || undefined,
       }));
 
       await TrackPlayer.add(tracks);
@@ -239,8 +266,6 @@ export default function LibraryScreen() {
   };
 
   const renderItem = ({ item }: { item: MediaLibrary.Asset }) => {
-    const artworkUri = item.albumId ? `content://media/external/audio/albumart/${item.albumId}` : undefined;
-
     return (
       <View style={styles.trackItem}>
         <TouchableOpacity
@@ -248,7 +273,14 @@ export default function LibraryScreen() {
           activeOpacity={0.7}
           onPress={() => playTrack(item)}>
           <View style={{ marginRight: 12 }}>
-            <TrackArtwork uri={artworkUri} size={42} borderRadius={10} iconSize={20} />
+            <TrackArtwork
+              uri={artworkMap[item.id]}
+              trackId={item.id}
+              trackUri={item.uri}
+              size={42}
+              borderRadius={10}
+              iconSize={20}
+            />
           </View>
           <View style={styles.trackInfo}>
             <Text style={styles.trackTitle} numberOfLines={1}>
@@ -440,11 +472,9 @@ export default function LibraryScreen() {
               <>
                 <View style={styles.trackModalHeader}>
                   <TrackArtwork
-                    uri={
-                      selectedTrackForMenu.albumId
-                        ? `content://media/external/audio/albumart/${selectedTrackForMenu.albumId}`
-                        : undefined
-                    }
+                    uri={artworkMap[selectedTrackForMenu.id]}
+                    trackId={selectedTrackForMenu.id}
+                    trackUri={selectedTrackForMenu.uri}
                     size={46}
                     borderRadius={10}
                     iconSize={22}

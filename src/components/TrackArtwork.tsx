@@ -2,9 +2,13 @@ import { useState, useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { useStore } from '../store/useStore';
+import { getArtworkAsync } from '../../modules/audio-artwork/src';
 
 interface TrackArtworkProps {
   uri?: string | null;
+  trackId?: string | null;
+  trackUri?: string | null;
   size?: number;
   borderRadius?: number;
   iconSize?: number;
@@ -13,16 +17,35 @@ interface TrackArtworkProps {
 
 export function TrackArtwork({
   uri,
+  trackId,
+  trackUri,
   size = 40,
   borderRadius = 10,
   iconSize = 20,
   shadow = false,
 }: TrackArtworkProps) {
   const [hasError, setHasError] = useState(false);
+  const artworkMap = useStore((state) => state.artworkMap);
+  const setArtwork = useStore((state) => state.setArtwork);
+
+  // If direct uri provided and not errored, use it; otherwise check store by trackId
+  const effectiveUri = uri || (trackId ? artworkMap[trackId] : undefined);
 
   useEffect(() => {
     setHasError(false);
-  }, [uri]);
+    // If no artwork known yet, and we have the file trackUri, extract it asynchronously
+    if (!effectiveUri && trackUri) {
+      let isMounted = true;
+      getArtworkAsync(trackUri, trackId ?? null).then((resolved) => {
+        if (isMounted && resolved && trackId) {
+          setArtwork(trackId, resolved);
+        }
+      });
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [effectiveUri, trackUri, trackId, setArtwork]);
 
   const containerStyle = [
     styles.container,
@@ -34,11 +57,11 @@ export function TrackArtwork({
     shadow && styles.shadowBox,
   ];
 
-  if (uri && !hasError) {
+  if (effectiveUri && !hasError) {
     return (
       <View style={containerStyle}>
         <Image
-          source={{ uri }}
+          source={{ uri: effectiveUri }}
           style={{ width: size, height: size, borderRadius }}
           contentFit="cover"
           transition={200}
