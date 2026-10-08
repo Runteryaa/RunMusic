@@ -5,10 +5,14 @@ import * as FileSystem from 'expo-file-system';
 import TrackPlayer from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 
 export default function LibraryScreen() {
   const { library, setLibrary, isScanning, setIsScanning, settings } = useStore();
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const router = useRouter();
+
+  const cleanTitle = (raw: string) => raw.replace(/\.[^/.]+$/, '');
 
   const scanMedia = useCallback(async () => {
     setIsScanning(true);
@@ -99,13 +103,14 @@ export default function LibraryScreen() {
       const tracks = library.map((asset) => ({
         id: asset.id,
         url: asset.uri,
-        title: asset.filename,
-        artist: 'Unknown Artist', // MediaLibrary doesn't always provide artist without extra queries
+        title: cleanTitle(asset.filename),
+        artist: 'Local Audio',
       }));
 
       await TrackPlayer.add(tracks);
       await TrackPlayer.skip(index);
       await TrackPlayer.play();
+      router.navigate('/');
     } catch (e) {
       console.error('Failed to play track', e);
     }
@@ -113,9 +118,11 @@ export default function LibraryScreen() {
 
   const renderItem = ({ item, index }: { item: MediaLibrary.Asset, index: number }) => (
     <TouchableOpacity style={styles.trackItem} onPress={() => playTrack(index)}>
-      <Ionicons name="musical-note" size={24} color="#666" style={styles.trackIcon} />
+      <View style={styles.iconContainer}>
+        <Ionicons name="musical-note" size={20} color="#3b82f6" />
+      </View>
       <View style={styles.trackInfo}>
-        <Text style={styles.trackTitle} numberOfLines={1}>{item.filename}</Text>
+        <Text style={styles.trackTitle} numberOfLines={1}>{cleanTitle(item.filename)}</Text>
         <Text style={styles.trackDuration}>{Math.floor(item.duration / 60)}:{(Math.floor(item.duration % 60)).toString().padStart(2, '0')}</Text>
       </View>
     </TouchableOpacity>
@@ -129,7 +136,7 @@ export default function LibraryScreen() {
           {isScanning ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
-            <Ionicons name="refresh" size={20} color="#fff" />
+            <Ionicons name="refresh" size={18} color="#fff" />
           )}
           <Text style={styles.scanButtonText}>Scan</Text>
         </TouchableOpacity>
@@ -144,7 +151,7 @@ export default function LibraryScreen() {
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
         refreshControl={
-          <RefreshControl refreshing={isScanning} onRefresh={scanMedia} colors={['#007AFF']} />
+          <RefreshControl refreshing={isScanning} onRefresh={scanMedia} colors={['#3b82f6']} tintColor="#3b82f6" />
         }
         ListEmptyComponent={
           <View style={styles.emptyState}>
@@ -161,66 +168,79 @@ export default function LibraryScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 15,
+    backgroundColor: '#121212',
+    paddingHorizontal: 16,
+    paddingTop: 16,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#ffffff',
   },
   scanButton: {
     flexDirection: 'row',
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 12,
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
     alignItems: 'center',
   },
   scanButtonText: {
     color: '#fff',
-    marginLeft: 5,
-    fontWeight: 'bold',
+    marginLeft: 6,
+    fontWeight: '600',
+    fontSize: 14,
   },
   trackItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 10,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#27272a',
   },
-  trackIcon: {
-    marginRight: 15,
+  iconContainer: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
   },
   trackInfo: {
     flex: 1,
   },
   trackTitle: {
     fontSize: 16,
-    fontWeight: '500',
-    marginBottom: 4,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginBottom: 3,
   },
   trackDuration: {
-    fontSize: 12,
-    color: '#888',
+    fontSize: 13,
+    color: '#71717a',
   },
   emptyState: {
-    padding: 30,
+    padding: 40,
     alignItems: 'center',
   },
   emptyText: {
-    color: '#888',
+    color: '#71717a',
     textAlign: 'center',
-    fontSize: 16,
+    fontSize: 15,
   },
   statusText: {
-    color: '#007AFF',
+    color: '#3b82f6',
     fontSize: 13,
-    marginBottom: 10,
+    marginBottom: 12,
     textAlign: 'center',
   },
 });

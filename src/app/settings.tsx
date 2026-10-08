@@ -14,6 +14,7 @@ export default function SettingsScreen() {
           style={styles.input} 
           keyboardType="numeric" 
           placeholder="e.g. 30" 
+          placeholderTextColor="#71717a"
           value={settings.minLengthSec?.toString() || ''}
           onChangeText={(val) => updateSettings({ minLengthSec: val ? parseInt(val, 10) : null })}
         />
@@ -25,6 +26,7 @@ export default function SettingsScreen() {
           style={styles.input} 
           keyboardType="numeric" 
           placeholder="e.g. 600" 
+          placeholderTextColor="#71717a"
           value={settings.maxLengthSec?.toString() || ''}
           onChangeText={(val) => updateSettings({ maxLengthSec: val ? parseInt(val, 10) : null })}
         />
@@ -36,6 +38,7 @@ export default function SettingsScreen() {
           style={styles.input} 
           keyboardType="numeric" 
           placeholder="e.g. 1" 
+          placeholderTextColor="#71717a"
           value={settings.minSizeMB?.toString() || ''}
           onChangeText={(val) => updateSettings({ minSizeMB: val ? parseFloat(val) : null })}
         />
@@ -47,6 +50,7 @@ export default function SettingsScreen() {
           style={styles.input} 
           keyboardType="numeric" 
           placeholder="e.g. 50" 
+          placeholderTextColor="#71717a"
           value={settings.maxSizeMB?.toString() || ''}
           onChangeText={(val) => updateSettings({ maxSizeMB: val ? parseFloat(val) : null })}
         />
@@ -58,25 +62,31 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#121212',
     padding: 20,
   },
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#ffffff',
     marginBottom: 20,
   },
   settingRow: {
-    marginBottom: 15,
+    marginBottom: 18,
   },
   label: {
-    fontSize: 16,
-    marginBottom: 5,
+    fontSize: 14,
+    color: '#a1a1aa',
+    marginBottom: 8,
+    fontWeight: '500',
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ccc',
-    padding: 10,
-    borderRadius: 5,
-    backgroundColor: '#fff',
+    borderColor: '#27272a',
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#18181b',
+    color: '#ffffff',
+    fontSize: 15,
   },
 });

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as MediaLibrary from 'expo-media-library/legacy';
+import { RepeatMode } from 'react-native-track-player';
 
 export interface FilterSettings {
   minLengthSec: number | null;
@@ -18,6 +19,11 @@ interface AppState {
   setLibrary: (assets: MediaLibrary.Asset[]) => void;
   isScanning: boolean;
   setIsScanning: (isScanning: boolean) => void;
+
+  isShuffle: boolean;
+  setIsShuffle: (isShuffle: boolean) => void;
+  repeatMode: RepeatMode;
+  setRepeatMode: (mode: RepeatMode) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -36,11 +42,20 @@ export const useStore = create<AppState>()(
       setLibrary: (library) => set({ library }),
       isScanning: false,
       setIsScanning: (isScanning) => set({ isScanning }),
+
+      isShuffle: false,
+      setIsShuffle: (isShuffle) => set({ isShuffle }),
+      repeatMode: RepeatMode.Off,
+      setRepeatMode: (repeatMode) => set({ repeatMode }),
     }),
     {
       name: 'runmusic-storage',
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({ settings: state.settings }), // only persist settings
+      partialize: (state) => ({
+        settings: state.settings,
+        isShuffle: state.isShuffle,
+        repeatMode: state.repeatMode,
+      }),
     }
   )
 );

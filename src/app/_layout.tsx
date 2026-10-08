@@ -7,13 +7,14 @@ import TrackPlayer, { Capability } from 'react-native-track-player';
 
 import playbackService from '../service';
 
+import { useStore } from '../store/useStore';
+
 SplashScreen.preventAutoHideAsync();
 
 // Register background service
 TrackPlayer.registerPlaybackService(() => playbackService);
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
   const [isPlayerReady, setIsPlayerReady] = useState(false);
 
   useEffect(() => {
@@ -30,10 +31,13 @@ export default function TabLayout() {
           ],
           compactCapabilities: [Capability.Play, Capability.Pause],
         });
+        const savedRepeatMode = useStore.getState().repeatMode;
+        if (savedRepeatMode != null) {
+          await TrackPlayer.setRepeatMode(savedRepeatMode);
+        }
         setIsPlayerReady(true);
       } catch (e) {
         console.warn('TrackPlayer setup failed', e);
-        // Sometimes setup fails if it was already setup during fast refresh
         setIsPlayerReady(true);
       } finally {
         SplashScreen.hideAsync();
@@ -44,14 +48,29 @@ export default function TabLayout() {
   }, []);
 
   if (!isPlayerReady) {
-    return null; // keep splash screen until player is ready
+    return null;
   }
 
   return (
     <Tabs
       screenOptions={{
         headerShown: true,
-        tabBarActiveTintColor: colorScheme === 'dark' ? '#fff' : '#000',
+        headerStyle: {
+          backgroundColor: '#121212',
+          elevation: 0,
+          shadowOpacity: 0,
+        },
+        headerTitleStyle: {
+          color: '#ffffff',
+          fontWeight: '700',
+        },
+        tabBarStyle: {
+          backgroundColor: '#121212',
+          borderTopColor: '#27272a',
+          borderTopWidth: 1,
+        },
+        tabBarActiveTintColor: '#3b82f6',
+        tabBarInactiveTintColor: '#71717a',
       }}>
       <Tabs.Screen
         name="index"
