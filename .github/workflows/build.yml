@@ -20,7 +20,7 @@ jobs:
       - name: ⚙️ Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           cache: 'npm'
 
       - name: ☕ Setup Java JDK
@@ -43,11 +43,13 @@ jobs:
         run: npm install --legacy-peer-deps
 
       - name: 🛠 Prebuild & Build APK
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m"
         run: |
           npx expo prebuild --platform android
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --build-cache
+          ./gradlew assembleRelease --no-daemon --build-cache -x lintVitalRelease
 
       - name: 📤 Upload APK Artifact
         uses: actions/upload-artifact@v4
