@@ -5,10 +5,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import TrackPlayer, { Capability } from 'react-native-track-player';
 
+import playbackService from '../service';
+
 SplashScreen.preventAutoHideAsync();
 
 // Register background service
-TrackPlayer.registerPlaybackService(() => require('../service'));
+TrackPlayer.registerPlaybackService(() => playbackService);
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();

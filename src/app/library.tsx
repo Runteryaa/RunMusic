@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
-import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
-import * as MediaLibrary from 'expo-media-library';
+import { useEffect, useState, useCallback } from 'react';
+import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator, Alert, RefreshControl } from 'react-native';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import * as FileSystem from 'expo-file-system';
 import TrackPlayer from 'react-native-track-player';
 import { useStore } from '../store/useStore';
@@ -8,48 +8,69 @@ import { Ionicons } from '@expo/vector-icons';
 
 export default function LibraryScreen() {
   const { library, setLibrary, isScanning, setIsScanning, settings } = useStore();
+  const [statusMessage, setStatusMessage] = useState<string>('');
 
-  const scanMedia = async () => {
+  const scanMedia = useCallback(async () => {
     setIsScanning(true);
+    setStatusMessage('Checking permissions...');
     try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status !== 'granted') {
-        alert('Permission to access media is required!');
+      let permission = await MediaLibrary.getPermissionsAsync(false, ['audio']);
+      if (!permission.granted && permission.status !== 'granted') {
+        permission = await MediaLibrary.requestPermissionsAsync(false, ['audio']);
+      }
+
+      if (!permission.granted && permission.status !== 'granted') {
+        Alert.alert(
+          'Permission Required',
+          'Please grant access to audio files to scan and play your music.'
+        );
+        setStatusMessage('Permission not granted.');
         setIsScanning(false);
         return;
       }
 
+      setStatusMessage('Scanning audio files...');
       let hasNextPage = true;
-      let after = undefined;
+      let after: string | undefined = undefined;
       const allAudio: MediaLibrary.Asset[] = [];
 
       while (hasNextPage) {
         const result = await MediaLibrary.getAssetsAsync({
-          mediaType: MediaLibrary.MediaType.audio,
+          mediaType: [MediaLibrary.MediaType.audio],
           first: 100,
           after,
         });
-        
-        allAudio.push(...result.assets);
+
+        if (result.assets && result.assets.length > 0) {
+          allAudio.push(...result.assets);
+        }
         hasNextPage = result.hasNextPage;
         after = result.endCursor;
       }
 
       // Filter local array
       const validAudio: MediaLibrary.Asset[] = [];
-      
+
       for (const asset of allAudio) {
-        // Duration filter
-        if (settings.minLengthSec && asset.duration < settings.minLengthSec) continue;
-        if (settings.maxLengthSec && asset.duration > settings.maxLengthSec) continue;
+        // Duration filter (duration is in seconds)
+        if (settings.minLengthSec != null && settings.minLengthSec > 0) {
+          if (asset.duration == null || asset.duration < settings.minLengthSec) continue;
+        }
+        if (settings.maxLengthSec != null && settings.maxLengthSec > 0) {
+          if (asset.duration != null && asset.duration > settings.maxLengthSec) continue;
+        }
 
         // Size filter
-        if (settings.minSizeMB || settings.maxSizeMB) {
-          const fileInfo = await FileSystem.getInfoAsync(asset.uri);
-          if (fileInfo.exists && !fileInfo.isDirectory) {
-            const sizeMB = fileInfo.size / (1024 * 1024);
-            if (settings.minSizeMB && sizeMB < settings.minSizeMB) continue;
-            if (settings.maxSizeMB && sizeMB > settings.maxSizeMB) continue;
+        if ((settings.minSizeMB != null && settings.minSizeMB > 0) || (settings.maxSizeMB != null && settings.maxSizeMB > 0)) {
+          try {
+            const fileInfo = await FileSystem.getInfoAsync(asset.uri);
+            if (fileInfo.exists && !fileInfo.isDirectory && typeof fileInfo.size === 'number') {
+              const sizeMB = fileInfo.size / (1024 * 1024);
+              if (settings.minSizeMB != null && settings.minSizeMB > 0 && sizeMB < settings.minSizeMB) continue;
+              if (settings.maxSizeMB != null && settings.maxSizeMB > 0 && sizeMB > settings.maxSizeMB) continue;
+            }
+          } catch {
+            // Keep asset if size cannot be inspected
           }
         }
 
@@ -57,19 +78,19 @@ export default function LibraryScreen() {
       }
 
       setLibrary(validAudio);
-    } catch (e) {
-      console.error(e);
+      setStatusMessage(`Found ${validAudio.length} track(s).`);
+    } catch (e: any) {
+      console.error('Scan error:', e);
+      setStatusMessage(`Error scanning: ${e?.message || e}`);
+      Alert.alert('Scan Error', e?.message || 'Failed to scan audio files.');
     } finally {
       setIsScanning(false);
     }
-  };
+  }, [settings, setLibrary, setIsScanning]);
 
   useEffect(() => {
-    // Initial scan if library is empty
-    if (library.length === 0) {
-      scanMedia();
-    }
-  }, []);
+    scanMedia();
+  }, [scanMedia]);
 
   const playTrack = async (index: number) => {
     try {
@@ -114,14 +135,21 @@ export default function LibraryScreen() {
         </TouchableOpacity>
       </View>
       
+      {statusMessage ? (
+        <Text style={styles.statusText}>{statusMessage}</Text>
+      ) : null}
+
       <FlatList
         data={library}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
+        refreshControl={
+          <RefreshControl refreshing={isScanning} onRefresh={scanMedia} colors={['#007AFF']} />
+        }
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>
-              {isScanning ? "Scanning your device..." : "No audio files found. Adjust settings or tap Scan."}
+              {isScanning ? "Scanning your device..." : (statusMessage || "No audio files found. Adjust settings or tap Scan.")}
             </Text>
           </View>
         }
@@ -188,5 +216,11 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
     fontSize: 16,
+  },
+  statusText: {
+    color: '#007AFF',
+    fontSize: 13,
+    marginBottom: 10,
+    textAlign: 'center',
   },
 });
