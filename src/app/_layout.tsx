@@ -1,4 +1,3 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
 import { Tabs } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useColorScheme } from 'react-native';
@@ -47,40 +46,38 @@ export default function TabLayout() {
   }
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Tabs
-        screenOptions={{
-          headerShown: true,
-          tabBarActiveTintColor: colorScheme === 'dark' ? '#fff' : '#000',
-        }}>
-        <Tabs.Screen
-          name="index"
-          options={{
-            title: 'Player',
-            tabBarIcon: ({ color }) => <Ionicons name="musical-notes" size={24} color={color} />,
-          }}
-        />
-        <Tabs.Screen
-          name="library"
-          options={{
-            title: 'Library',
-            tabBarIcon: ({ color }) => <Ionicons name="library" size={24} color={color} />,
-          }}
-        />
-        <Tabs.Screen
-          name="settings"
-          options={{
-            title: 'Settings',
-            tabBarIcon: ({ color }) => <Ionicons name="settings" size={24} color={color} />,
-          }}
-        />
-        <Tabs.Screen
-          name="explore"
-          options={{
-            href: null, // Hide explore tab
-          }}
-        />
-      </Tabs>
-    </ThemeProvider>
+    <Tabs
+      screenOptions={{
+        headerShown: true,
+        tabBarActiveTintColor: colorScheme === 'dark' ? '#fff' : '#000',
+      }}>
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Player',
+          tabBarIcon: ({ color }) => <Ionicons name="musical-notes" size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="library"
+        options={{
+          title: 'Library',
+          tabBarIcon: ({ color }) => <Ionicons name="library" size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+          tabBarIcon: ({ color }) => <Ionicons name="settings" size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="explore"
+        options={{
+          href: null, // Hide explore tab
+        }}
+      />
+    </Tabs>
   );
 }
