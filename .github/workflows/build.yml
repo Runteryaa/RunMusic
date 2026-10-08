@@ -42,11 +42,20 @@ jobs:
       - name: 📦 Install Dependencies
         run: npm install --legacy-peer-deps
 
-      - name: 🛠 Prebuild & Build APK
+      - name: 🛠 Prebuild Android
+        run: npx expo prebuild --platform android
+
+      - name: 🔧 Force Old Architecture (disable New Architecture)
+        run: |
+          sed -i 's/newArchEnabled=true/newArchEnabled=false/' android/gradle.properties
+          grep -q 'newArchEnabled' android/gradle.properties || echo 'newArchEnabled=false' >> android/gradle.properties
+          echo "--- gradle.properties (newArch line) ---"
+          grep newArch android/gradle.properties
+
+      - name: 🏗 Build APK
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m"
         run: |
-          npx expo prebuild --platform android
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon --build-cache -x lintVitalRelease
