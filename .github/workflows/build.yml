@@ -45,12 +45,16 @@ jobs:
       - name: 🛠 Prebuild Android
         run: npx expo prebuild --platform android
 
-      - name: 🔧 Force Old Architecture (disable New Architecture)
+      - name: 🔧 Configure Build (Disable New Arch & Speed up with arm64-v8a only)
         run: |
           sed -i 's/newArchEnabled=true/newArchEnabled=false/' android/gradle.properties
           grep -q 'newArchEnabled' android/gradle.properties || echo 'newArchEnabled=false' >> android/gradle.properties
-          echo "--- gradle.properties (newArch line) ---"
-          grep newArch android/gradle.properties
+
+          sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
+          grep -q 'reactNativeArchitectures' android/gradle.properties || echo 'reactNativeArchitectures=arm64-v8a' >> android/gradle.properties
+
+          echo "--- Configured gradle.properties ---"
+          grep -E '(newArch|reactNativeArchitectures)' android/gradle.properties
 
       - name: 🏗 Build APK
         env:
@@ -58,13 +62,13 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --build-cache -x lintVitalRelease
+          ./gradlew assembleRelease --no-daemon --build-cache --parallel -PreactNativeArchitectures=arm64-v8a -x lintVitalRelease
 
       - name: 📤 Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: RunMusic.apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: android/app/build/outputs/apk/release/*.apk
 
       - name: 🏷 Create Release & Upload APK
         uses: softprops/action-gh-release@v2
@@ -73,6 +77,6 @@ jobs:
           name: RunMusic v1.0.${{ github.run_number }}
           body: |
             runmusic
-          files: android/app/build/outputs/apk/release/app-release.apk
+          files: android/app/build/outputs/apk/release/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
