@@ -42,9 +42,21 @@ export async function getBatchMetadataAsync(
   }
 }
 
+export async function getDominantColorAsync(uri: string): Promise<string | null> {
+  try {
+    if (typeof AudioArtworkModule.getDominantColorAsync === 'function') {
+      return await AudioArtworkModule.getDominantColorAsync(uri);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default {
   getArtworkAsync,
   getBatchArtworksAsync,
   getMetadataAsync,
   getBatchMetadataAsync,
+  getDominantColorAsync,
 };

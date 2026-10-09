@@ -23,12 +23,13 @@ function MainAppLayout() {
   const activeTrack = useActiveTrack();
   const theme = useThemeStore((s) => s.theme);
   const updateThemeFromArtwork = useThemeStore((s) => s.updateThemeFromArtwork);
-  const metadataMap = useStore((s) => s.metadataMap);
-  const artworkMap = useStore((s) => s.artworkMap);
+  const activeTrackId = activeTrack?.id;
+  const storeArtwork = useStore((s) =>
+    activeTrackId ? s.metadataMap[activeTrackId]?.artwork || s.artworkMap[activeTrackId] : undefined
+  );
 
   const artworkUri =
-    (activeTrack?.id ? metadataMap[activeTrack.id]?.artwork || artworkMap[activeTrack.id] : undefined) ||
-    (typeof activeTrack?.artwork === 'string' ? activeTrack.artwork : undefined);
+    storeArtwork || (typeof activeTrack?.artwork === 'string' ? activeTrack.artwork : undefined);
 
   useEffect(() => {
     updateThemeFromArtwork(artworkUri);

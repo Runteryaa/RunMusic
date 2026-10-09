@@ -205,19 +205,25 @@ export default function LibraryScreen() {
       setLibrary(validAudio);
       setStatusMessage(`${validAudio.length} şarkı bulundu.`);
 
-      // Background extraction of missing metadata & artworks (nefes payı ile)
+      // Background extraction of missing metadata & artworks (nefes payı ve tek seferlik toplu kayıt ile)
       (async () => {
         try {
+          // Açılışta kullanıcı arayüzünün 0ms anında tepki vermesi için 1.5 sn bekle
+          await new Promise((r) => setTimeout(r, 1500));
           const currentMeta = useStore.getState().metadataMap;
           const missing = validAudio.filter((a) => !currentMeta[a.id]);
           if (missing.length === 0) return;
+          const accumulatedBatch: Record<string, any> = {};
           for (let i = 0; i < missing.length; i += 50) {
             const chunk = missing.slice(i, i + 50).map((a) => ({ id: a.id, uri: a.uri }));
             const metaBatch = await getBatchMetadataAsync(chunk);
             if (Object.keys(metaBatch).length > 0) {
-              setBatchTrackMetadata(metaBatch as any);
+              Object.assign(accumulatedBatch, metaBatch);
             }
-            await new Promise((r) => setTimeout(r, 150));
+            await new Promise((r) => setTimeout(r, 200));
+          }
+          if (Object.keys(accumulatedBatch).length > 0) {
+            setBatchTrackMetadata(accumulatedBatch as any);
           }
         } catch (e) {
           console.warn('Batch metadata extraction error:', e);
@@ -233,8 +239,15 @@ export default function LibraryScreen() {
   }, [settings, setLibrary, setIsScanning, setBatchTrackMetadata]);
 
   useEffect(() => {
-    scanMedia();
-  }, [scanMedia]);
+    if (library.length === 0) {
+      scanMedia();
+    } else {
+      const timer = setTimeout(() => {
+        scanMedia();
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [scanMedia, library.length]);
 
   // Sorting comparator
   const sortComparator = useCallback(
@@ -483,6 +496,10 @@ export default function LibraryScreen() {
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
+        initialNumToRender={15}
+        maxToRenderPerBatch={10}
+        windowSize={7}
+        removeClippedSubviews={true}
         refreshControl={
           <RefreshControl
             refreshing={isScanning}

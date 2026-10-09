@@ -8,6 +8,7 @@ declare class AudioArtworkModule extends NativeModule {
   getBatchMetadataAsync(
     items: Array<{ id: string; uri: string }>
   ): Promise<Record<string, AudioTrackMetadata>>;
+  getDominantColorAsync(uri: string): Promise<string | null>;
 }
 
 export default requireNativeModule<AudioArtworkModule>('AudioArtwork');

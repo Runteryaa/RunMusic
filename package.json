@@ -22,7 +22,6 @@
     "expo-system-ui": "~57.0.4",
     "expo-updates": "~57.0.25",
     "expo-web-browser": "~57.0.3",
-    "jpeg-js": "^0.4.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",

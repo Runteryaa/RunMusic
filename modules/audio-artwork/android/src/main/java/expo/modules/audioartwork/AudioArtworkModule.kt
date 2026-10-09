@@ -2,6 +2,7 @@ package expo.modules.audioartwork
 
 import android.content.ContentUris
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
@@ -40,6 +41,10 @@ class AudioArtworkModule : Module() {
 
     AsyncFunction("getBatchMetadataAsync") { items: List<Map<String, String>> ->
       extractBatchTrackMetadata(items)
+    }
+
+    AsyncFunction("getDominantColorAsync") { uri: String ->
+      extractDominantColor(uri)
     }
   }
 
@@ -306,6 +311,72 @@ class AudioArtworkModule : Module() {
       }
     } catch (_: Exception) {}
 
+    return null
+  }
+
+  private fun extractDominantColor(rawUri: String): String? {
+    try {
+      var cleanPath = rawUri
+      if (cleanPath.startsWith("file://")) {
+        cleanPath = cleanPath.substring(7)
+      }
+      cleanPath = URLDecoder.decode(cleanPath, "UTF-8")
+      val file = File(cleanPath)
+      if (!file.exists() || file.length() == 0L) return null
+
+      val boundsOptions = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+      }
+      BitmapFactory.decodeFile(file.absolutePath, boundsOptions)
+      val w = boundsOptions.outWidth
+      val h = boundsOptions.outHeight
+      if (w <= 0 || h <= 0) return null
+
+      val targetSize = 32
+      val sampleSize = Math.max(1, Math.min(w / targetSize, h / targetSize))
+      val decodeOptions = BitmapFactory.Options().apply {
+        inSampleSize = sampleSize
+        inPreferredConfig = Bitmap.Config.ARGB_8888
+      }
+      val bitmap = BitmapFactory.decodeFile(file.absolutePath, decodeOptions) ?: return null
+
+      var bestColor = 0
+      var maxScore = -1f
+
+      val width = bitmap.width
+      val height = bitmap.height
+      val pixels = IntArray(width * height)
+      bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+      bitmap.recycle()
+
+      for (pixel in pixels) {
+        val r = (pixel shr 16) and 0xff
+        val g = (pixel shr 8) and 0xff
+        val b = pixel and 0xff
+
+        val max = Math.max(r, Math.max(g, b))
+        val min = Math.min(r, Math.min(g, b))
+        val lightness = (max + min) / 2f
+        if (lightness < 25 || lightness > 230) continue
+
+        val delta = (max - min).toFloat()
+        val saturation = if (max == 0) 0f else delta / max.toFloat()
+        if (saturation < 0.2f) continue
+
+        val score = saturation * 2.5f + (lightness / 255f)
+        if (score > maxScore) {
+          maxScore = score
+          bestColor = pixel
+        }
+      }
+
+      if (maxScore > 0) {
+        val r = (bestColor shr 16) and 0xff
+        val g = (bestColor shr 8) and 0xff
+        val b = bestColor and 0xff
+        return String.format("#%02x%02x%02x", r, g, b)
+      }
+    } catch (_: Exception) {}
     return null
   }
 }
