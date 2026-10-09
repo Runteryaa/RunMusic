@@ -5,11 +5,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import TrackPlayer, { Capability } from 'react-native-track-player';
+import TrackPlayer, { Capability, useActiveTrack } from 'react-native-track-player';
 
 import playbackService from '../service';
 
 import { useStore } from '../store/useStore';
+import { useThemeStore } from '../store/useThemeStore';
 import { getLastPlayback } from '../services/playbackStorage';
 import { MiniPlayer } from '../components/MiniPlayer';
 import { FullscreenPlayerModal } from '../components/FullscreenPlayerModal';
@@ -21,6 +22,19 @@ TrackPlayer.registerPlaybackService(() => playbackService);
 
 export default function TabLayout() {
   const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const activeTrack = useActiveTrack();
+  const theme = useThemeStore((s) => s.theme);
+  const updateThemeFromArtwork = useThemeStore((s) => s.updateThemeFromArtwork);
+  const metadataMap = useStore((s) => s.metadataMap);
+  const artworkMap = useStore((s) => s.artworkMap);
+
+  const artworkUri =
+    (activeTrack?.id ? metadataMap[activeTrack.id]?.artwork || artworkMap[activeTrack.id] : undefined) ||
+    (typeof activeTrack?.artwork === 'string' ? activeTrack.artwork : undefined);
+
+  useEffect(() => {
+    updateThemeFromArtwork(artworkUri);
+  }, [artworkUri, updateThemeFromArtwork]);
 
   useEffect(() => {
     async function setup() {
@@ -99,7 +113,7 @@ export default function TabLayout() {
               borderTopWidth: 1,
               height: 56,
             },
-            tabBarActiveTintColor: '#3b82f6',
+            tabBarActiveTintColor: theme.primary,
             tabBarInactiveTintColor: '#71717a',
           }}>
           <Tabs.Screen

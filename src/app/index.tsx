@@ -19,6 +19,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
+import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { getBatchMetadataAsync } from '../../modules/audio-artwork/src';
 import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
@@ -47,6 +48,7 @@ const SORT_OPTIONS: SortItem[] = [
 ];
 
 export default function LibraryScreen() {
+  const theme = useThemeStore((s) => s.theme);
   const library = useStore((s) => s.library);
   const setLibrary = useStore((s) => s.setLibrary);
   const isScanning = useStore((s) => s.isScanning);
@@ -332,7 +334,7 @@ export default function LibraryScreen() {
       activeTrack && (activeTrack.id === item.id || activeTrack.url === item.uri);
 
     const renderLeftActions = () => (
-      <View style={styles.swipeLeftActionBox}>
+      <View style={[styles.swipeLeftActionBox, { backgroundColor: theme.primary }]}>
         <Ionicons name="list" size={20} color="#ffffff" style={{ marginRight: 6 }} />
         <Text style={styles.swipeLeftActionText}>Sıraya Ekle</Text>
       </View>
@@ -348,7 +350,14 @@ export default function LibraryScreen() {
             handleAddToQueue(item);
           }
         }}>
-        <View style={[styles.trackItem, isPlayingCurrent && styles.trackItemPlaying]}>
+        <View
+          style={[
+            styles.trackItem,
+            isPlayingCurrent && [
+              styles.trackItemPlaying,
+              { borderColor: theme.border, backgroundColor: theme.surface },
+            ],
+          ]}>
           <TouchableOpacity
             style={styles.trackMainContent}
             activeOpacity={0.7}
@@ -369,12 +378,15 @@ export default function LibraryScreen() {
                   <Ionicons
                     name="volume-high"
                     size={16}
-                    color="#3b82f6"
+                    color={theme.primary}
                     style={{ marginRight: 6 }}
                   />
                 ) : null}
                 <Text
-                  style={[styles.trackTitle, isPlayingCurrent && styles.trackTitlePlaying]}
+                  style={[
+                    styles.trackTitle,
+                    isPlayingCurrent && [styles.trackTitlePlaying, { color: theme.primary }],
+                  ]}
                   numberOfLines={1}>
                   {info.title}
                 </Text>
@@ -452,8 +464,13 @@ export default function LibraryScreen() {
 
       {/* Floating Queue Toast Notification */}
       {queueToast ? (
-        <View style={styles.toastCard}>
-          <Ionicons name="checkmark-circle" size={16} color="#3b82f6" style={{ marginRight: 6 }} />
+        <View style={[styles.toastCard, { borderColor: theme.border }]}>
+          <Ionicons
+            name="checkmark-circle"
+            size={16}
+            color={theme.primary}
+            style={{ marginRight: 6 }}
+          />
           <Text style={styles.toastText} numberOfLines={1}>
             {queueToast}
           </Text>
@@ -470,15 +487,15 @@ export default function LibraryScreen() {
           <RefreshControl
             refreshing={isScanning}
             onRefresh={scanMedia}
-            tintColor="#3b82f6"
-            colors={['#3b82f6']}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
           />
         }
         ListEmptyComponent={
           isScanning ? (
             <View style={styles.centerBox}>
-              <ActivityIndicator size="large" color="#3b82f6" />
-              <Text style={styles.statusText}>{statusMessage}</Text>
+              <ActivityIndicator size="large" color={theme.primary} />
+              <Text style={[styles.statusText, { color: theme.primary }]}>{statusMessage}</Text>
             </View>
           ) : (
             <View style={styles.centerBox}>

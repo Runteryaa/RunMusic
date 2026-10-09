@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -12,6 +12,8 @@ import {
   TextInput,
   ScrollView,
   Dimensions,
+  Animated,
+  PanResponder,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +26,7 @@ import TrackPlayer, {
 } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
+import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from './TrackArtwork';
 import {
   LyricLine,
@@ -41,12 +44,17 @@ import {
 import { saveLastPlayback } from '../services/playbackStorage';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 64, 340);
+const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
+
+function getRandomIndex(length: number): number {
+  return Math.floor(Math.random() * length);
+}
 
 export function FullscreenPlayerModal() {
   const { isFullscreenPlayerOpen, closeFullscreenPlayer, isLyricsMode, toggleLyricsMode } =
     usePlayerUIStore();
 
+  const theme = useThemeStore((s) => s.theme);
   const activeTrack = useActiveTrack();
   const { playing } = useIsPlaying();
   const progress = useProgress(250);
@@ -431,13 +439,25 @@ export function FullscreenPlayerModal() {
     }
   };
 
-  const skipNext = async () => {
+  const artworkScale = useMemo(() => new Animated.Value(1), []);
+
+  useEffect(() => {
+    Animated.spring(artworkScale, {
+      toValue: playing ? 1 : 0.88,
+      damping: 18,
+      mass: 0.9,
+      stiffness: 140,
+      useNativeDriver: true,
+    }).start();
+  }, [playing, artworkScale]);
+
+  const skipNext = useCallback(async () => {
     try {
       if (isShuffle) {
         const q = await TrackPlayer.getQueue();
         if (q.length > 1) {
           const currentIndex = await TrackPlayer.getActiveTrackIndex();
-          let nextIndex = Math.floor(Math.random() * q.length);
+          let nextIndex = getRandomIndex(q.length);
           if (nextIndex === currentIndex) {
             nextIndex = (nextIndex + 1) % q.length;
           }
@@ -451,11 +471,12 @@ export function FullscreenPlayerModal() {
     } catch (e) {
       console.warn('Skip next failed', e);
     }
-  };
+  }, [isShuffle]);
 
-  const skipPrev = async () => {
+  const skipPrev = useCallback(async () => {
     try {
-      if (progress.position > 3) {
+      const { position } = await TrackPlayer.getProgress();
+      if (position > 3) {
         await TrackPlayer.seekTo(0);
       } else {
         await TrackPlayer.skipToPrevious();
@@ -464,9 +485,9 @@ export function FullscreenPlayerModal() {
     } catch (e) {
       console.warn('Skip prev failed', e);
     }
-  };
+  }, []);
 
-  const toggleRepeat = async () => {
+  const toggleRepeat = useCallback(async () => {
     let nextMode: RepeatMode = RepeatMode.Off;
     if (repeatMode === RepeatMode.Off) {
       nextMode = RepeatMode.Queue;
@@ -478,11 +499,61 @@ export function FullscreenPlayerModal() {
 
     setRepeatMode(nextMode);
     await TrackPlayer.setRepeatMode(nextMode);
-  };
+  }, [repeatMode, setRepeatMode]);
+
+  // Gestures: Middle container (Cover / Lyrics) - Swipe left/right skips track, Swipe down closes modal, Tap toggles lyrics
+  const artworkPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          Math.abs(gesture.dx) > 15 || Math.abs(gesture.dy) > 15,
+        onPanResponderRelease: (_, gesture) => {
+          // Normal dokunma: Sözler moduna geç
+          if (Math.abs(gesture.dx) < 12 && Math.abs(gesture.dy) < 12) {
+            toggleLyricsMode();
+            return;
+          }
+          // Aşağı kaydırma: Tam ekran çaları kapat (Apple Music tarzı)
+          if (gesture.dy > 50 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.1) {
+            closeFullscreenPlayer();
+            return;
+          }
+          // Sağa/Sola kaydırma: Şarkı değiştir (Apple Music gesture skip)
+          if (Math.abs(gesture.dx) > 35) {
+            if (gesture.dx < 0) {
+              // Sola kaydırıldı -> Sonraki şarkı
+              skipNext();
+            } else {
+              // Sağa kaydırıldı -> Önceki şarkı
+              skipPrev();
+            }
+          }
+        },
+      }),
+    [toggleLyricsMode, closeFullscreenPlayer, skipNext, skipPrev]
+  );
+
+  // Gestures: Top grabber handle - Pull down closes modal
+  const headerPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_, gesture) => gesture.dy > 12,
+        onPanResponderRelease: (_, gesture) => {
+          if (gesture.dy > 30) {
+            closeFullscreenPlayer();
+          }
+        },
+      }),
+    [closeFullscreenPlayer]
+  );
 
   if (!activeTrack) {
     return null;
   }
+
+  const remainingSeconds = Math.max(0, duration - currentPosition);
 
   return (
     <Modal
@@ -501,6 +572,13 @@ export function FullscreenPlayerModal() {
           />
         ) : null}
         <View style={[StyleSheet.absoluteFill, styles.backdropOverlay]} />
+        {/* Subtle Ambient Color Glow from Cover Art */}
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.glowColor, opacity: 0.14 }]} />
+
+        {/* Apple Music Style Top Grabber Bar */}
+        <View style={styles.topGrabberContainer} {...headerPanResponder.panHandlers}>
+          <View style={styles.topGrabberBar} />
+        </View>
 
         {/* Top Header */}
         <View style={styles.topHeader}>
@@ -508,7 +586,7 @@ export function FullscreenPlayerModal() {
             style={styles.headerIconBtn}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             onPress={closeFullscreenPlayer}>
-            <Ionicons name="chevron-down" size={28} color="#ffffff" />
+            <Ionicons name="chevron-down" size={26} color="rgba(255, 255, 255, 0.75)" />
           </TouchableOpacity>
           <View style={styles.headerTitleBox}>
             <Text style={styles.headerSmallLabel}>ŞU AN ÇALIYOR</Text>
@@ -519,48 +597,52 @@ export function FullscreenPlayerModal() {
           <TouchableOpacity
             style={styles.headerIconBtn}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            onPress={toggleLyricsMode}>
-            <Ionicons
-              name={isLyricsMode ? 'musical-notes' : 'mic-outline'}
-              size={22}
-              color={isLyricsMode ? '#3b82f6' : '#ffffff'}
-            />
+            onPress={() => setIsQueueModalOpen(true)}>
+            <Ionicons name="ellipsis-horizontal-circle" size={24} color="rgba(255, 255, 255, 0.75)" />
           </TouchableOpacity>
         </View>
 
         {/* ORTA BÖLÜM: Kapak Fotoğrafı <---> Senkronize Şarkı Sözleri Değişimi */}
-        <View style={styles.middleContainer}>
+        <View style={styles.middleContainer} {...artworkPanResponder.panHandlers}>
           {!isLyricsMode ? (
-            /* Kapak Görünümü */
-            <TouchableOpacity
-              activeOpacity={0.92}
-              style={styles.artworkWrapper}
-              onPress={toggleLyricsMode}>
-              <TrackArtwork
-                uri={currentArtworkUri}
-                trackId={activeTrack.id}
-                trackUri={activeTrack.url}
-                size={ARTWORK_SIZE}
-                borderRadius={24}
-                iconSize={84}
-              />
-              <View style={styles.lyricsHintPill}>
-                <Ionicons name="mic-outline" size={13} color="#ffffff" style={{ marginRight: 5 }} />
-                <Text style={styles.lyricsHintText}>Sözler için dokun</Text>
+            /* Kapak Görünümü (Apple Music ölçekleme + sağa/sola kaydırınca şarkı geçişi) */
+            <View style={styles.coverCenterBox}>
+              <Animated.View
+                style={[
+                  styles.artworkWrapper,
+                  { transform: [{ scale: artworkScale }] },
+                ]}>
+                <TrackArtwork
+                  uri={currentArtworkUri}
+                  trackId={activeTrack.id}
+                  trackUri={activeTrack.url}
+                  size={ARTWORK_SIZE}
+                  borderRadius={18}
+                  iconSize={84}
+                />
+              </Animated.View>
+              <View style={styles.swipeHintRow}>
+                <Ionicons
+                  name="swap-horizontal"
+                  size={14}
+                  color="rgba(255, 255, 255, 0.45)"
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.swipeHintText}>Geçiş için kaydırın • Sözler için dokunun</Text>
               </View>
-            </TouchableOpacity>
+            </View>
           ) : (
             /* Senkronize Şarkı Sözleri Görünümü (Kapak yerine gelen alan) */
             <View style={styles.lyricsCardContainer}>
               <View style={styles.lyricsCardHeader}>
-                <View style={styles.lyricsSourceBadge}>
+                <View style={[styles.lyricsSourceBadge, { backgroundColor: theme.surface }]}>
                   <Ionicons
                     name={currentLyrics?.source === 'lrclib' ? 'sparkles' : 'document-text-outline'}
                     size={12}
-                    color="#ffffff"
+                    color={theme.primary}
                     style={{ marginRight: 4 }}
                   />
-                  <Text style={styles.lyricsSourceText}>
+                  <Text style={[styles.lyricsSourceText, { color: theme.textAccent }]}>
                     {currentLyrics?.syncedLyrics
                       ? 'LRCLIB (Senkronize)'
                       : currentLyrics?.source === 'genius'
@@ -572,18 +654,18 @@ export function FullscreenPlayerModal() {
                   style={styles.lyricsSearchBtn}
                   activeOpacity={0.7}
                   onPress={toggleManualSearch}>
-                  <Ionicons name="search" size={14} color="#3b82f6" />
-                  <Text style={styles.lyricsSearchBtnText}>Manuel Ara</Text>
+                  <Ionicons name="search" size={14} color={theme.primary} />
+                  <Text style={[styles.lyricsSearchBtnText, { color: theme.primary }]}>Manuel Ara</Text>
                 </TouchableOpacity>
               </View>
 
               {isLoadingLyrics ? (
                 <View style={styles.lyricsLoadingCenter}>
-                  <ActivityIndicator size="large" color="#3b82f6" />
+                  <ActivityIndicator size="large" color={theme.primary} />
                   <Text style={styles.lyricsLoadingText}>Sözler aranıyor...</Text>
                 </View>
               ) : currentLyrics?.syncedLyrics && parsedLines.length > 0 ? (
-                /* Senkronize Söz Akışı */
+                /* Senkronize Söz Akışı (Apple Music Tipografisi) */
                 <FlatList
                   ref={lyricsFlatListRef}
                   data={parsedLines}
@@ -607,7 +689,14 @@ export function FullscreenPlayerModal() {
                         activeOpacity={0.7}
                         onPress={() => TrackPlayer.seekTo(item.time)}
                         style={[styles.lyricRow, isActive && styles.lyricRowActive]}>
-                        <Text style={[styles.lyricText, isActive && styles.lyricTextActive]}>
+                        <Text
+                          style={[
+                            styles.lyricText,
+                            isActive && [
+                              styles.lyricTextActive,
+                              { textShadowColor: theme.glowColor },
+                            ],
+                          ]}>
                           {item.text}
                         </Text>
                       </TouchableOpacity>
@@ -631,7 +720,7 @@ export function FullscreenPlayerModal() {
                     Farklı bir başlık veya sanatçı ile aramak için butona dokunun
                   </Text>
                   <TouchableOpacity
-                    style={styles.lyricsEmptySearchBtn}
+                    style={[styles.lyricsEmptySearchBtn, { backgroundColor: theme.primary }]}
                     activeOpacity={0.8}
                     onPress={toggleManualSearch}>
                     <Ionicons name="search" size={16} color="#ffffff" style={{ marginRight: 6 }} />
@@ -643,7 +732,7 @@ export function FullscreenPlayerModal() {
           )}
         </View>
 
-        {/* ALT BÖLÜM: Şarkı Bilgileri, İlerleme Çubuğu ve Oynatma Butonları */}
+        {/* ALT BÖLÜM: Apple Music Şarkı Bilgileri, Scrubber ve Kontroller */}
         <View style={styles.bottomSection}>
           {/* Şarkı Başlığı & Sanatçı */}
           <View style={styles.metaRow}>
@@ -655,9 +744,15 @@ export function FullscreenPlayerModal() {
                 {displayArtist}
               </Text>
             </View>
+            <TouchableOpacity
+              style={styles.metaActionBtn}
+              activeOpacity={0.7}
+              onPress={() => setIsQueueModalOpen(true)}>
+              <Ionicons name="star-outline" size={22} color="rgba(255, 255, 255, 0.75)" />
+            </TouchableOpacity>
           </View>
 
-          {/* İlerleme Çubuğu (Scrubber) */}
+          {/* İlerleme Çubuğu (Apple Music Scrubber) */}
           <View style={styles.scrubberBox}>
             <View
               style={styles.progressTouchContainer}
@@ -668,114 +763,124 @@ export function FullscreenPlayerModal() {
               onResponderMove={handleSeekMove}
               onResponderRelease={handleSeekRelease}>
               <View style={styles.progressBarBackground}>
-                <View style={[styles.progressBarFill, { width: `${progressPercent * 100}%` }]} />
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    { backgroundColor: theme.primary, width: `${progressPercent * 100}%` },
+                  ]}
+                />
               </View>
               {duration > 0 ? (
                 <View
                   style={[
                     styles.progressKnob,
-                    { left: Math.max(0, Math.min(barWidth - 12, barWidth * progressPercent - 6)) },
+                    {
+                      backgroundColor: theme.primaryLight,
+                      left: Math.max(0, Math.min(barWidth - 10, barWidth * progressPercent - 5)),
+                    },
                   ]}
                 />
               ) : null}
             </View>
             <View style={styles.timeRow}>
               <Text style={styles.timeText}>{formatTime(currentPosition)}</Text>
-              <Text style={styles.timeText}>{formatTime(duration)}</Text>
+              <Text style={styles.timeText}>
+                {duration > 0 ? `-${formatTime(remainingSeconds)}` : '0:00'}
+              </Text>
             </View>
           </View>
 
-          {/* Oynatma Kontrolleri */}
+          {/* Oynatma Kontrolleri (Apple Music Minimalist Glyphs) */}
           <View style={styles.controlsRow}>
             <TouchableOpacity
-              style={styles.secondaryBtn}
-              onPress={() => setIsShuffle(!isShuffle)}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-              <Ionicons
-                name="shuffle"
-                size={22}
-                color={isShuffle ? '#3b82f6' : '#71717a'}
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.navBtn}
+              style={styles.appleNavBtn}
               onPress={skipPrev}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-              <Ionicons name="play-skip-back" size={28} color="#ffffff" />
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              activeOpacity={0.65}>
+              <Ionicons name="play-skip-back" size={38} color="#ffffff" />
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.playPauseMainBtn}
-              activeOpacity={0.85}
+              style={styles.applePlayBtn}
+              activeOpacity={0.65}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               onPress={togglePlayback}>
               <Ionicons
                 name={playing ? 'pause' : 'play'}
-                size={32}
-                color="#000000"
-                style={!playing ? { marginLeft: 3 } : undefined}
+                size={52}
+                color="#ffffff"
+                style={!playing ? { marginLeft: 4 } : undefined}
               />
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.navBtn}
+              style={styles.appleNavBtn}
               onPress={skipNext}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-              <Ionicons name="play-skip-forward" size={28} color="#ffffff" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.secondaryBtn}
-              onPress={toggleRepeat}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-              <Ionicons
-                name={repeatMode === RepeatMode.Track ? 'repeat' : 'repeat'}
-                size={22}
-                color={repeatMode !== RepeatMode.Off ? '#3b82f6' : '#71717a'}
-              />
-              {repeatMode === RepeatMode.Track ? (
-                <Text style={styles.repeatBadge}>1</Text>
-              ) : null}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              activeOpacity={0.65}>
+              <Ionicons name="play-skip-forward" size={38} color="#ffffff" />
             </TouchableOpacity>
           </View>
 
-          {/* Alt Eylem Butonları: [Şarkı Sözleri] | [Sırada] */}
-          <View style={styles.bottomActionsRow}>
+          {/* Apple Music Alt Araç Çubuğu (Lyrics | Shuffle/Repeat | Queue) */}
+          <View style={styles.appleBottomRow}>
+            {/* Şarkı Sözleri Butonu */}
             <TouchableOpacity
               style={[
-                styles.actionPillBtn,
-                isLyricsMode && styles.actionPillBtnActive,
+                styles.appleUtilBtn,
+                isLyricsMode && {
+                  backgroundColor: theme.surface,
+                  borderWidth: 1,
+                  borderColor: theme.border,
+                },
               ]}
-              activeOpacity={0.75}
+              activeOpacity={0.7}
               onPress={toggleLyricsMode}>
               <Ionicons
-                name="mic-outline"
-                size={16}
-                color={isLyricsMode ? '#ffffff' : '#a1a1aa'}
-                style={{ marginRight: 6 }}
+                name="chatbubble-ellipses"
+                size={22}
+                color={isLyricsMode ? theme.primary : 'rgba(255, 255, 255, 0.55)'}
               />
-              <Text
-                style={[
-                  styles.actionPillBtnText,
-                  isLyricsMode && styles.actionPillBtnTextActive,
-                ]}>
-                Şarkı Sözleri
-              </Text>
             </TouchableOpacity>
 
+            {/* Orta: Karışık ve Tekrar Kontrolleri */}
+            <View style={styles.appleCenterUtilRow}>
+              <TouchableOpacity
+                style={styles.appleSubUtilBtn}
+                onPress={() => setIsShuffle(!isShuffle)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Ionicons
+                  name="shuffle"
+                  size={20}
+                  color={isShuffle ? theme.primary : 'rgba(255, 255, 255, 0.5)'}
+                />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.appleSubUtilBtn}
+                onPress={toggleRepeat}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Ionicons
+                  name="repeat"
+                  size={20}
+                  color={repeatMode !== RepeatMode.Off ? theme.primary : 'rgba(255, 255, 255, 0.5)'}
+                />
+                {repeatMode === RepeatMode.Track ? (
+                  <Text style={[styles.repeatBadge, { color: theme.primary }]}>1</Text>
+                ) : null}
+              </TouchableOpacity>
+            </View>
+
+            {/* Çalma Sırası Butonu */}
             <TouchableOpacity
-              style={styles.actionPillBtn}
-              activeOpacity={0.75}
+              style={[styles.appleUtilBtn, isQueueModalOpen && styles.appleUtilBtnActive]}
+              activeOpacity={0.7}
               onPress={() => setIsQueueModalOpen(true)}>
               <Ionicons
                 name="list"
-                size={16}
-                color="#a1a1aa"
-                style={{ marginRight: 6 }}
+                size={22}
+                color="rgba(255, 255, 255, 0.55)"
               />
-              <Text style={styles.actionPillBtnText}>
-                Sırada ({queue.length})
-              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -934,20 +1039,31 @@ export function FullscreenPlayerModal() {
 const styles = StyleSheet.create({
   fullscreenContainer: {
     flex: 1,
-    backgroundColor: '#121214',
-    paddingTop: 48,
-    paddingBottom: 24,
+    backgroundColor: '#0c0c0e',
+    paddingTop: 36,
+    paddingBottom: 28,
     justifyContent: 'space-between',
   },
   backdropOverlay: {
-    backgroundColor: 'rgba(14, 14, 18, 0.86)',
+    backgroundColor: 'rgba(10, 10, 14, 0.88)',
+  },
+  topGrabberContainer: {
+    alignItems: 'center',
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
+  topGrabberBar: {
+    width: 38,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
   },
   topHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   headerIconBtn: {
     padding: 6,
@@ -957,7 +1073,7 @@ const styles = StyleSheet.create({
     maxWidth: '70%',
   },
   headerSmallLabel: {
-    color: '#94a3b8',
+    color: 'rgba(255, 255, 255, 0.5)',
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.2,
@@ -972,44 +1088,44 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  coverCenterBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   artworkWrapper: {
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.5,
-    shadowRadius: 18,
-    elevation: 16,
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.55,
+    shadowRadius: 24,
+    elevation: 20,
   },
-  lyricsHintPill: {
+  swipeHintRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(24, 24, 27, 0.75)',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 20,
-    marginTop: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 18,
+    marginTop: 18,
   },
-  lyricsHintText: {
-    color: '#e4e4e7',
+  swipeHintText: {
+    color: 'rgba(255, 255, 255, 0.65)',
     fontSize: 12,
     fontWeight: '500',
   },
   lyricsCardContainer: {
     width: '100%',
     height: '100%',
-    backgroundColor: 'rgba(18, 18, 22, 0.75)',
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
     borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingTop: 16,
+    paddingHorizontal: 16,
+    paddingTop: 12,
     paddingBottom: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   lyricsCardHeader: {
     flexDirection: 'row',
@@ -1017,18 +1133,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
   },
   lyricsSourceBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
   },
   lyricsSourceText: {
-    color: '#93c5fd',
+    color: 'rgba(255, 255, 255, 0.85)',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -1045,27 +1161,29 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   lyricsListContent: {
-    paddingVertical: 20,
-    paddingHorizontal: 4,
+    paddingVertical: 24,
+    paddingHorizontal: 8,
   },
   lyricRow: {
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
   lyricRowActive: {
     transform: [{ scale: 1.02 }],
   },
   lyricText: {
-    color: '#71717a',
-    fontSize: 18,
-    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.35)',
+    fontSize: 22,
+    fontWeight: '700',
+    lineHeight: 32,
     textAlign: 'left',
   },
   lyricTextActive: {
     color: '#ffffff',
-    fontSize: 22,
+    fontSize: 27,
     fontWeight: '800',
-    textShadowColor: 'rgba(59, 130, 246, 0.6)',
-    textShadowOffset: { width: 0, height: 2 },
+    lineHeight: 38,
+    textShadowColor: 'rgba(255, 255, 255, 0.3)',
+    textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 8,
   },
   plainLyricsScroll: {
@@ -1082,7 +1200,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   lyricsLoadingText: {
-    color: '#a1a1aa',
+    color: 'rgba(255, 255, 255, 0.7)',
     fontSize: 14,
     marginTop: 12,
   },
@@ -1099,7 +1217,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   lyricsEmptySubtitle: {
-    color: '#71717a',
+    color: 'rgba(255, 255, 255, 0.5)',
     fontSize: 12,
     textAlign: 'center',
     marginTop: 6,
@@ -1120,28 +1238,31 @@ const styles = StyleSheet.create({
   },
   bottomSection: {
     paddingHorizontal: 24,
-    paddingTop: 8,
+    paddingTop: 4,
   },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   trackTitle: {
     color: '#ffffff',
-    fontSize: 22,
+    fontSize: 23,
     fontWeight: '800',
-    letterSpacing: -0.3,
+    letterSpacing: -0.4,
   },
   trackArtist: {
-    color: '#a1a1aa',
-    fontSize: 15,
+    color: 'rgba(255, 255, 255, 0.65)',
+    fontSize: 17,
     fontWeight: '500',
-    marginTop: 4,
+    marginTop: 2,
+  },
+  metaActionBtn: {
+    padding: 6,
   },
   scrubberBox: {
-    marginBottom: 8,
+    marginBottom: 6,
   },
   progressTouchContainer: {
     height: 24,
@@ -1149,40 +1270,74 @@ const styles = StyleSheet.create({
   },
   progressBarBackground: {
     height: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
     borderRadius: 2,
     overflow: 'hidden',
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#ffffff',
   },
   progressKnob: {
     position: 'absolute',
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: '#ffffff',
-    top: 6,
+    top: 7,
   },
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 2,
+    marginTop: 3,
   },
   timeText: {
-    color: '#71717a',
+    color: 'rgba(255, 255, 255, 0.5)',
     fontSize: 12,
     fontWeight: '500',
+    fontVariant: ['tabular-nums'],
   },
   controlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'space-evenly',
     marginVertical: 12,
-    paddingHorizontal: 8,
   },
-  secondaryBtn: {
+  appleNavBtn: {
+    width: 56,
+    height: 56,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  applePlayBtn: {
+    width: 72,
+    height: 72,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  appleBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    marginTop: 4,
+  },
+  appleUtilBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  appleUtilBtnActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  appleCenterUtilRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  appleSubUtilBtn: {
     padding: 8,
     position: 'relative',
   },
@@ -1193,50 +1348,6 @@ const styles = StyleSheet.create({
     color: '#3b82f6',
     fontSize: 9,
     fontWeight: '900',
-  },
-  navBtn: {
-    padding: 8,
-  },
-  playPauseMainBtn: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: '#ffffff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#ffffff',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  bottomActionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  actionPillBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(39, 39, 42, 0.7)',
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  actionPillBtnActive: {
-    backgroundColor: '#3b82f6',
-    borderColor: '#3b82f6',
-  },
-  actionPillBtnText: {
-    color: '#a1a1aa',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  actionPillBtnTextActive: {
-    color: '#ffffff',
   },
   modalBackdrop: {
     flex: 1,

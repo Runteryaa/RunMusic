@@ -14,6 +14,7 @@ import TrackPlayer, {
 } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
+import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from './TrackArtwork';
 import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
 import { saveLastPlayback } from '../services/playbackStorage';
@@ -27,6 +28,7 @@ export function MiniPlayer() {
   const { playing } = useIsPlaying();
   const progress = useProgress(500);
 
+  const theme = useThemeStore((s) => s.theme);
   const openFullscreenPlayer = usePlayerUIStore((s) => s.openFullscreenPlayer);
   const metadataMap = useStore((s) => s.metadataMap);
   const artworkMap = useStore((s) => s.artworkMap);
@@ -154,10 +156,17 @@ export function MiniPlayer() {
   }
 
   return (
-    <View style={styles.miniPlayerContainer} {...panResponder.panHandlers}>
-      {/* Top 2px Progress Bar */}
+    <View
+      style={[styles.miniPlayerContainer, { borderColor: theme.border }]}
+      {...panResponder.panHandlers}>
+      {/* Top 2px Progress Bar with dynamic theme color */}
       <View style={styles.progressBarTrack}>
-        <View style={[styles.progressBarFill, { width: `${progressPercent * 100}%` }]} />
+        <View
+          style={[
+            styles.progressBarFill,
+            { backgroundColor: theme.primary, width: `${progressPercent * 100}%` },
+          ]}
+        />
       </View>
 
       <View style={styles.contentRow}>
@@ -203,7 +212,7 @@ export function MiniPlayer() {
             activeOpacity={0.7}
             hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
             onPress={skipNext}>
-            <Ionicons name="play-skip-forward" size={20} color="#a1a1aa" />
+            <Ionicons name="play-skip-forward" size={22} color="#ffffff" />
           </TouchableOpacity>
         </View>
       </View>
@@ -213,28 +222,27 @@ export function MiniPlayer() {
 
 const styles = StyleSheet.create({
   miniPlayerContainer: {
-    backgroundColor: '#18181b',
-    borderTopLeftRadius: 14,
-    borderTopRightRadius: 14,
+    backgroundColor: '#1f1f23',
+    borderRadius: 14,
     borderWidth: 1,
-    borderBottomWidth: 0,
-    borderColor: '#27272a',
-    marginHorizontal: 8,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginHorizontal: 10,
+    marginBottom: 4,
     overflow: 'hidden',
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
     elevation: 12,
   },
   progressBarTrack: {
-    height: 2.5,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    height: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     width: '100%',
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#ffffff',
   },
   contentRow: {
     flexDirection: 'row',
@@ -257,7 +265,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   artistText: {
-    color: '#a1a1aa',
+    color: 'rgba(255, 255, 255, 0.65)',
     fontSize: 12,
     fontWeight: '500',
     marginTop: 2,
@@ -267,11 +275,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   controlIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 6,
+    marginLeft: 4,
   },
 });
