@@ -394,7 +394,7 @@ export default function LibraryScreen() {
               <>
                 <Ionicons name="search-outline" size={48} color="#52525b" style={styles.emptyIcon} />
                 <Text style={styles.emptyTitle}>Eşleşen şarkı bulunamadı</Text>
-                <Text style={styles.emptyText}>"{searchQuery}" araması için sonuç yok.</Text>
+                <Text style={styles.emptyText}>&quot;{searchQuery}&quot; araması için sonuç yok.</Text>
                 <TouchableOpacity style={styles.clearSearchActionBtn} onPress={() => setSearchQuery('')}>
                   <Text style={styles.clearSearchActionText}>Aramayı Temizle</Text>
                 </TouchableOpacity>

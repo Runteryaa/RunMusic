@@ -1,6 +1,5 @@
 import { Tabs } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import TrackPlayer, { Capability } from 'react-native-track-player';

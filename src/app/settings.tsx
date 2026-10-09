@@ -6,6 +6,7 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../store/useStore';
@@ -20,6 +21,8 @@ export default function SettingsScreen() {
     unhideTrack,
     unhideAllTracks,
     artworkMap,
+    lyricsCache,
+    clearLyricsCache,
   } = useStore();
 
   const [isExpanded, setIsExpanded] = useState(false);
@@ -38,6 +41,10 @@ export default function SettingsScreen() {
       };
     });
   }, [allAssets, hiddenTrackIds]);
+
+  const cachedLyricsCount = useMemo(() => {
+    return Object.keys(lyricsCache || {}).length;
+  }, [lyricsCache]);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
@@ -123,6 +130,47 @@ export default function SettingsScreen() {
             )}
           </View>
         )}
+      </View>
+
+      {/* Şarkı Sözleri Önbelleği */}
+      <View style={styles.lyricsCard}>
+        <View style={styles.lyricsCardHeader}>
+          <View style={styles.lyricsCardLeft}>
+            <View style={styles.headerIconContainer}>
+              <Ionicons name="mic-outline" size={18} color="#3b82f6" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.accordionTitle}>Şarkı Sözleri Önbelleği</Text>
+              <Text style={styles.lyricsCardSubtitle}>
+                {cachedLyricsCount > 0
+                  ? `${cachedLyricsCount} şarkı sözü çevrimdışı için kayıtlı`
+                  : 'Henüz önbelleğe alınmış söz yok'}
+              </Text>
+            </View>
+          </View>
+          {cachedLyricsCount > 0 && (
+            <TouchableOpacity
+              style={styles.clearLyricsBtn}
+              activeOpacity={0.7}
+              onPress={() => {
+                Alert.alert(
+                  'Önbelleği Temizle',
+                  'Kayıtlı tüm şarkı sözleri silinecek. Emin misiniz?',
+                  [
+                    { text: 'İptal', style: 'cancel' },
+                    {
+                      text: 'Temizle',
+                      style: 'destructive',
+                      onPress: clearLyricsCache,
+                    },
+                  ]
+                );
+              }}>
+              <Ionicons name="trash-outline" size={14} color="#ef4444" />
+              <Text style={styles.clearLyricsBtnText}>Temizle</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* Global Filters Section */}
@@ -342,5 +390,44 @@ const styles = StyleSheet.create({
     backgroundColor: '#18181b',
     color: '#ffffff',
     fontSize: 15,
+  },
+  lyricsCard: {
+    backgroundColor: '#18181b',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    marginBottom: 26,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  lyricsCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  lyricsCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
+  },
+  lyricsCardSubtitle: {
+    fontSize: 12,
+    color: '#71717a',
+    marginTop: 2,
+  },
+  clearLyricsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#27272a',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 5,
+  },
+  clearLyricsBtnText: {
+    color: '#ef4444',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

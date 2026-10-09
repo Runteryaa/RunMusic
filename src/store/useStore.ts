@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { RepeatMode } from 'react-native-track-player';
+import { LyricsResult } from '../services/lyricsService';
 
 export interface FilterSettings {
   minLengthSec: number | null;
@@ -27,6 +28,10 @@ interface AppState {
   setArtwork: (id: string, uri: string) => void;
   setBatchArtworks: (artworks: Record<string, string>) => void;
 
+  lyricsCache: Record<string, LyricsResult>;
+  setLyrics: (id: string, lyrics: LyricsResult) => void;
+  clearLyricsCache: () => void;
+
   library: MediaLibrary.Asset[];
   setLibrary: (assets: MediaLibrary.Asset[]) => void;
   isScanning: boolean;
@@ -50,6 +55,13 @@ export const useStore = create<AppState>()(
         set((state) => ({
           artworkMap: { ...state.artworkMap, ...artworks },
         })),
+
+      lyricsCache: {},
+      setLyrics: (id, lyrics) =>
+        set((state) => ({
+          lyricsCache: { ...state.lyricsCache, [id]: lyrics },
+        })),
+      clearLyricsCache: () => set({ lyricsCache: {} }),
 
       settings: {
         minLengthSec: null,
@@ -116,6 +128,7 @@ export const useStore = create<AppState>()(
         hiddenTrackIds: state.hiddenTrackIds,
         allAssets: state.allAssets,
         artworkMap: state.artworkMap,
+        lyricsCache: state.lyricsCache,
       }),
       onRehydrateStorage: () => (state) => {
         if (state && state.allAssets) {

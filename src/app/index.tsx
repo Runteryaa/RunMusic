@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -8,6 +8,9 @@ import {
   Modal,
   Pressable,
   FlatList,
+  ActivityIndicator,
+  TextInput,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import TrackPlayer, {
@@ -19,13 +22,27 @@ import TrackPlayer, {
 } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { TrackArtwork } from '../components/TrackArtwork';
+import {
+  LyricLine,
+  LyricsResult,
+  fetchLyricsOnline,
+  parseArtistAndTitle,
+} from '../services/lyricsService';
 
 export default function PlayerScreen() {
   const activeTrack = useActiveTrack();
   const { playing } = useIsPlaying();
   const progress = useProgress(250);
 
-  const { isShuffle, setIsShuffle, repeatMode, setRepeatMode, artworkMap } = useStore();
+  const {
+    isShuffle,
+    setIsShuffle,
+    repeatMode,
+    setRepeatMode,
+    artworkMap,
+    lyricsCache,
+    setLyrics,
+  } = useStore();
 
   const [barWidth, setBarWidth] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -35,6 +52,15 @@ export default function PlayerScreen() {
   const [isQueueModalOpen, setIsQueueModalOpen] = useState(false);
   const [queue, setQueue] = useState<Track[]>([]);
   const [activeIndex, setActiveIndex] = useState<number>(0);
+
+  // Lyrics Sheet state
+  const [isLyricsModalOpen, setIsLyricsModalOpen] = useState(false);
+  const [isLoadingLyrics, setIsLoadingLyrics] = useState(false);
+  const [isManualSearchOpen, setIsManualSearchOpen] = useState(false);
+  const [manualQuery, setManualQuery] = useState('');
+  const lyricsFlatListRef = useRef<FlatList<LyricLine>>(null);
+  const isUserScrollingRef = useRef(false);
+  const scrollTimeoutRef = useRef<any>(null);
 
   const currentPosition = isDragging ? dragTime : progress.position;
   const duration = progress.duration > 0 ? progress.duration : 0;
@@ -76,6 +102,83 @@ export default function PlayerScreen() {
       }).catch(() => {});
     }
   }, [activeTrack, activeIndex, artworkMap]);
+
+  const currentLyrics: LyricsResult | null = useMemo(() => {
+    if (!activeTrack?.id) return null;
+    return lyricsCache[activeTrack.id] || null;
+  }, [activeTrack?.id, lyricsCache]);
+
+  const loadLyricsForTrack = async (title: string, artist?: string, force = false) => {
+    if (!activeTrack?.id) return;
+    if (!force && lyricsCache[activeTrack.id]) return;
+
+    setIsLoadingLyrics(true);
+    try {
+      const result = await fetchLyricsOnline(title, artist || '');
+      if (result && activeTrack?.id) {
+        setLyrics(activeTrack.id, result);
+      }
+    } catch (e) {
+      console.warn('Failed to load lyrics', e);
+    } finally {
+      setIsLoadingLyrics(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTrack) {
+      const { title, artist } = parseArtistAndTitle(activeTrack.title || '', activeTrack.artist || '');
+      setManualQuery(artist ? `${artist} - ${title}` : title);
+      loadLyricsForTrack(title, artist);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTrack?.id]);
+
+  const activeLineIndex = useMemo(() => {
+    if (!currentLyrics?.parsedLines || currentLyrics.parsedLines.length === 0) return -1;
+    const pos = progress.position;
+    for (let i = currentLyrics.parsedLines.length - 1; i >= 0; i--) {
+      if (pos >= currentLyrics.parsedLines[i].time) {
+        return i;
+      }
+    }
+    return -1;
+  }, [currentLyrics?.parsedLines, progress.position]);
+
+  useEffect(() => {
+    if (
+      isLyricsModalOpen &&
+      activeLineIndex >= 0 &&
+      currentLyrics?.parsedLines &&
+      !isUserScrollingRef.current
+    ) {
+      try {
+        lyricsFlatListRef.current?.scrollToIndex({
+          index: activeLineIndex,
+          animated: true,
+          viewPosition: 0.35,
+        });
+      } catch {
+        // FlatList scrollToIndex before layout fallback
+      }
+    }
+  }, [activeLineIndex, isLyricsModalOpen, currentLyrics?.parsedLines]);
+
+  const handleManualSearch = async () => {
+    if (!manualQuery.trim() || !activeTrack?.id) return;
+    setIsLoadingLyrics(true);
+    try {
+      const result = await fetchLyricsOnline(manualQuery.trim());
+      if (result) {
+        setLyrics(activeTrack.id, result);
+        setIsManualSearchOpen(false);
+      }
+    } catch (e) {
+      console.warn('Manual lyrics search failed', e);
+    } finally {
+      setIsLoadingLyrics(false);
+    }
+  };
 
   const handleTouchCalc = (e: GestureResponderEvent) => {
     if (barWidth <= 0 || duration <= 0) return 0;
@@ -339,24 +442,38 @@ export default function PlayerScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Up Next / Queue Bottom Trigger Bar */}
-      <TouchableOpacity
-        style={styles.queueTriggerButton}
-        onPress={() => {
-          refreshQueue();
-          setIsQueueModalOpen(true);
-        }}>
-        <View style={styles.queueTriggerLeft}>
-          <Ionicons name="list" size={18} color="#3b82f6" style={styles.queueTriggerIcon} />
-          <Text style={styles.queueTriggerText}>Sıradaki Şarkılar</Text>
-          {queue.length > 0 && (
-            <View style={styles.queueTriggerBadge}>
-              <Text style={styles.queueTriggerBadgeText}>{queue.length}</Text>
-            </View>
-          )}
-        </View>
-        <Ionicons name="chevron-up" size={18} color="#71717a" />
-      </TouchableOpacity>
+      {/* Bottom Triggers Row: Lyrics (50%) + Queue (50%) */}
+      <View style={styles.bottomTriggersRow}>
+        <TouchableOpacity
+          style={styles.triggerButton}
+          activeOpacity={0.7}
+          onPress={() => setIsLyricsModalOpen(true)}>
+          <View style={styles.triggerLeft}>
+            <Ionicons name="mic-outline" size={17} color="#3b82f6" style={styles.triggerIcon} />
+            <Text style={styles.triggerText} numberOfLines={1}>Şarkı Sözleri</Text>
+          </View>
+          <Ionicons name="chevron-up" size={16} color="#71717a" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.triggerButton}
+          activeOpacity={0.7}
+          onPress={() => {
+            refreshQueue();
+            setIsQueueModalOpen(true);
+          }}>
+          <View style={styles.triggerLeft}>
+            <Ionicons name="list" size={17} color="#3b82f6" style={styles.triggerIcon} />
+            <Text style={styles.triggerText} numberOfLines={1}>Sırada</Text>
+            {queue.length > 0 && (
+              <View style={styles.triggerBadge}>
+                <Text style={styles.triggerBadgeText}>{queue.length}</Text>
+              </View>
+            )}
+          </View>
+          <Ionicons name="chevron-up" size={16} color="#71717a" />
+        </TouchableOpacity>
+      </View>
 
       {/* Up Next / Queue Full Bottom Sheet Modal */}
       <Modal
@@ -422,6 +539,174 @@ export default function PlayerScreen() {
                 </View>
               }
             />
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Lyrics Full Bottom Sheet Modal */}
+      <Modal
+        visible={isLyricsModalOpen}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setIsLyricsModalOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setIsLyricsModalOpen(false)}>
+          <Pressable style={styles.lyricsModalContent} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.dragHandleContainer}>
+              <View style={styles.dragHandle} />
+            </View>
+
+            {/* Lyrics Header */}
+            <View style={styles.lyricsHeader}>
+              <View style={styles.lyricsHeaderLeft}>
+                <Text style={styles.lyricsHeaderTitle} numberOfLines={1}>
+                  {cleanTitle(activeTrack?.title)}
+                </Text>
+                <View style={styles.lyricsSourceBadgeRow}>
+                  {currentLyrics ? (
+                    <View style={styles.lyricsSourceBadge}>
+                      <Ionicons
+                        name={currentLyrics.syncedLyrics ? 'flash' : 'document-text'}
+                        size={11}
+                        color="#3b82f6"
+                      />
+                      <Text style={styles.lyricsSourceText}>
+                        {currentLyrics.source === 'lrclib'
+                          ? currentLyrics.syncedLyrics
+                            ? 'LRCLIB (Senkronize)'
+                            : 'LRCLIB (Düz Metin)'
+                          : 'Genius (Düz Metin)'}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {currentLyrics?.syncedLyrics ? (
+                    <Text style={styles.lyricsHintText}>• Satıra dokunarak atla</Text>
+                  ) : null}
+                </View>
+              </View>
+
+              <View style={styles.lyricsHeaderActions}>
+                <TouchableOpacity
+                  style={styles.lyricsSearchToggleBtn}
+                  onPress={() => setIsManualSearchOpen(!isManualSearchOpen)}>
+                  <Ionicons
+                    name={isManualSearchOpen ? 'close' : 'search'}
+                    size={20}
+                    color={isManualSearchOpen ? '#ef4444' : '#a1a1aa'}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.closeLyricsBtn}
+                  onPress={() => setIsLyricsModalOpen(false)}>
+                  <Ionicons name="chevron-down" size={24} color="#a1a1aa" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Manual Search Bar (if opened) */}
+            {isManualSearchOpen && (
+              <View style={styles.manualSearchContainer}>
+                <TextInput
+                  style={styles.manualSearchInput}
+                  placeholder="Şarkı veya sanatçı adı..."
+                  placeholderTextColor="#71717a"
+                  value={manualQuery}
+                  onChangeText={setManualQuery}
+                  returnKeyType="search"
+                  onSubmitEditing={handleManualSearch}
+                />
+                <TouchableOpacity
+                  style={styles.manualSearchBtn}
+                  onPress={handleManualSearch}
+                  disabled={isLoadingLyrics}>
+                  {isLoadingLyrics ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={styles.manualSearchBtnText}>Ara</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Lyrics Body */}
+            {isLoadingLyrics ? (
+              <View style={styles.lyricsLoadingContainer}>
+                <ActivityIndicator size="large" color="#3b82f6" />
+                <Text style={styles.lyricsLoadingText}>Şarkı sözleri aranıyor...</Text>
+                <Text style={styles.lyricsLoadingSubtext}>LRCLIB & Genius taranıyor</Text>
+              </View>
+            ) : currentLyrics?.syncedLyrics && currentLyrics.parsedLines.length > 0 ? (
+              /* Synchronized Lyrics List */
+              <FlatList
+                ref={lyricsFlatListRef}
+                data={currentLyrics.parsedLines}
+                keyExtractor={(_, index) => `line_${index}`}
+                contentContainerStyle={styles.syncedLyricsListContent}
+                showsVerticalScrollIndicator={false}
+                onScrollBeginDrag={() => {
+                  isUserScrollingRef.current = true;
+                  if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+                }}
+                onScrollEndDrag={() => {
+                  scrollTimeoutRef.current = setTimeout(() => {
+                    isUserScrollingRef.current = false;
+                  }, 2500);
+                }}
+                onScrollToIndexFailed={({ index }) => {
+                  setTimeout(() => {
+                    lyricsFlatListRef.current?.scrollToIndex({
+                      index,
+                      animated: true,
+                      viewPosition: 0.35,
+                    });
+                  }, 100);
+                }}
+                renderItem={({ item, index }) => {
+                  const isActive = index === activeLineIndex;
+                  return (
+                    <TouchableOpacity
+                      activeOpacity={0.6}
+                      onPress={async () => {
+                        await TrackPlayer.seekTo(item.time);
+                      }}
+                      style={[
+                        styles.syncedLyricItem,
+                        isActive && styles.syncedLyricItemActive,
+                      ]}>
+                      <Text
+                        style={[
+                          styles.syncedLyricText,
+                          isActive && styles.syncedLyricTextActive,
+                        ]}>
+                        {item.text}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            ) : currentLyrics?.plainLyrics ? (
+              /* Plain Text Lyrics */
+              <ScrollView
+                style={styles.plainLyricsScroll}
+                contentContainerStyle={styles.plainLyricsContent}
+                showsVerticalScrollIndicator={false}>
+                <Text style={styles.plainLyricsText}>{currentLyrics.plainLyrics}</Text>
+              </ScrollView>
+            ) : (
+              /* Empty state */
+              <View style={styles.lyricsEmptyContainer}>
+                <Ionicons name="document-text-outline" size={48} color="#52525b" />
+                <Text style={styles.lyricsEmptyTitle}>Şarkı Sözü Bulunamadı</Text>
+                <Text style={styles.lyricsEmptySubtitle}>
+                  Bu şarkı için otomatik söz bulunamadı. Yukarıdaki arama butonuna dokunarak şarkıyı elle aratabilirsiniz.
+                </Text>
+                <TouchableOpacity
+                  style={styles.retrySearchBtn}
+                  onPress={() => setIsManualSearchOpen(true)}>
+                  <Ionicons name="search" size={16} color="#3b82f6" />
+                  <Text style={styles.retrySearchBtnText}>Elle Arama Yap</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </Pressable>
         </Pressable>
       </Modal>
@@ -569,7 +854,14 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: 'bold',
   },
-  queueTriggerButton: {
+  bottomTriggersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 4,
+  },
+  triggerButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -578,31 +870,33 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#27272a',
     paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginTop: 4,
+    paddingHorizontal: 12,
   },
-  queueTriggerLeft: {
+  triggerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    marginRight: 4,
   },
-  queueTriggerIcon: {
-    marginRight: 8,
+  triggerIcon: {
+    marginRight: 6,
   },
-  queueTriggerText: {
+  triggerText: {
     color: '#ffffff',
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
+    flexShrink: 1,
   },
-  queueTriggerBadge: {
+  triggerBadge: {
     backgroundColor: '#27272a',
     borderRadius: 10,
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
     paddingVertical: 2,
-    marginLeft: 8,
+    marginLeft: 6,
   },
-  queueTriggerBadgeText: {
+  triggerBadgeText: {
     color: '#3b82f6',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   modalBackdrop: {
@@ -755,5 +1049,191 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#71717a',
     textAlign: 'center',
+  },
+  lyricsModalContent: {
+    height: '82%',
+    backgroundColor: '#18181b',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    borderColor: '#27272a',
+    paddingTop: 10,
+    paddingBottom: 24,
+    paddingHorizontal: 18,
+  },
+  lyricsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+    marginBottom: 12,
+  },
+  lyricsHeaderLeft: {
+    flex: 1,
+    marginRight: 12,
+  },
+  lyricsHeaderTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  lyricsSourceBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  lyricsSourceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#27272a',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    gap: 4,
+  },
+  lyricsSourceText: {
+    fontSize: 11,
+    color: '#3b82f6',
+    fontWeight: '600',
+  },
+  lyricsHintText: {
+    fontSize: 11,
+    color: '#71717a',
+  },
+  lyricsHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  lyricsSearchToggleBtn: {
+    padding: 7,
+    backgroundColor: '#27272a',
+    borderRadius: 8,
+  },
+  closeLyricsBtn: {
+    padding: 4,
+  },
+  manualSearchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+    backgroundColor: '#27272a',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  manualSearchInput: {
+    flex: 1,
+    color: '#ffffff',
+    fontSize: 14,
+    paddingVertical: 8,
+  },
+  manualSearchBtn: {
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  manualSearchBtnText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  lyricsLoadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  lyricsLoadingText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 14,
+  },
+  lyricsLoadingSubtext: {
+    color: '#71717a',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  syncedLyricsListContent: {
+    paddingVertical: 120,
+    paddingHorizontal: 4,
+  },
+  syncedLyricItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginVertical: 4,
+  },
+  syncedLyricItemActive: {
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+  },
+  syncedLyricText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#52525b',
+    textAlign: 'center',
+    lineHeight: 28,
+  },
+  syncedLyricTextActive: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#ffffff',
+    textAlign: 'center',
+    lineHeight: 32,
+  },
+  plainLyricsScroll: {
+    flex: 1,
+  },
+  plainLyricsContent: {
+    paddingVertical: 16,
+    paddingHorizontal: 8,
+  },
+  plainLyricsText: {
+    fontSize: 16,
+    lineHeight: 28,
+    color: '#d4d4d8',
+    textAlign: 'center',
+  },
+  lyricsEmptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  lyricsEmptyTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  lyricsEmptySubtitle: {
+    fontSize: 13,
+    color: '#71717a',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  retrySearchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#27272a',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  retrySearchBtnText: {
+    color: '#3b82f6',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
