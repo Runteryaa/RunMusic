@@ -271,7 +271,20 @@ function pickBest(results: any[], expectedArtist: string, expectedTrack: string)
   return topTier.find((r) => r.syncedLyrics) || topTier[0] || null;
 }
 
-const LRCLIB_CLIENT_HEADER = 'LyricPopup Chrome Extension v1.0.0';
+export const LRCLIB_HEADERS: HeadersInit = {
+  'User-Agent':
+    'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+  'Lrclib-Client': 'LyricPopup v1.0.0 (https://github.com/Runteryaa/RunMusic)',
+  Accept: 'application/json',
+};
+
+export function buildLrclibSearchUrl(params: Record<string, string>): string {
+  const query = Object.entries(params)
+    .filter(([_, v]) => Boolean(v && v.trim()))
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v.trim())}`)
+    .join('&');
+  return `https://lrclib.net/api/search?${query}`;
+}
 
 export async function searchLrclib(title: string, artist = ''): Promise<LyricsResult | null> {
   try {
@@ -281,6 +294,7 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
     );
 
     let directFallbackResult: LyricsResult | null = null;
+    let directCandidate: LyricsCandidate | null = null;
 
     // 1. Doğrudan exact /api/get endpoint'ini dene (En hızlı, 503 yükünden etkilenmez)
     if (expectedArtist && expectedTrack) {
@@ -289,11 +303,23 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
           expectedArtist
         )}&track_name=${encodeURIComponent(expectedTrack)}`;
         const getRes = await fetch(getUrl, {
-          headers: { 'Lrclib-Client': LRCLIB_CLIENT_HEADER },
+          headers: LRCLIB_HEADERS,
         });
         if (getRes.ok) {
           const directData = await getRes.json();
           if (directData) {
+            directCandidate = {
+              id: `lrclib-${directData.id}`,
+              trackName: directData.trackName,
+              artistName: directData.artistName,
+              albumName: directData.albumName || '',
+              duration: directData.duration || 0,
+              hasSynced: !!directData.syncedLyrics,
+              syncedLyrics: directData.syncedLyrics || null,
+              plainLyrics: directData.plainLyrics || null,
+              source: 'lrclib',
+            };
+
             if (directData.syncedLyrics) {
               return {
                 id: `lrclib-${directData.id}`,
@@ -303,6 +329,7 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
                 plainLyrics: directData.plainLyrics || null,
                 parsedLines: parseLRC(directData.syncedLyrics),
                 source: 'lrclib',
+                candidates: [directCandidate],
               };
             } else if (directData.plainLyrics) {
               directFallbackResult = {
@@ -313,6 +340,7 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
                 plainLyrics: directData.plainLyrics,
                 parsedLines: [],
                 source: 'lrclib',
+                candidates: [directCandidate],
               };
             }
           }
@@ -341,24 +369,34 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
     if (title && title !== expectedTrack) {
       strategies.push({ q: title });
     }
+    const norm = normalise(title);
+    if (norm && norm !== title.toLowerCase()) {
+      strategies.push({ q: norm });
+    }
 
     const allCandidatesMap = new Map<number, { r: any; score: number }>();
 
     for (const params of strategies) {
-      const url = new URL('https://lrclib.net/api/search');
-      for (const [k, v] of Object.entries(params)) {
-        url.searchParams.set(k, v);
+      const searchUrl = buildLrclibSearchUrl(params);
+      let res: Response;
+      try {
+        res = await fetch(searchUrl, {
+          headers: LRCLIB_HEADERS,
+        });
+      } catch {
+        continue;
       }
-      let res = await fetch(url.toString(), {
-        headers: { 'Lrclib-Client': LRCLIB_CLIENT_HEADER },
-      });
 
       // 503 Server Overloaded durumunda bir kez kısa bekleme ile tekrar dene
       if (res.status === 503) {
         await new Promise((resolve) => setTimeout(resolve, 350));
-        res = await fetch(url.toString(), {
-          headers: { 'Lrclib-Client': LRCLIB_CLIENT_HEADER },
-        });
+        try {
+          res = await fetch(searchUrl, {
+            headers: LRCLIB_HEADERS,
+          });
+        } catch {
+          continue;
+        }
       }
 
       if (!res.ok) continue;
@@ -373,6 +411,25 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
 
       const bestLocal = pickBest(data, expectedArtist, expectedTrack);
       if (bestLocal && bestLocal.syncedLyrics) {
+        const sortedCandidates: LyricsCandidate[] = Array.from(allCandidatesMap.values())
+          .sort((a, b) => {
+            const aSynced = a.r.syncedLyrics ? 1 : 0;
+            const bSynced = b.r.syncedLyrics ? 1 : 0;
+            if (aSynced !== bSynced) return bSynced - aSynced;
+            return b.score - a.score;
+          })
+          .map(({ r }) => ({
+            id: `lrclib-${r.id}`,
+            trackName: r.trackName,
+            artistName: r.artistName,
+            albumName: r.albumName || '',
+            duration: r.duration || 0,
+            hasSynced: !!r.syncedLyrics,
+            syncedLyrics: r.syncedLyrics || null,
+            plainLyrics: r.plainLyrics || null,
+            source: 'lrclib' as const,
+          }));
+
         return {
           id: `lrclib-${bestLocal.id}`,
           trackName: bestLocal.trackName,
@@ -381,6 +438,7 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
           plainLyrics: bestLocal.plainLyrics || null,
           parsedLines: parseLRC(bestLocal.syncedLyrics),
           source: 'lrclib',
+          candidates: sortedCandidates,
         };
       }
     }
@@ -407,10 +465,7 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
 
     if (allResults.length === 0) {
       if (directFallbackResult) {
-        return {
-          ...directFallbackResult,
-          candidates: lrclibCandidates,
-        };
+        return directFallbackResult;
       }
       return null;
     }
@@ -430,10 +485,7 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
     }
 
     if (directFallbackResult) {
-      return {
-        ...directFallbackResult,
-        candidates: lrclibCandidates,
-      };
+      return directFallbackResult;
     }
     return null;
   } catch (e) {
@@ -612,24 +664,58 @@ export async function fetchLyricsOnline(title: string, artist = ''): Promise<Lyr
 export async function searchAllCandidates(query: string, artist = ''): Promise<LyricsCandidate[]> {
   const candidates: LyricsCandidate[] = [];
   const seenIds = new Set<string>();
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) return [];
 
-  // 1. Öncelik: LRCLIB Sonuçları
+  // 1. Mutlak Öncelik: LRCLIB Sonuçları
   try {
-    const { expectedArtist, expectedTrack, cleanedFullTitle } = getSearchKeywords(query, artist);
+    const { expectedArtist, expectedTrack, cleanedFullTitle } = getSearchKeywords(trimmedQuery, artist);
     const strategies: Record<string, string>[] = [
-      { q: query },
-      ...(expectedArtist && expectedTrack ? [{ track_name: expectedTrack, artist_name: expectedArtist }] : []),
-      ...(cleanedFullTitle && cleanedFullTitle !== query ? [{ q: cleanedFullTitle }] : []),
+      { q: trimmedQuery },
     ];
 
+    if (expectedArtist && expectedTrack) {
+      strategies.push({ track_name: expectedTrack, artist_name: expectedArtist });
+      strategies.push({ q: `${expectedArtist} ${expectedTrack}` });
+      strategies.push({ q: `${expectedArtist} - ${expectedTrack}` });
+    }
+    if (cleanedFullTitle && cleanedFullTitle !== trimmedQuery) {
+      strategies.push({ q: cleanedFullTitle });
+    }
+    if (expectedTrack && expectedTrack !== trimmedQuery) {
+      strategies.push({ q: expectedTrack });
+    }
+    const cleanArtist = cleanYouTubeTitle(artist);
+    if (cleanArtist && cleanArtist !== 'Local Audio' && cleanArtist !== 'Bilinmeyen Sanatçı') {
+      strategies.push({ q: `${cleanArtist} ${trimmedQuery}` });
+    }
+    const norm = normalise(trimmedQuery);
+    if (norm && norm !== trimmedQuery.toLowerCase()) {
+      strategies.push({ q: norm });
+    }
+
     for (const params of strategies) {
-      const url = new URL('https://lrclib.net/api/search');
-      for (const [k, v] of Object.entries(params)) {
-        url.searchParams.set(k, v);
+      const searchUrl = buildLrclibSearchUrl(params);
+      let res: Response;
+      try {
+        res = await fetch(searchUrl, {
+          headers: LRCLIB_HEADERS,
+        });
+      } catch {
+        continue;
       }
-      const res = await fetch(url.toString(), {
-        headers: { 'Lrclib-Client': LRCLIB_CLIENT_HEADER },
-      });
+
+      if (res.status === 503) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        try {
+          res = await fetch(searchUrl, {
+            headers: LRCLIB_HEADERS,
+          });
+        } catch {
+          continue;
+        }
+      }
+
       if (!res.ok) continue;
       const data = await res.json();
       if (Array.isArray(data)) {
@@ -651,18 +737,15 @@ export async function searchAllCandidates(query: string, artist = ''): Promise<L
           }
         }
       }
-      if (candidates.filter((c) => c.hasSynced).length >= 8) break;
+      if (candidates.filter((c) => c.hasSynced).length >= 10) break;
     }
   } catch (e) {
     console.warn('LRCLIB candidate search error:', e);
   }
 
-  // LRCLIB adaylarını senkronize olanlar üstte olacak şekilde sırala
-  candidates.sort((a, b) => (b.hasSynced ? 1 : 0) - (a.hasSynced ? 1 : 0));
-
   // 2. Genius Adayları (Seçenek olarak listeye ekle)
   try {
-    const searchUrl = `https://genius.com/api/search/multi?per_page=5&q=${encodeURIComponent(query.trim())}`;
+    const searchUrl = `https://genius.com/api/search/multi?per_page=5&q=${encodeURIComponent(trimmedQuery)}`;
     const res = await fetch(searchUrl, {
       headers: {
         'User-Agent':
@@ -694,6 +777,17 @@ export async function searchAllCandidates(query: string, artist = ''): Promise<L
     console.warn('Genius candidate search error:', e);
   }
 
+  // LRCLIB adaylarını senkronize olanlar üstte olacak şekilde sırala, Genius sonuçları altta kalsın
+  candidates.sort((a, b) => {
+    if (a.hasSynced !== b.hasSynced) {
+      return a.hasSynced ? -1 : 1;
+    }
+    if (a.source !== b.source) {
+      return a.source === 'lrclib' ? -1 : 1;
+    }
+    return 0;
+  });
+
   return candidates;
 }
 
@@ -712,7 +806,7 @@ export async function resolveCandidateToLyricsResult(
       const rawId = candidate.id.replace('lrclib-', '');
       try {
         const res = await fetch(`https://lrclib.net/api/get/${rawId}`, {
-          headers: { 'Lrclib-Client': LRCLIB_CLIENT_HEADER },
+          headers: LRCLIB_HEADERS,
         });
         if (res.ok) {
           const d = await res.json();

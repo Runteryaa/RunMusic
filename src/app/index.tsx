@@ -194,16 +194,16 @@ export default function PlayerScreen() {
         return;
       }
 
-      // 2. Eğer önbellekteki söz sadece düz metinse (örn: eski hatalı sürümden kalan Genius sözü),
+      // 2. Eğer önbellekteki söz sadece düz metinse veya Genius'tan geldiyse,
       // kullanıcıya mevcut sözü hemen göster (yükleme çarkı olmadan) AMA arka planda LRCLIB'den
-      // senkronize söz var mı diye kontrol et ve bulunursa otomatik olarak senkronize söze yükselt!
-      if (cached && !cached.syncedLyrics) {
+      // kontrol et ve senkronize veya LRCLIB sözü bulunursa otomatik olarak LRCLIB'e yükselt!
+      if (cached && (!cached.syncedLyrics || cached.source === 'genius')) {
         if (cached.candidates && cached.candidates.length > 0) {
           setCandidatesList(cached.candidates);
         }
         searchLrclib(title, cleanArtist)
           .then((lrclibResult) => {
-            if (lrclibResult && lrclibResult.syncedLyrics) {
+            if (lrclibResult && (lrclibResult.syncedLyrics || cached.source === 'genius')) {
               if (lrclibResult.candidates && lrclibResult.candidates.length > 0) {
                 setCandidatesList(lrclibResult.candidates);
               }
@@ -344,12 +344,14 @@ export default function PlayerScreen() {
     const nextState = !isManualSearchOpen;
     setIsManualSearchOpen(nextState);
     if (nextState) {
-      if (currentLyrics?.candidates && currentLyrics.candidates.length > 0) {
+      const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
+      const hasLrclibCandidates = currentLyrics?.candidates?.some((c) => c.source === 'lrclib');
+      if (hasLrclibCandidates && currentLyrics?.candidates && currentLyrics.candidates.length > 0) {
         setCandidatesList(currentLyrics.candidates);
       } else if (activeTrack) {
-        const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
+        const queryToSearch = manualQuery.trim() || displayTitle;
         setIsSearchingCandidates(true);
-        searchAllCandidates(displayTitle, searchArtist)
+        searchAllCandidates(queryToSearch, searchArtist)
           .then((results) => setCandidatesList(results))
           .catch(() => {})
           .finally(() => setIsSearchingCandidates(false));
