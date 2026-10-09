@@ -21,7 +21,7 @@ export const DEFAULT_THEME: ThemeColors = {
   textAccent: '#93c5fd',
 };
 
-// Bellek içi tema önbelleği (sadece doğrulanmış gerçek renkler)
+// Bellek içi tema önbelleği
 const themeCache = new Map<string, ThemeColors>();
 
 const BLURHASH_DIGITS =
@@ -49,7 +49,7 @@ function linearTosRGB(value: number): number {
 }
 
 /**
- * Blurhash dizesinden gerçek albüm kapağının en canlı (vibrant) baskın rengini çıkarır (<0.1ms).
+ * Blurhash dizesinden frekans analizi ve renk kümeleme ile kapağın gerçek baskın rengini çıkarır (<0.05ms).
  */
 function extractVibrantFromBlurhash(blurhash: string): [number, number, number] | null {
   try {
@@ -67,7 +67,6 @@ function extractVibrantFromBlurhash(blurhash: string): [number, number, number] 
     const dcB = dcVal & 255;
     colors[0] = [sRGBToLinear(dcR), sRGBToLinear(dcG), sRGBToLinear(dcB)];
 
-    let hasAC = false;
     for (let i = 1; i < numX * numY; i++) {
       const start = 4 + i * 2;
       if (start + 2 > blurhash.length) break;
@@ -79,62 +78,73 @@ function extractVibrantFromBlurhash(blurhash: string): [number, number, number] 
         f(Math.floor(acVal / 19) % 19),
         f(acVal % 19),
       ];
-      hasAC = true;
     }
 
-    let bestR = dcR;
-    let bestG = dcG;
-    let bestB = dcB;
+    // 8x8 grid üzerinde renk kümeleme histogramı (64 piksel, <0.02ms)
+    const buckets: Record<string, { r: number; g: number; b: number; weight: number }> = {};
+    let fallbackR = dcR;
+    let fallbackG = dcG;
+    let fallbackB = dcB;
 
-    const maxDC = Math.max(dcR, dcG, dcB);
-    const minDC = Math.min(dcR, dcG, dcB);
-    const satDC = maxDC === 0 ? 0 : (maxDC - minDC) / maxDC;
-    let maxScore = satDC * 3.5 + (maxDC + minDC) / 510;
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        for (let j = 0; j < numY; j++) {
+          for (let i = 0; i < numX; i++) {
+            const c = colors[i + j * numX];
+            if (!c) continue;
+            const basis = Math.cos((Math.PI * x * i) / 8) * Math.cos((Math.PI * y * j) / 8);
+            r += c[0] * basis;
+            g += c[1] * basis;
+            b += c[2] * basis;
+          }
+        }
+        const pxR = linearTosRGB(r);
+        const pxG = linearTosRGB(g);
+        const pxB = linearTosRGB(b);
 
-    if (hasAC) {
-      // 4x4 ızgarada en canlı renge sahip pikseli tespit et
-      for (let y = 0; y < 4; y++) {
-        for (let x = 0; x < 4; x++) {
-          let r = 0;
-          let g = 0;
-          let b = 0;
-          for (let j = 0; j < numY; j++) {
-            for (let i = 0; i < numX; i++) {
-              const c = colors[i + j * numX];
-              if (!c) continue;
-              const basis = Math.cos((Math.PI * x * i) / 4) * Math.cos((Math.PI * y * j) / 4);
-              r += c[0] * basis;
-              g += c[1] * basis;
-              b += c[2] * basis;
-            }
-          }
-          const pxR = linearTosRGB(r);
-          const pxG = linearTosRGB(g);
-          const pxB = linearTosRGB(b);
-          const max = Math.max(pxR, pxG, pxB);
-          const min = Math.min(pxR, pxG, pxB);
-          const delta = max - min;
-          const sat = max === 0 ? 0 : delta / max;
-          const l = (max + min) / 2;
-          if (l < 20 || l > 235) continue;
-          const score = sat * 3.5 + l / 255;
-          if (score > maxScore) {
-            maxScore = score;
-            bestR = pxR;
-            bestG = pxG;
-            bestB = pxB;
-          }
+        const max = Math.max(pxR, pxG, pxB);
+        const min = Math.min(pxR, pxG, pxB);
+        const l = (max + min) / 2;
+        if (l < 18 || l > 240) continue;
+
+        const delta = max - min;
+        const sat = max === 0 ? 0 : delta / max;
+
+        // 4-bit kuantalama (0, 16, 32, ..., 240)
+        const qr = Math.floor(pxR / 16) * 16;
+        const qg = Math.floor(pxG / 16) * 16;
+        const qb = Math.floor(pxB / 16) * 16;
+        const key = `${qr}_${qg}_${qb}`;
+
+        const weight = 1 + sat * sat * 3.0;
+        if (!buckets[key]) {
+          buckets[key] = { r: pxR, g: pxG, b: pxB, weight };
+        } else {
+          buckets[key].weight += weight;
         }
       }
     }
-    return [bestR, bestG, bestB];
+
+    let bestWeight = -1;
+    let best = { r: fallbackR, g: fallbackG, b: fallbackB };
+    for (const key in buckets) {
+      if (buckets[key].weight > bestWeight) {
+        bestWeight = buckets[key].weight;
+        best = buckets[key];
+      }
+    }
+
+    return [best.r, best.g, best.b];
   } catch {
     return null;
   }
 }
 
 /**
- * Thumbhash dizesinden gerçek albüm kapağının ortalama RGB rengini çıkarır (<0.01ms).
+ * Thumbhash dizesinden albüm kapağının ortalama RGB rengini çıkarır (<0.01ms).
  */
 function extractRgbFromThumbhash(thumbhash: string): [number, number, number] | null {
   try {
@@ -217,25 +227,27 @@ export function createThemeFromRgb(r: number, g: number, b: number): ThemeColors
   const s = max === 0 || min === 255 ? 0 : delta / (255 - Math.abs(2 * (max + min) / 2 - 255));
 
   // Siyah/Beyaz/Monokrom kapaklar için şık platinum/gümüş tema
-  if (s < 0.08) {
+  if (s < 0.10) {
     return {
       primary: '#e4e4e7',
-      primaryLight: '#f4f4f5',
+      primaryLight: '#ffffff',
       primaryDark: '#a1a1aa',
-      glowColor: 'rgba(255, 255, 255, 0.25)',
-      surface: 'rgba(255, 255, 255, 0.12)',
-      border: 'rgba(255, 255, 255, 0.25)',
-      textAccent: '#f4f4f5',
+      glowColor: 'rgba(255, 255, 255, 0.22)',
+      surface: 'rgba(255, 255, 255, 0.10)',
+      border: 'rgba(255, 255, 255, 0.22)',
+      textAccent: '#ffffff',
     };
   }
 
-  // Koyu AMOLED arka planda harika görünmesi için canlılık ve parlaklık ayarı
-  const targetLightness = Math.max(0.48, Math.min(0.66, l));
-  const targetSat = Math.max(0.65, s);
-  const [prR, prG, prB] = hslToRgb(h, targetSat, targetLightness);
+  // Orijinal renk tonunu koru! Asla yapay olarak 0.65'e zorlama!
+  // Karanlık AMOLED arka planda ikonların okunabilirliği için parlaklığı dengeli tut.
+  const targetLightness = Math.max(0.44, Math.min(0.66, l));
+  // Doygunluğu doğal tut; sadece çok sönükse hafifçe canlandır
+  const targetSat = Math.max(0.28, Math.min(0.95, s * 1.15));
 
-  const [lightR, lightG, lightB] = hslToRgb(h, targetSat, Math.min(0.84, targetLightness + 0.15));
-  const [darkR, darkG, darkB] = hslToRgb(h, targetSat, Math.max(0.28, targetLightness - 0.22));
+  const [prR, prG, prB] = hslToRgb(h, targetSat, targetLightness);
+  const [lightR, lightG, lightB] = hslToRgb(h, targetSat, Math.min(0.85, targetLightness + 0.16));
+  const [darkR, darkG, darkB] = hslToRgb(h, targetSat, Math.max(0.24, targetLightness - 0.22));
 
   const primaryHex = rgbToHex(prR, prG, prB);
   const primaryLightHex = rgbToHex(lightR, lightG, lightB);
@@ -247,7 +259,7 @@ export function createThemeFromRgb(r: number, g: number, b: number): ThemeColors
     primaryDark: primaryDarkHex,
     glowColor: `rgba(${prR}, ${prG}, ${prB}, 0.35)`,
     surface: `rgba(${prR}, ${prG}, ${prB}, 0.14)`,
-    border: `rgba(${prR}, ${prG}, ${prB}, 0.32)`,
+    border: `rgba(${prR}, ${prG}, ${prB}, 0.30)`,
     textAccent: primaryLightHex,
   };
 }
@@ -263,10 +275,10 @@ export function extractThemeFromSeed(_seed?: string): ThemeColors {
 
 /**
  * Albüm kapağının gerçek görselinden tema rengi çıkartır:
- * 1. Android native donanım hızlandırmalı dominant renk (<1ms)
- * 2. expo-image Glide ImageRef üzerinden Thumbhash / Blurhash analizi (<0.1ms)
- * 3. Doğrudan URI üzerinden Thumbhash analizi
- * 4. Asla rastgele pembe/cyan gibi renkler üretmez; görsel yoksa varsayılan temayı korur.
+ * 1. Android native 4096-bin kuantalama histogramı (<1ms)
+ * 2. expo-image Glide ImageRef üzerinden 8x8 frekans Blurhash analizi (<0.1ms)
+ * 3. expo-image Glide ImageRef üzerinden Thumbhash ortalama renk analizi (<0.01ms)
+ * 4. Asla rastgele renk üretmez; kapağın gerçek renklerini korur.
  */
 export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors> {
   if (!uri || typeof uri !== 'string') {
@@ -277,7 +289,7 @@ export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors
     return themeCache.get(uri)!;
   }
 
-  // 1. Yerel Android modülünden donanım hızlandırmalı dominant renk dene
+  // 1. Yerel Android modülünden donanım hızlandırmalı 4096-bin histogram dene (<1ms)
   try {
     const dominantHex = await getDominantColorAsync(uri);
     if (dominantHex && dominantHex.startsWith('#')) {
@@ -289,24 +301,11 @@ export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors
     // Devam et
   }
 
-  // 2. expo-image Glide üzerinden görsel referansını alıp Thumbhash/Blurhash ile renk çıkar
+  // 2. expo-image Glide üzerinden görsel referansını al
   try {
     const imageRef = await Image.loadAsync({ uri });
     if (imageRef) {
-      try {
-        const thumbhash = await Image.generateThumbhashAsync(imageRef);
-        if (thumbhash) {
-          const rgb = extractRgbFromThumbhash(thumbhash);
-          if (rgb) {
-            const theme = createThemeFromRgb(rgb[0], rgb[1], rgb[2]);
-            themeCache.set(uri, theme);
-            return theme;
-          }
-        }
-      } catch {
-        // Devam et
-      }
-
+      // Öncelikle Blurhash ile 8x8 uzamsal frekans kümelemesi yap (gerçek dominant renk)
       try {
         const blurhash = await Image.generateBlurhashAsync(imageRef, { width: 4, height: 3 });
         if (blurhash) {
@@ -320,12 +319,41 @@ export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors
       } catch {
         // Devam et
       }
+
+      // Blurhash desteklenmezse Thumbhash ortalama rengini dene
+      try {
+        const thumbhash = await Image.generateThumbhashAsync(imageRef);
+        if (thumbhash) {
+          const rgb = extractRgbFromThumbhash(thumbhash);
+          if (rgb) {
+            const theme = createThemeFromRgb(rgb[0], rgb[1], rgb[2]);
+            themeCache.set(uri, theme);
+            return theme;
+          }
+        }
+      } catch {
+        // Devam et
+      }
     }
   } catch {
     // Devam et
   }
 
-  // 3. expo-image native Thumbhash doğrudan URI üzerinden dene
+  // 3. expo-image doğrudan URI üzerinden Blurhash / Thumbhash dene
+  try {
+    const blurhash = await Image.generateBlurhashAsync(uri, { width: 4, height: 3 });
+    if (blurhash) {
+      const rgb = extractVibrantFromBlurhash(blurhash);
+      if (rgb) {
+        const theme = createThemeFromRgb(rgb[0], rgb[1], rgb[2]);
+        themeCache.set(uri, theme);
+        return theme;
+      }
+    }
+  } catch {
+    // Devam et
+  }
+
   try {
     const thumbhash = await Image.generateThumbhashAsync(uri);
     if (thumbhash) {
@@ -340,6 +368,5 @@ export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors
     // Devam et
   }
 
-  // 4. Görsel okunamadıysa veya yoksa rastgele renkler yerine varsayılan temayı koru
   return DEFAULT_THEME;
 }

@@ -318,19 +318,22 @@ class AudioArtworkModule : Module() {
     try {
       val context = appContext.reactContext ?: return null
       val bitmap: Bitmap? = if (rawUri.startsWith("content://")) {
+        var w = 0
+        var h = 0
         context.contentResolver.openInputStream(Uri.parse(rawUri))?.use { stream ->
           val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
           BitmapFactory.decodeStream(stream, null, boundsOptions)
-          val w = boundsOptions.outWidth
-          val h = boundsOptions.outHeight
-          if (w <= 0 || h <= 0) return null
-          context.contentResolver.openInputStream(Uri.parse(rawUri))?.use { stream2 ->
-            val decodeOptions = BitmapFactory.Options().apply {
-              inSampleSize = Math.max(1, Math.min(w / 32, h / 32))
-              inPreferredConfig = Bitmap.Config.ARGB_8888
-            }
-            BitmapFactory.decodeStream(stream2, null, decodeOptions)
+          w = boundsOptions.outWidth
+          h = boundsOptions.outHeight
+        }
+        if (w <= 0 || h <= 0) return null
+        context.contentResolver.openInputStream(Uri.parse(rawUri))?.use { stream2 ->
+          val sample = Math.max(1, Math.min(w / 48, h / 48))
+          val decodeOptions = BitmapFactory.Options().apply {
+            inSampleSize = Integer.highestOneBit(sample).coerceAtLeast(1)
+            inPreferredConfig = Bitmap.Config.ARGB_8888
           }
+          BitmapFactory.decodeStream(stream2, null, decodeOptions)
         }
       } else if (rawUri.startsWith("http://") || rawUri.startsWith("https://")) {
         try {
@@ -341,8 +344,9 @@ class AudioArtworkModule : Module() {
             val w = boundsOptions.outWidth
             val h = boundsOptions.outHeight
             if (w <= 0 || h <= 0) return null
+            val sample = Math.max(1, Math.min(w / 48, h / 48))
             val decodeOptions = BitmapFactory.Options().apply {
-              inSampleSize = Math.max(1, Math.min(w / 32, h / 32))
+              inSampleSize = Integer.highestOneBit(sample).coerceAtLeast(1)
               inPreferredConfig = Bitmap.Config.ARGB_8888
             }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
@@ -365,8 +369,9 @@ class AudioArtworkModule : Module() {
         val h = boundsOptions.outHeight
         if (w <= 0 || h <= 0) return null
 
+        val sample = Math.max(1, Math.min(w / 48, h / 48))
         val decodeOptions = BitmapFactory.Options().apply {
-          inSampleSize = Math.max(1, Math.min(w / 32, h / 32))
+          inSampleSize = Integer.highestOneBit(sample).coerceAtLeast(1)
           inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         BitmapFactory.decodeFile(file.absolutePath, decodeOptions)
@@ -380,48 +385,81 @@ class AudioArtworkModule : Module() {
       bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
       bitmap.recycle()
 
-      var bestColor = 0
-      var maxScore = -1f
-      var sumR = 0L
-      var sumG = 0L
-      var sumB = 0L
+      if (pixels.isEmpty()) return null
+
+      // 4096 bins (16x16x16 renk kuantalama histogramı)
+      val binWeights = FloatArray(4096)
+      val binCounts = IntArray(4096)
+      val binSumR = LongArray(4096)
+      val binSumG = LongArray(4096)
+      val binSumB = LongArray(4096)
+
+      var totalValidPixels = 0
+      var fallbackSumR = 0L
+      var fallbackSumG = 0L
+      var fallbackSumB = 0L
 
       for (pixel in pixels) {
+        val a = (pixel shr 24) and 0xff
+        if (a < 128) continue
+
         val r = (pixel shr 16) and 0xff
         val g = (pixel shr 8) and 0xff
         val b = pixel and 0xff
-        sumR += r
-        sumG += g
-        sumB += b
+
+        fallbackSumR += r
+        fallbackSumG += g
+        fallbackSumB += b
+        totalValidPixels++
 
         val max = Math.max(r, Math.max(g, b))
         val min = Math.min(r, Math.min(g, b))
         val lightness = (max + min) / 2f
-        if (lightness < 20 || lightness > 235) continue
+
+        // Aşırı siyah veya aşırı beyaz pikselleri atla
+        if (lightness < 20f || lightness > 238f) continue
 
         val delta = (max - min).toFloat()
         val saturation = if (max == 0) 0f else delta / max.toFloat()
-        if (saturation < 0.15f) continue
 
-        val score = saturation * 2.8f + (lightness / 255f)
-        if (score > maxScore) {
-          maxScore = score
-          bestColor = pixel
+        // 4-bit kuantalama (0-15 aralığı)
+        val qr = r shr 4
+        val qg = g shr 4
+        val qb = b shr 4
+        val binIndex = (qr shl 8) or (qg shl 4) or qb
+
+        // Canlı renklere orantılı ağırlık ver, ama popülasyonla çarp!
+        val weight = 1.0f + saturation * saturation * 2.8f
+        binWeights[binIndex] += weight
+        binCounts[binIndex]++
+        binSumR[binIndex] += r
+        binSumG[binIndex] += g
+        binSumB[binIndex] += b
+      }
+
+      var bestBin = -1
+      var maxWeight = -1f
+
+      for (i in 0 until 4096) {
+        if (binWeights[i] > maxWeight) {
+          maxWeight = binWeights[i]
+          bestBin = i
         }
       }
 
-      if (maxScore > 0) {
-        val r = (bestColor shr 16) and 0xff
-        val g = (bestColor shr 8) and 0xff
-        val b = bestColor and 0xff
+      if (bestBin != -1 && binCounts[bestBin] > 0) {
+        val r = (binSumR[bestBin] / binCounts[bestBin]).toInt().coerceIn(0, 255)
+        val g = (binSumG[bestBin] / binCounts[bestBin]).toInt().coerceIn(0, 255)
+        val b = (binSumB[bestBin] / binCounts[bestBin]).toInt().coerceIn(0, 255)
         return String.format("#%02x%02x%02x", r, g, b)
-      } else if (pixels.isNotEmpty()) {
-        val avgR = (sumR / pixels.size).toInt()
-        val avgG = (sumG / pixels.size).toInt()
-        val avgB = (sumB / pixels.size).toInt()
-        return String.format("#%02x%02x%02x", avgR, avgG, avgB)
+      } else if (totalValidPixels > 0) {
+        val r = (fallbackSumR / totalValidPixels).toInt().coerceIn(0, 255)
+        val g = (fallbackSumG / totalValidPixels).toInt().coerceIn(0, 255)
+        val b = (fallbackSumB / totalValidPixels).toInt().coerceIn(0, 255)
+        return String.format("#%02x%02x%02x", r, g, b)
       }
     } catch (_: Exception) {}
     return null
   }
+}
 }
