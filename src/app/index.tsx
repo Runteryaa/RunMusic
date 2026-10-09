@@ -521,7 +521,7 @@ export default function LibraryScreen() {
                 {searchQuery ? 'Eşleşen şarkı bulunamadı.' : 'Henüz şarkı bulunamadı.'}
               </Text>
               {!searchQuery && (
-                <TouchableOpacity style={styles.rescanBtn} onPress={scanMedia}>
+                <TouchableOpacity style={[styles.rescanBtn, { backgroundColor: theme.primary }]} onPress={scanMedia}>
                   <Text style={styles.rescanBtnText}>Tekrar Tara</Text>
                 </TouchableOpacity>
               )}
@@ -549,7 +549,10 @@ export default function LibraryScreen() {
               return (
                 <TouchableOpacity
                   key={item.id}
-                  style={[styles.sortOptionRow, isSelected && styles.sortOptionRowActive]}
+                  style={[
+                    styles.sortOptionRow,
+                    isSelected && [styles.sortOptionRowActive, { borderColor: theme.primary }],
+                  ]}
                   onPress={() => {
                     setSortOption(item.id);
                     setIsSortModalOpen(false);
@@ -558,18 +561,18 @@ export default function LibraryScreen() {
                     <Ionicons
                       name={item.icon}
                       size={18}
-                      color={isSelected ? '#3b82f6' : '#a1a1aa'}
+                      color={isSelected ? theme.primary : '#a1a1aa'}
                       style={{ marginRight: 12 }}
                     />
                     <Text
                       style={[
                         styles.sortOptionLabel,
-                        isSelected && styles.sortOptionLabelActive,
+                        isSelected && [styles.sortOptionLabelActive, { color: theme.primary }],
                       ]}>
                       {item.label}
                     </Text>
                   </View>
-                  {isSelected && <Ionicons name="checkmark" size={18} color="#3b82f6" />}
+                  {isSelected && <Ionicons name="checkmark" size={18} color={theme.primary} />}
                 </TouchableOpacity>
               );
             })}
@@ -602,7 +605,7 @@ export default function LibraryScreen() {
                     handleAddToQueue(selectedTrackForMenu);
                     setSelectedTrackForMenu(null);
                   }}>
-                  <Ionicons name="list" size={18} color="#3b82f6" style={{ marginRight: 12 }} />
+                  <Ionicons name="list" size={18} color={theme.primary} style={{ marginRight: 12 }} />
                   <Text style={styles.actionMenuText}>Sıraya Ekle</Text>
                 </TouchableOpacity>
 
@@ -762,7 +765,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   trackTitlePlaying: {
-    color: '#3b82f6',
+    color: '#ffffff',
     fontWeight: '700',
   },
   trackDuration: {
@@ -776,7 +779,7 @@ const styles = StyleSheet.create({
   swipeLeftActionBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#2563eb',
+    backgroundColor: '#27272a',
     justifyContent: 'center',
     paddingHorizontal: 20,
     borderRadius: 14,
@@ -805,7 +808,7 @@ const styles = StyleSheet.create({
   },
   rescanBtn: {
     marginTop: 16,
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#27272a',
     paddingHorizontal: 18,
     paddingVertical: 10,
     borderRadius: 12,
@@ -853,7 +856,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   sortOptionRowActive: {
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   sortOptionLeft: {
     flexDirection: 'row',
@@ -865,7 +868,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   sortOptionLabelActive: {
-    color: '#3b82f6',
+    color: '#ffffff',
     fontWeight: '700',
   },
   actionMenuCard: {

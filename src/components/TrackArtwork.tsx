@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../store/useStore';
+import { useThemeStore } from '../store/useThemeStore';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 
 interface TrackArtworkProps {
@@ -25,6 +26,7 @@ export function TrackArtwork({
   shadow = false,
 }: TrackArtworkProps) {
   const [hasError, setHasError] = useState(false);
+  const theme = useThemeStore((state) => state.theme);
   const artworkMap = useStore((state) => state.artworkMap);
   const setArtwork = useStore((state) => state.setArtwork);
 
@@ -73,7 +75,7 @@ export function TrackArtwork({
 
   return (
     <View style={containerStyle}>
-      <Ionicons name="musical-notes" size={iconSize} color="#3b82f6" />
+      <Ionicons name="musical-notes" size={iconSize} color={theme.primary} />
     </View>
   );
 }

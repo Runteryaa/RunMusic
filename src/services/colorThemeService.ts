@@ -128,6 +128,10 @@ function getFallbackTheme(key: string): ThemeColors {
   return createThemeFromRgb(r, g, b);
 }
 
+export function extractThemeFromSeed(seed: string): ThemeColors {
+  return getFallbackTheme(seed);
+}
+
 /**
  * Albüm kapağından tema rengi çıkartır.
  * - Yerel donanım hızlandırmalı Android katmanı üzerinden ~1ms içinde çalışır.

@@ -13,10 +13,12 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Updates from 'expo-updates';
 import Constants from 'expo-constants';
 import { useStore } from '../store/useStore';
+import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { cleanYouTubeTitle } from '../services/lyricsService';
 
 export default function SettingsScreen() {
+  const theme = useThemeStore((s) => s.theme);
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
   const hiddenTrackIds = useStore((s) => s.hiddenTrackIds);
@@ -123,11 +125,11 @@ export default function SettingsScreen() {
           onPress={() => setIsExpanded(!isExpanded)}>
           <View style={styles.accordionHeaderLeft}>
             <View style={styles.headerIconContainer}>
-              <Ionicons name="eye-off-outline" size={18} color="#3b82f6" />
+              <Ionicons name="eye-off-outline" size={18} color={theme.primary} />
             </View>
             <Text style={styles.accordionTitle}>Gizlenen Şarkılar</Text>
-            <View style={styles.countBadge}>
-              <Text style={styles.countBadgeText}>{hiddenTrackIds.length}</Text>
+            <View style={[styles.countBadge, { backgroundColor: theme.surface }]}>
+              <Text style={[styles.countBadgeText, { color: theme.textAccent }]}>{hiddenTrackIds.length}</Text>
             </View>
           </View>
           <Ionicons
@@ -149,8 +151,8 @@ export default function SettingsScreen() {
                     style={styles.restoreAllBtn}
                     activeOpacity={0.7}
                     onPress={unhideAllTracks}>
-                    <Ionicons name="refresh" size={14} color="#3b82f6" />
-                    <Text style={styles.restoreAllBtnText}>Tümünü Geri Getir</Text>
+                    <Ionicons name="refresh" size={14} color={theme.primary} />
+                    <Text style={[styles.restoreAllBtnText, { color: theme.primary }]}>Tümünü Geri Getir</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -182,8 +184,8 @@ export default function SettingsScreen() {
                         style={styles.unhideBtn}
                         activeOpacity={0.7}
                         onPress={() => unhideTrack(item.id)}>
-                        <Ionicons name="eye-outline" size={15} color="#3b82f6" />
-                        <Text style={styles.unhideBtnText}>Geri Getir</Text>
+                        <Ionicons name="eye-outline" size={15} color={theme.primary} />
+                        <Text style={[styles.unhideBtnText, { color: theme.primary }]}>Geri Getir</Text>
                       </TouchableOpacity>
                     </View>
                   ))}
@@ -204,7 +206,7 @@ export default function SettingsScreen() {
         <View style={styles.lyricsCardHeader}>
           <View style={styles.lyricsCardLeft}>
             <View style={styles.headerIconContainer}>
-              <Ionicons name="mic-outline" size={18} color="#3b82f6" />
+              <Ionicons name="mic-outline" size={18} color={theme.primary} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.accordionTitle}>Şarkı Sözleri Önbelleği</Text>
@@ -295,7 +297,7 @@ export default function SettingsScreen() {
       <View style={styles.versionCard}>
         <View style={styles.versionHeader}>
           <View style={styles.headerIconContainer}>
-            <Ionicons name="information-circle-outline" size={18} color="#3b82f6" />
+            <Ionicons name="information-circle-outline" size={18} color={theme.primary} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.accordionTitle}>Uygulama Bilgisi</Text>
@@ -343,7 +345,7 @@ export default function SettingsScreen() {
         </View>
 
         <TouchableOpacity
-          style={styles.checkUpdateBtn}
+          style={[styles.checkUpdateBtn, { backgroundColor: theme.primary }]}
           activeOpacity={0.7}
           onPress={handleCheckUpdate}
           disabled={isCheckingUpdate}>
@@ -447,7 +449,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   restoreAllBtnText: {
-    color: '#3b82f6',
+    color: '#ffffff',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -487,7 +489,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   unhideBtnText: {
-    color: '#3b82f6',
+    color: '#ffffff',
     fontSize: 12,
     fontWeight: '600',
   },
@@ -609,7 +611,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#27272a',
     borderRadius: 10,
     paddingVertical: 11,
     paddingHorizontal: 16,

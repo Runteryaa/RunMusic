@@ -31,9 +31,11 @@ function MainAppLayout() {
   const artworkUri =
     storeArtwork || (typeof activeTrack?.artwork === 'string' ? activeTrack.artwork : undefined);
 
+  const trackSeed = activeTrack?.title || activeTrack?.id || (typeof activeTrack?.url === 'string' ? activeTrack.url : undefined);
+
   useEffect(() => {
-    updateThemeFromArtwork(artworkUri);
-  }, [artworkUri, updateThemeFromArtwork]);
+    updateThemeFromArtwork(artworkUri, trackSeed);
+  }, [artworkUri, trackSeed, updateThemeFromArtwork]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#121212' }}>

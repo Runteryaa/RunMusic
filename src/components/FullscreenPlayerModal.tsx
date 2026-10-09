@@ -90,6 +90,12 @@ export function FullscreenPlayerModal() {
   const isUserScrollingRef = useRef(false);
   const scrollTimeoutRef = useRef<any>(null);
 
+  const plainLyricsScrollRef = useRef<ScrollView>(null);
+  const plainContentHeightRef = useRef(0);
+  const plainScrollViewHeightRef = useRef(0);
+  const isPlainUserScrollingRef = useRef(false);
+  const plainScrollTimeoutRef = useRef<any>(null);
+
   const currentPosition = isDragging ? dragTime : progress.position;
   const duration = progress.duration > 0 ? progress.duration : 0;
   const progressPercent = duration > 0 ? Math.min(1, Math.max(0, currentPosition / duration)) : 0;
@@ -360,6 +366,43 @@ export function FullscreenPlayerModal() {
       }
     }
   }, [activeLineIndex, isFullscreenPlayerOpen, isLyricsMode, parsedLines.length]);
+
+  // Düz metin (Genius / LRCLIB plain) şarkı sözlerini şarkının saniyesine göre aşağıya doğru orantılı kaydır
+  useEffect(() => {
+    if (
+      isFullscreenPlayerOpen &&
+      isLyricsMode &&
+      !currentLyrics?.syncedLyrics &&
+      currentLyrics?.plainLyrics &&
+      duration > 0 &&
+      !isPlainUserScrollingRef.current
+    ) {
+      const maxScroll = Math.max(0, plainContentHeightRef.current - plainScrollViewHeightRef.current);
+      if (maxScroll > 0) {
+        const progressRatio = Math.min(1, Math.max(0, progress.position / duration));
+        plainLyricsScrollRef.current?.scrollTo({
+          y: progressRatio * maxScroll,
+          animated: true,
+        });
+      }
+    }
+  }, [
+    progress.position,
+    duration,
+    isFullscreenPlayerOpen,
+    isLyricsMode,
+    currentLyrics?.syncedLyrics,
+    currentLyrics?.plainLyrics,
+  ]);
+
+  // Şarkı değiştiğinde düz metin kaydırma pozisyonunu sıfırla
+  useEffect(() => {
+    if (activeTrack) {
+      isPlainUserScrollingRef.current = false;
+      if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
+      plainLyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
+    }
+  }, [activeTrack]);
 
   const handleManualSearch = async () => {
     if (!manualQuery.trim() || !activeTrack) return;
@@ -896,7 +939,6 @@ export function FullscreenPlayerModal() {
           <Animated.View
             style={[
               styles.lyricsCardContainer,
-              StyleSheet.absoluteFill,
               {
                 opacity: lyricsTransition,
                 transform: [
@@ -980,11 +1022,28 @@ export function FullscreenPlayerModal() {
                 }}
               />
             ) : currentLyrics?.plainLyrics ? (
-              /* Düz Metin Söz Akışı */
+              /* Düz Metin Söz Akışı (Şarkının süresine göre orantılı kaydırma) */
               <ScrollView
+                ref={plainLyricsScrollRef}
                 style={styles.plainLyricsScroll}
                 contentContainerStyle={styles.lyricsListContent}
-                showsVerticalScrollIndicator={false}>
+                showsVerticalScrollIndicator={false}
+                onContentSizeChange={(_, h) => {
+                  plainContentHeightRef.current = h;
+                }}
+                onLayout={(e) => {
+                  plainScrollViewHeightRef.current = e.nativeEvent.layout.height;
+                }}
+                onScrollBeginDrag={() => {
+                  isPlainUserScrollingRef.current = true;
+                  if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
+                }}
+                onScrollEndDrag={() => {
+                  if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
+                  plainScrollTimeoutRef.current = setTimeout(() => {
+                    isPlainUserScrollingRef.current = false;
+                  }, 4000);
+                }}>
                 <Text style={styles.plainLyricsText}>{currentLyrics.plainLyrics}</Text>
               </ScrollView>
             ) : (
@@ -1193,7 +1252,7 @@ export function FullscreenPlayerModal() {
                   autoFocus
                 />
                 <TouchableOpacity
-                  style={styles.searchModalSubmitBtn}
+                  style={[styles.searchModalSubmitBtn, { backgroundColor: theme.primary }]}
                   onPress={handleManualSearch}
                   disabled={isSearchingCandidates}>
                   {isSearchingCandidates ? (
@@ -1237,7 +1296,7 @@ export function FullscreenPlayerModal() {
                       {resolvingCandidateId === item.id ? (
                         <ActivityIndicator
                           size="small"
-                          color="#3b82f6"
+                          color={theme.primary}
                           style={{ marginLeft: 8 }}
                         />
                       ) : null}
@@ -1281,18 +1340,28 @@ export function FullscreenPlayerModal() {
                   const isCurrent = index === activeIndex;
                   return (
                     <TouchableOpacity
-                      style={[styles.queueItem, isCurrent && styles.queueItemActive]}
+                      style={[
+                        styles.queueItem,
+                        isCurrent && [styles.queueItemActive, { backgroundColor: theme.surface }],
+                      ]}
                       onPress={async () => {
                         await TrackPlayer.skip(index);
                         await TrackPlayer.play();
                         setIsQueueModalOpen(false);
                       }}>
-                      <Text style={[styles.queueIndex, isCurrent && styles.queueIndexActive]}>
+                      <Text
+                        style={[
+                          styles.queueIndex,
+                          isCurrent && [styles.queueIndexActive, { color: theme.primary }],
+                        ]}>
                         {index + 1}
                       </Text>
                       <View style={{ flex: 1 }}>
                         <Text
-                          style={[styles.queueTrackTitle, isCurrent && styles.queueTrackTitleActive]}
+                          style={[
+                            styles.queueTrackTitle,
+                            isCurrent && [styles.queueTrackTitleActive, { color: theme.primary }],
+                          ]}
                           numberOfLines={1}>
                           {item.title}
                         </Text>
@@ -1301,7 +1370,7 @@ export function FullscreenPlayerModal() {
                         </Text>
                       </View>
                       {isCurrent ? (
-                        <Ionicons name="volume-high" size={20} color="#3b82f6" />
+                        <Ionicons name="volume-high" size={20} color={theme.primary} />
                       ) : null}
                     </TouchableOpacity>
                   );
@@ -1411,8 +1480,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   lyricsCardContainer: {
-    width: '100%',
-    height: '100%',
+    position: 'absolute',
+    top: 8,
+    bottom: 8,
+    left: 16,
+    right: 16,
+    alignSelf: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.25)',
     borderRadius: 24,
     paddingHorizontal: 16,
@@ -1447,7 +1520,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   lyricsSearchBtnText: {
-    color: '#3b82f6',
+    color: '#ffffff',
     fontSize: 12,
     fontWeight: '600',
     marginLeft: 4,
@@ -1455,9 +1528,13 @@ const styles = StyleSheet.create({
   lyricsListContent: {
     paddingVertical: 24,
     paddingHorizontal: 8,
+    alignItems: 'center',
   },
   lyricRow: {
     paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
   },
   lyricRowActive: {
     transform: [{ scale: 1.02 }],
@@ -1467,24 +1544,28 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     lineHeight: 32,
-    textAlign: 'left',
+    textAlign: 'center',
   },
   lyricTextActive: {
     color: '#ffffff',
     fontSize: 27,
     fontWeight: '800',
     lineHeight: 38,
+    textAlign: 'center',
     textShadowColor: 'rgba(255, 255, 255, 0.3)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 8,
   },
   plainLyricsScroll: {
     flex: 1,
+    width: '100%',
   },
   plainLyricsText: {
     color: '#e4e4e7',
     fontSize: 16,
     lineHeight: 28,
+    textAlign: 'center',
+    paddingHorizontal: 8,
   },
   lyricsLoadingCenter: {
     flex: 1,
@@ -1518,7 +1599,7 @@ const styles = StyleSheet.create({
   lyricsEmptySearchBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#27272a',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 20,
@@ -1637,7 +1718,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 2,
     top: 2,
-    color: '#3b82f6',
+    color: '#ffffff',
     fontSize: 9,
     fontWeight: '900',
   },
@@ -1686,7 +1767,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#27272a',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1785,7 +1866,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#27272a',
   },
   queueItemActive: {
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   queueIndex: {
     color: '#71717a',
@@ -1794,7 +1875,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   queueIndexActive: {
-    color: '#3b82f6',
+    color: '#ffffff',
   },
   queueTrackTitle: {
     color: '#ffffff',
@@ -1802,7 +1883,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   queueTrackTitleActive: {
-    color: '#3b82f6',
+    color: '#ffffff',
   },
   queueTrackArtist: {
     color: '#71717a',
