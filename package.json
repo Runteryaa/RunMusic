@@ -22,8 +22,6 @@
     "expo-system-ui": "~57.0.4",
     "expo-updates": "~57.0.25",
     "expo-web-browser": "~57.0.3",
-    "extract-colors": "^4.2.1",
-    "fast-png": "^8.0.0",
     "jpeg-js": "^0.4.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",

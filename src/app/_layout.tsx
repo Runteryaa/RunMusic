@@ -15,13 +15,12 @@ import { getLastPlayback } from '../services/playbackStorage';
 import { MiniPlayer } from '../components/MiniPlayer';
 import { FullscreenPlayerModal } from '../components/FullscreenPlayerModal';
 
-SplashScreen.preventAutoHideAsync();
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // Register background service
 TrackPlayer.registerPlaybackService(() => playbackService);
 
-export default function TabLayout() {
-  const [isPlayerReady, setIsPlayerReady] = useState(false);
+function MainAppLayout() {
   const activeTrack = useActiveTrack();
   const theme = useThemeStore((s) => s.theme);
   const updateThemeFromArtwork = useThemeStore((s) => s.updateThemeFromArtwork);
@@ -35,62 +34,6 @@ export default function TabLayout() {
   useEffect(() => {
     updateThemeFromArtwork(artworkUri);
   }, [artworkUri, updateThemeFromArtwork]);
-
-  useEffect(() => {
-    async function setup() {
-      try {
-        try {
-          if (Updates.isEnabled) {
-            Updates.setUpdateRequestHeadersOverride?.({ 'expo-channel-name': 'production' });
-          }
-        } catch {
-          // Ignore if header override is not allowed or supported
-        }
-
-        await TrackPlayer.setupPlayer();
-        await TrackPlayer.updateOptions({
-          capabilities: [
-            Capability.Play,
-            Capability.Pause,
-            Capability.SkipToNext,
-            Capability.SkipToPrevious,
-            Capability.Stop,
-          ],
-          compactCapabilities: [Capability.Play, Capability.Pause],
-        });
-        const savedRepeatMode = useStore.getState().repeatMode;
-        if (savedRepeatMode != null) {
-          await TrackPlayer.setRepeatMode(savedRepeatMode);
-        }
-
-        // Uygulama açılışında en son dinlenen şarkıyı bağımsız depolamadan yükle (hızlı ve hafif)
-        const lastPlayback = await getLastPlayback();
-        if (lastPlayback && lastPlayback.track) {
-          try {
-            await TrackPlayer.add([lastPlayback.track]);
-            if (lastPlayback.position && lastPlayback.position > 0) {
-              await TrackPlayer.seekTo(lastPlayback.position);
-            }
-          } catch (restoreErr) {
-            console.warn('Failed to restore last playback state', restoreErr);
-          }
-        }
-
-        setIsPlayerReady(true);
-      } catch (e) {
-        console.warn('TrackPlayer setup failed', e);
-        setIsPlayerReady(true);
-      } finally {
-        SplashScreen.hideAsync();
-      }
-    }
-    
-    setup();
-  }, []);
-
-  if (!isPlayerReady) {
-    return null;
-  }
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#121212' }}>
@@ -156,4 +99,99 @@ export default function TabLayout() {
       </View>
     </GestureHandlerRootView>
   );
+}
+
+export default function TabLayout() {
+  const [isPlayerReady, setIsPlayerReady] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    let didFinish = false;
+
+    const finalizeStartup = () => {
+      if (didFinish) return;
+      didFinish = true;
+      if (isMounted) {
+        setIsPlayerReady(true);
+      }
+      SplashScreen.hideAsync().catch(() => {});
+    };
+
+    // Failsafe: 2.5 saniye içinde ne olursa olsun splash ekranını kaldır ve arayüzü aç
+    const failsafeTimer = setTimeout(() => {
+      finalizeStartup();
+    }, 2500);
+
+    async function setup() {
+      try {
+        try {
+          if (Updates.isEnabled) {
+            Updates.setUpdateRequestHeadersOverride?.({ 'expo-channel-name': 'production' });
+          }
+        } catch {
+          // Ignore
+        }
+
+        try {
+          await TrackPlayer.setupPlayer();
+        } catch (setupErr) {
+          // Zaten başlatılmışsa devam et
+          console.warn('TrackPlayer setupPlayer notice:', setupErr);
+        }
+
+        try {
+          await TrackPlayer.updateOptions({
+            capabilities: [
+              Capability.Play,
+              Capability.Pause,
+              Capability.SkipToNext,
+              Capability.SkipToPrevious,
+              Capability.Stop,
+            ],
+            compactCapabilities: [Capability.Play, Capability.Pause],
+          });
+          const savedRepeatMode = useStore.getState().repeatMode;
+          if (savedRepeatMode != null) {
+            await TrackPlayer.setRepeatMode(savedRepeatMode);
+          }
+        } catch (optionsErr) {
+          console.warn('TrackPlayer options notice:', optionsErr);
+        }
+
+        // Uygulama açılışında en son dinlenen şarkıyı bağımsız depolamadan yükle (hızlı ve hafif)
+        try {
+          const lastPlayback = await Promise.race([
+            getLastPlayback(),
+            new Promise<null>((res) => setTimeout(() => res(null), 1000)),
+          ]);
+          if (lastPlayback && lastPlayback.track) {
+            await TrackPlayer.add([lastPlayback.track]);
+            if (lastPlayback.position && lastPlayback.position > 0) {
+              await TrackPlayer.seekTo(lastPlayback.position);
+            }
+          }
+        } catch (restoreErr) {
+          console.warn('Failed to restore last playback state', restoreErr);
+        }
+      } catch (e) {
+        console.warn('Startup setup error', e);
+      } finally {
+        clearTimeout(failsafeTimer);
+        finalizeStartup();
+      }
+    }
+
+    setup();
+
+    return () => {
+      isMounted = false;
+      clearTimeout(failsafeTimer);
+    };
+  }, []);
+
+  if (!isPlayerReady) {
+    return <View style={{ flex: 1, backgroundColor: '#121212' }} />;
+  }
+
+  return <MainAppLayout />;
 }

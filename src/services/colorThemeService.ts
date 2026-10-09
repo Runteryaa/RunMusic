@@ -1,7 +1,5 @@
 import * as FileSystem from 'expo-file-system';
 import jpeg from 'jpeg-js';
-import { decode as decodePng } from 'fast-png';
-import { extractColors } from 'extract-colors';
 
 export interface ThemeColors {
   primary: string;       // Canlı ana vurgu rengi (örn. #9333ea mor)
@@ -23,7 +21,7 @@ export const DEFAULT_THEME: ThemeColors = {
   textAccent: '#93c5fd',
 };
 
-// Bellek içi tema önbelleği (aynı şarkıya dönüldüğünde anında 0ms tepki)
+// Bellek içi tema önbelleği
 const themeCache = new Map<string, ThemeColors>();
 
 function base64ToUint8Array(base64: string): Uint8Array {
@@ -80,7 +78,6 @@ function rgbToHex(r: number, g: number, b: number): string {
 }
 
 function createThemeFromRgb(r: number, g: number, b: number): ThemeColors {
-  // Aşırı karanlık renkleri karanlık modda görünür kılmak için hafif aydınlat
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const delta = max - min;
@@ -95,13 +92,13 @@ function createThemeFromRgb(r: number, g: number, b: number): ThemeColors {
   let l = (max + min) / (2 * 255);
   const s = max === 0 || min === 255 ? 0 : delta / (255 - Math.abs(2 * (max + min) / 2 - 255));
 
-  // Koyu arka planda zengin görünmesi için lightness aralığını ayarla [0.5, 0.65]
-  const targetLightness = Math.max(0.48, Math.min(0.68, l));
-  const targetSat = Math.max(0.6, s);
+  // Koyu AMOLED arka planda harika görünmesi için ayarla
+  const targetLightness = Math.max(0.48, Math.min(0.66, l));
+  const targetSat = Math.max(0.65, s);
   const [prR, prG, prB] = hslToRgb(h, targetSat, targetLightness);
 
-  const [lightR, lightG, lightB] = hslToRgb(h, targetSat, Math.min(0.82, targetLightness + 0.15));
-  const [darkR, darkG, darkB] = hslToRgb(h, targetSat, Math.max(0.3, targetLightness - 0.2));
+  const [lightR, lightG, lightB] = hslToRgb(h, targetSat, Math.min(0.84, targetLightness + 0.15));
+  const [darkR, darkG, darkB] = hslToRgb(h, targetSat, Math.max(0.28, targetLightness - 0.22));
 
   const primaryHex = rgbToHex(prR, prG, prB);
   const primaryLightHex = rgbToHex(lightR, lightG, lightB);
@@ -119,15 +116,75 @@ function createThemeFromRgb(r: number, g: number, b: number): ThemeColors {
 }
 
 /**
- * Verilen albüm kapağı URI adresinden canlı tema renklerini çıkartır.
- * Ön belleğe alır ve sonraki çağrılarda anında döndürür.
+ * Saf JavaScript renk kümeleme algoritması.
+ * Dış bağımlılık gerektirmez, React Native Hermes üzerinde asla çökmez.
  */
-export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors> {
+function extractDominantRgbFromPixels(
+  data: ArrayLike<number>,
+  width: number,
+  height: number
+): { r: number; g: number; b: number } {
+  const totalPixels = width * height;
+  // En fazla 2000 piksel örnekle (0.2 milisaniyede tamamlanır)
+  const step = Math.max(1, Math.floor(totalPixels / 2000)) * 4;
+  const buckets: Record<string, { r: number; g: number; b: number; weight: number }> = {};
+
+  for (let i = 0; i < data.length; i += step) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const a = data[i + 3] ?? 255;
+
+    if (a < 128) continue; // Saydam pikselleri atla
+
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const lightness = (max + min) / 2;
+
+    // Saf siyah veya saf beyaz arkaplanları atla
+    if (lightness < 20 || lightness > 235) continue;
+
+    const delta = max - min;
+    const saturation = max === 0 ? 0 : delta / max;
+
+    // 5-bit renk kümeleme (32 seviye)
+    const qr = Math.floor(r / 16) * 16;
+    const qg = Math.floor(g / 16) * 16;
+    const qb = Math.floor(b / 16) * 16;
+    const key = `${qr}_${qg}_${qb}`;
+
+    // Canlı renklere yüksek ağırlık ver (doygunluk ağırlığı)
+    const weight = 1 + saturation * 3.5;
+
+    if (!buckets[key]) {
+      buckets[key] = { r: qr, g: qg, b: qb, weight };
+    } else {
+      buckets[key].weight += weight;
+    }
+  }
+
+  let best = { r: 59, g: 130, b: 246 };
+  let maxWeight = -1;
+
+  for (const key in buckets) {
+    if (buckets[key].weight > maxWeight) {
+      maxWeight = buckets[key].weight;
+      best = buckets[key];
+    }
+  }
+
+  return best;
+}
+
+/**
+ * Verilen albüm kapağı URI adresinden canlı tema renklerini çıkartır.
+ * Asla hata fırlatmaz, zaman aşımı korumalıdır.
+ */
+async function internalExtractTheme(uri: string): Promise<ThemeColors> {
   if (!uri || typeof uri !== 'string') {
     return DEFAULT_THEME;
   }
 
-  // 1. Önbellek kontrolü
   if (themeCache.has(uri)) {
     return themeCache.get(uri)!;
   }
@@ -135,110 +192,76 @@ export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors
   try {
     let bytes: Uint8Array | null = null;
 
-    // 2. Baytları oku (HTTP veya Dosya)
     if (uri.startsWith('http://') || uri.startsWith('https://')) {
-      const resp = await fetch(uri);
-      const ab = await resp.arrayBuffer();
-      bytes = new Uint8Array(ab);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      try {
+        const resp = await fetch(uri, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        const ab = await resp.arrayBuffer();
+        bytes = new Uint8Array(ab);
+      } catch {
+        clearTimeout(timeoutId);
+        themeCache.set(uri, DEFAULT_THEME);
+        return DEFAULT_THEME;
+      }
     } else {
       let fileUri = uri;
       if (!fileUri.startsWith('file://') && !fileUri.startsWith('content://')) {
         fileUri = 'file://' + fileUri;
       }
+
+      // Dosya boyutu kontrolü (1MB'dan büyük dosyaları atla)
+      try {
+        const fileInfo = await FileSystem.getInfoAsync(fileUri);
+        if (!fileInfo.exists || (fileInfo.size && fileInfo.size > 1024 * 1024)) {
+          themeCache.set(uri, DEFAULT_THEME);
+          return DEFAULT_THEME;
+        }
+      } catch {
+        // Android content:// şemalarında getInfoAsync desteklenmeyebilir
+      }
+
       const base64 = await FileSystem.readAsStringAsync(fileUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
-      bytes = base64ToUint8Array(base64);
+      const cleanBase64 = base64.replace(/\s+/g, '');
+      bytes = base64ToUint8Array(cleanBase64);
     }
 
     if (!bytes || bytes.length < 8) {
-      return DEFAULT_THEME;
-    }
-
-    // 3. Format kontrolü ve Decode (JPEG veya PNG)
-    let rawPixels: ArrayLike<number> | null = null;
-    let width = 0;
-    let height = 0;
-
-    const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
-    const isPng =
-      bytes[0] === 0x89 &&
-      bytes[1] === 0x50 &&
-      bytes[2] === 0x4e &&
-      bytes[3] === 0x47;
-
-    if (isJpeg) {
-      const decoded = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
-      rawPixels = decoded.data;
-      width = decoded.width;
-      height = decoded.height;
-    } else if (isPng) {
-      const decoded = decodePng(bytes);
-      rawPixels = decoded.data;
-      width = decoded.width;
-      height = decoded.height;
-    }
-
-    if (!rawPixels || width === 0 || height === 0) {
-      return DEFAULT_THEME;
-    }
-
-    // 4. Yıldırım hızı için piksel örnekleme (Maksimum 48x48 piksele indirgeme)
-    const targetDim = 48;
-    const stepX = Math.max(1, Math.floor(width / targetDim));
-    const stepY = Math.max(1, Math.floor(height / targetDim));
-
-    const sampleWidth = Math.ceil(width / stepX);
-    const sampleHeight = Math.ceil(height / stepY);
-    const sampledPixels = new Uint8ClampedArray(sampleWidth * sampleHeight * 4);
-
-    let outIndex = 0;
-    for (let y = 0; y < height; y += stepY) {
-      for (let x = 0; x < width; x += stepX) {
-        const srcIndex = (y * width + x) * 4;
-        sampledPixels[outIndex] = rawPixels[srcIndex];
-        sampledPixels[outIndex + 1] = rawPixels[srcIndex + 1];
-        sampledPixels[outIndex + 2] = rawPixels[srcIndex + 2];
-        sampledPixels[outIndex + 3] = rawPixels[srcIndex + 3];
-        outIndex += 4;
-      }
-    }
-
-    // 5. Renkleri kümeleme ve en canlı/baskın tonu seçme
-    const extracted = await extractColors(
-      { data: sampledPixels, width: sampleWidth, height: sampleHeight },
-      {
-        pixels: sampleWidth * sampleHeight,
-        distance: 0.18,
-        colorValidator: (r, g, b, a = 255) => {
-          if (a < 128) return false;
-          // Aşırı koyu ve aşırı açık beyazları eleyerek asıl rengi bul
-          const l = (Math.max(r, g, b) + Math.min(r, g, b)) / (2 * 255);
-          return l >= 0.12 && l <= 0.92;
-        },
-      }
-    );
-
-    if (!extracted || extracted.length === 0) {
       themeCache.set(uri, DEFAULT_THEME);
       return DEFAULT_THEME;
     }
 
-    // En zengin, renkli tonu puanla (Doygunluk x Alan)
-    const scored = [...extracted].sort((a, b) => {
-      const scoreA = (a.saturation || 0) * 0.7 + (a.area || 0) * 0.3;
-      const scoreB = (b.saturation || 0) * 0.7 + (b.area || 0) * 0.3;
-      return scoreB - scoreA;
-    });
+    // JPEG kontrolü (0xFF, 0xD8)
+    const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
+    if (!isJpeg) {
+      themeCache.set(uri, DEFAULT_THEME);
+      return DEFAULT_THEME;
+    }
 
-    const bestColor = scored[0];
-    const theme = createThemeFromRgb(bestColor.red, bestColor.green, bestColor.blue);
+    const decoded = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
+    if (!decoded || !decoded.data || decoded.width === 0 || decoded.height === 0) {
+      themeCache.set(uri, DEFAULT_THEME);
+      return DEFAULT_THEME;
+    }
+
+    const dominant = extractDominantRgbFromPixels(decoded.data, decoded.width, decoded.height);
+    const theme = createThemeFromRgb(dominant.r, dominant.g, dominant.b);
 
     themeCache.set(uri, theme);
     return theme;
   } catch (err) {
-    console.warn('Cover art color extraction failed:', err);
+    console.warn('Cover art color extraction fallback:', err);
     themeCache.set(uri, DEFAULT_THEME);
     return DEFAULT_THEME;
   }
+}
+
+export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors> {
+  return Promise.race([
+    internalExtractTheme(uri),
+    new Promise<ThemeColors>((resolve) => setTimeout(() => resolve(DEFAULT_THEME), 2500)),
+  ]);
 }
