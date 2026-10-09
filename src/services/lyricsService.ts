@@ -126,6 +126,86 @@ export function cleanYouTubeTitle(str: string): string {
 export const cleanTrackTitle = cleanYouTubeTitle;
 
 /**
+ * Başlık içerisindeki mükerrer sanatçı adını temizler.
+ * Örneğin:
+ * - "Duman - Kırmış Kalbini" (artist="Duman") -> "Kırmış Kalbini"
+ * - "Duman : Kırmış Kalbini" (artist="Duman") -> "Kırmış Kalbini"
+ * - "Duman Kırmış Kalbini" (artist="Duman") -> "Kırmış Kalbini"
+ * - "Kırmış Kalbini - Duman" (artist="Duman") -> "Kırmış Kalbini"
+ * - "Kırmış Kalbini by Duman" (artist="Duman") -> "Kırmış Kalbini"
+ * - "Kırmış Kalbini (Duman)" (artist="Duman") -> "Kırmış Kalbini"
+ */
+export function stripArtistFromTitle(title: string, artist?: string): string {
+  if (!title) return '';
+  let result = title.trim();
+  const cleanArt = cleanYouTubeTitle(artist || '').trim();
+
+  if (
+    !cleanArt ||
+    cleanArt.toLowerCase() === 'local audio' ||
+    cleanArt.toLowerCase() === 'bilinmeyen sanatci' ||
+    cleanArt.toLowerCase() === 'bilinmeyen sanatçı'
+  ) {
+    return result;
+  }
+
+  const escapedArt = cleanArt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // 1. Başlığın başında sanatçı ve ayırıcı varsa: "Artist - Title", "Artist : Title", "Artist / Title", "Artist _ Title"
+  const prefixSeparatorRegex = new RegExp(`^${escapedArt}\\s*[-–—:|~_/]\\s*`, 'i');
+  if (prefixSeparatorRegex.test(result)) {
+    const stripped = result.replace(prefixSeparatorRegex, '').trim();
+    if (stripped.length > 0) return stripped;
+  }
+
+  // 2. Başlığın başında boşlukla ayrılmış sanatçı varsa: "Artist Title"
+  const prefixSpaceRegex = new RegExp(`^${escapedArt}\\s+`, 'i');
+  if (prefixSpaceRegex.test(result)) {
+    const stripped = result.replace(prefixSpaceRegex, '').trim();
+    if (stripped.length > 0) return stripped;
+  }
+
+  // 3. Başlığın sonunda sanatçı ve ayırıcı varsa: "Title - Artist", "Title : Artist", vb.
+  const suffixSeparatorRegex = new RegExp(`\\s*[-–—:|~_/]\\s*${escapedArt}$`, 'i');
+  if (suffixSeparatorRegex.test(result)) {
+    const stripped = result.replace(suffixSeparatorRegex, '').trim();
+    if (stripped.length > 0) return stripped;
+  }
+
+  // 4. "Title by Artist"
+  const suffixByRegex = new RegExp(`\\s+by\\s+${escapedArt}$`, 'i');
+  if (suffixByRegex.test(result)) {
+    const stripped = result.replace(suffixByRegex, '').trim();
+    if (stripped.length > 0) return stripped;
+  }
+
+  // 5. Parantez içi sanatçı: "Title (Artist)" veya "Title [Artist]"
+  const bracketRegex = new RegExp(`\\s*[\\[\\(]\\s*${escapedArt}\\s*[\\]\\)]`, 'i');
+  if (bracketRegex.test(result)) {
+    const stripped = result.replace(bracketRegex, '').trim();
+    if (stripped.length > 0) return stripped;
+  }
+
+  // 6. Normalizasyon karşılaştırması (Türkçe karakter veya boşluk farkı durumu için)
+  const normArt = normalise(cleanArt);
+  const normRes = normalise(result);
+  if (normArt && normRes.startsWith(normArt + ' ')) {
+    const artWordCount = normArt.split(' ').filter(Boolean).length;
+    const titleWords = result.split(/\s+/);
+    if (titleWords.length > artWordCount) {
+      const stripped = titleWords
+        .slice(artWordCount)
+        .join(' ')
+        .replace(/^[-–—:|~_/]\s*/, '')
+        .trim();
+      if (stripped.length > 0) return stripped;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Extracts and cleans search keywords from a video / audio title.
  * Ported directly from Runteryaa/YT-LyricPopup background.js.
  */
@@ -146,8 +226,17 @@ export function getSearchKeywords(videoTitle: string, channelName = '') {
   const rawArtist = dashMatch ? dashMatch[1].trim() : '';
   const rawTrack = dashMatch ? dashMatch[2].trim() : titleBeforePipe.trim();
 
-  const expectedArtist = cleanYouTubeTitle(rawArtist || channelName);
-  const expectedTrack = cleanYouTubeTitle(rawTrack);
+  let expectedArtist = cleanYouTubeTitle(rawArtist || channelName);
+  let expectedTrack = cleanYouTubeTitle(rawTrack);
+
+  // Başlık içinde kalan sanatçı ismini ayıkla (mükerrerliği önler)
+  if (expectedArtist) {
+    expectedTrack = stripArtistFromTitle(expectedTrack, expectedArtist);
+  }
+  if (channelName && channelName !== expectedArtist) {
+    expectedTrack = stripArtistFromTitle(expectedTrack, channelName);
+  }
+
   const cleanChannel = cleanYouTubeTitle(channelName);
 
   let cleanedFullTitle = expectedTrack;

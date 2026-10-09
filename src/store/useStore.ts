@@ -19,6 +19,22 @@ export interface TrackMetadata {
   artwork?: string;
 }
 
+export interface PlaybackTrackItem {
+  id: string;
+  url: string;
+  title?: string;
+  artist?: string;
+  artwork?: string;
+}
+
+export interface LastPlaybackState {
+  trackId: string;
+  position?: number;
+  trackIndex?: number;
+  track?: PlaybackTrackItem;
+  queue?: PlaybackTrackItem[];
+}
+
 interface AppState {
   settings: FilterSettings;
   updateSettings: (settings: Partial<FilterSettings>) => void;
@@ -59,6 +75,10 @@ interface AppState {
   setIsShuffle: (isShuffle: boolean) => void;
   repeatMode: RepeatMode;
   setRepeatMode: (mode: RepeatMode) => void;
+
+  lastPlaybackState: LastPlaybackState | null;
+  setLastPlaybackState: (state: LastPlaybackState | null) => void;
+  setLastPlaybackPosition: (position: number) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -174,6 +194,15 @@ export const useStore = create<AppState>()(
       setIsShuffle: (isShuffle) => set({ isShuffle }),
       repeatMode: RepeatMode.Off,
       setRepeatMode: (repeatMode) => set({ repeatMode }),
+
+      lastPlaybackState: null,
+      setLastPlaybackState: (lastPlaybackState) => set({ lastPlaybackState }),
+      setLastPlaybackPosition: (position) =>
+        set((state) => ({
+          lastPlaybackState: state.lastPlaybackState
+            ? { ...state.lastPlaybackState, position }
+            : null,
+        })),
     }),
     {
       name: 'runmusic-storage',
@@ -187,6 +216,7 @@ export const useStore = create<AppState>()(
         artworkMap: state.artworkMap,
         metadataMap: state.metadataMap,
         lyricsCache: state.lyricsCache,
+        lastPlaybackState: state.lastPlaybackState,
       }),
       onRehydrateStorage: () => (state) => {
         if (state && state.allAssets) {

@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { getBatchMetadataAsync } from '../../modules/audio-artwork/src';
-import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
+import { cleanYouTubeTitle, getSearchKeywords, stripArtistFromTitle } from '../services/lyricsService';
 
 type SortOption =
   | 'name_asc'
@@ -77,10 +77,6 @@ export default function LibraryScreen() {
     (asset: MediaLibrary.Asset) => {
       const meta = metadataMap[asset.id];
       const keywords = getSearchKeywords(asset.filename);
-      const title =
-        (meta?.title?.trim() ? cleanYouTubeTitle(meta.title) : '') ||
-        keywords.expectedTrack ||
-        cleanYouTubeTitle(asset.filename);
       const artist =
         (meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
           ? cleanYouTubeTitle(meta.artist)
@@ -88,6 +84,11 @@ export default function LibraryScreen() {
         (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
           ? keywords.expectedArtist
           : '');
+      const rawTitle =
+        (meta?.title?.trim() ? cleanYouTubeTitle(meta.title) : '') ||
+        keywords.expectedTrack ||
+        cleanYouTubeTitle(asset.filename);
+      const title = stripArtistFromTitle(rawTitle, artist) || rawTitle;
       return { title, artist };
     },
     [metadataMap]

@@ -35,6 +35,7 @@ import {
   getLyricsCacheKeys,
   cleanYouTubeTitle,
   getSearchKeywords,
+  stripArtistFromTitle,
 } from '../services/lyricsService';
 
 export default function PlayerScreen() {
@@ -52,6 +53,8 @@ export default function PlayerScreen() {
     lyricsCache,
     setLyrics,
     getLyricsFromCache,
+    setLastPlaybackState,
+    setLastPlaybackPosition,
   } = useStore();
 
   const [barWidth, setBarWidth] = useState(0);
@@ -110,12 +113,7 @@ export default function PlayerScreen() {
 
   const activeMeta = activeTrack?.id ? metadataMap[activeTrack.id] : undefined;
   const activeKeywords = getSearchKeywords(activeTrack?.title || '', activeTrack?.artist || '');
-  const displayTitle =
-    (activeMeta?.title?.trim() ? cleanYouTubeTitle(activeMeta.title) : '') ||
-    activeKeywords.expectedTrack ||
-    cleanYouTubeTitle(activeTrack?.title || '') ||
-    'Bilinmeyen Parça';
-  const displayArtist =
+  const rawArtist =
     (activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
       ? cleanYouTubeTitle(activeMeta.artist)
       : '') ||
@@ -124,6 +122,17 @@ export default function PlayerScreen() {
       : (activeTrack?.artist && activeTrack.artist !== 'Local Audio' && activeTrack.artist !== 'Bilinmeyen Sanatçı'
           ? cleanYouTubeTitle(activeTrack.artist)
           : 'Bilinmeyen Sanatçı'));
+
+  const rawTitle =
+    (activeMeta?.title?.trim() ? cleanYouTubeTitle(activeMeta.title) : '') ||
+    activeKeywords.expectedTrack ||
+    cleanYouTubeTitle(activeTrack?.title || '') ||
+    'Bilinmeyen Parça';
+
+  const displayArtist = rawArtist;
+  const displayTitle =
+    stripArtistFromTitle(rawTitle, displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : undefined) ||
+    rawTitle;
 
   useEffect(() => {
     if (activeTrack && activeIndex >= 0) {
@@ -268,6 +277,46 @@ export default function PlayerScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTrack?.id, activeTrack?.url, displayTitle, displayArtist]);
 
+  // En son dinlenen şarkıyı, sırayı ve konumu kalıcı olarak sakla
+  useEffect(() => {
+    if (activeTrack) {
+      TrackPlayer.getQueue()
+        .then((q) => {
+          TrackPlayer.getActiveTrackIndex().then((idx) => {
+            setLastPlaybackState({
+              trackId: activeTrack.id || activeTrack.url,
+              trackIndex: idx ?? 0,
+              track: {
+                id: activeTrack.id || activeTrack.url,
+                url: activeTrack.url,
+                title: activeTrack.title,
+                artist: activeTrack.artist,
+                artwork: typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined,
+              },
+              queue: q.map((item) => ({
+                id: item.id || item.url,
+                url: item.url,
+                title: item.title,
+                artist: item.artist,
+                artwork: typeof item.artwork === 'string' ? item.artwork : undefined,
+              })),
+              position: progress.position > 0 ? progress.position : undefined,
+            });
+          });
+        })
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTrack?.id, activeTrack?.url]);
+
+  const lastSavedPosRef = useRef<number>(0);
+  useEffect(() => {
+    if (progress.position > 0 && Math.abs(progress.position - lastSavedPosRef.current) >= 5) {
+      lastSavedPosRef.current = progress.position;
+      setLastPlaybackPosition(progress.position);
+    }
+  }, [progress.position, setLastPlaybackPosition]);
+
   const activeLineIndex = useMemo(() => {
     if (!parsedLines || parsedLines.length === 0) return -1;
     const pos = progress.position;
@@ -389,6 +438,9 @@ export default function PlayerScreen() {
   const togglePlayback = async () => {
     if (playing) {
       await TrackPlayer.pause();
+      if (progress.position > 0) {
+        setLastPlaybackPosition(progress.position);
+      }
     } else {
       await TrackPlayer.play();
     }
