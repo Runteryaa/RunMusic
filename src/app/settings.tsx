@@ -69,12 +69,6 @@ export default function SettingsScreen() {
 
     setIsCheckingUpdate(true);
     try {
-      try {
-        Updates.setUpdateRequestHeadersOverride?.({ 'expo-channel-name': 'production' });
-      } catch (headerErr) {
-        console.warn('Failed to set update request headers override:', headerErr);
-      }
-
       const check = await Updates.checkForUpdateAsync();
       if (check.isAvailable) {
         Alert.alert(

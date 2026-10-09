@@ -64,9 +64,7 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.0",
     "extra": {
       "router": {},
       "eas": {
@@ -74,11 +72,11 @@
       }
     },
     "updates": {
+      "enabled": true,
       "url": "https://u.expo.dev/dde6e67b-f99d-4604-ba3d-190bdf69d6c5",
       "channel": "production",
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 3000,
-      "disableAntiBrickingMeasures": true,
       "requestHeaders": {
         "expo-channel-name": "production"
       }
