@@ -3,12 +3,16 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
+import { View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import TrackPlayer, { Capability } from 'react-native-track-player';
 
 import playbackService from '../service';
 
 import { useStore } from '../store/useStore';
 import { getLastPlayback } from '../services/playbackStorage';
+import { MiniPlayer } from '../components/MiniPlayer';
+import { FullscreenPlayerModal } from '../components/FullscreenPlayerModal';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -75,53 +79,67 @@ export default function TabLayout() {
   }
 
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: true,
-        headerStyle: {
-          backgroundColor: '#121212',
-          elevation: 0,
-          shadowOpacity: 0,
-        },
-        headerTitleStyle: {
-          color: '#ffffff',
-          fontWeight: '700',
-        },
-        tabBarStyle: {
-          backgroundColor: '#121212',
-          borderTopColor: '#27272a',
-          borderTopWidth: 1,
-        },
-        tabBarActiveTintColor: '#3b82f6',
-        tabBarInactiveTintColor: '#71717a',
-      }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Player',
-          tabBarIcon: ({ color }) => <Ionicons name="musical-notes" size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="library"
-        options={{
-          title: 'Library',
-          tabBarIcon: ({ color }) => <Ionicons name="library" size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          title: 'Settings',
-          tabBarIcon: ({ color }) => <Ionicons name="settings" size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          href: null, // Hide explore tab
-        }}
-      />
-    </Tabs>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#121212' }}>
+      <View style={{ flex: 1, backgroundColor: '#121212' }}>
+        <Tabs
+          screenOptions={{
+            headerShown: true,
+            headerStyle: {
+              backgroundColor: '#121212',
+              elevation: 0,
+              shadowOpacity: 0,
+            },
+            headerTitleStyle: {
+              color: '#ffffff',
+              fontWeight: '700',
+            },
+            tabBarStyle: {
+              backgroundColor: '#121212',
+              borderTopColor: '#27272a',
+              borderTopWidth: 1,
+              height: 56,
+            },
+            tabBarActiveTintColor: '#3b82f6',
+            tabBarInactiveTintColor: '#71717a',
+          }}>
+          <Tabs.Screen
+            name="index"
+            options={{
+              title: 'Kütüphane',
+              tabBarIcon: ({ color }) => <Ionicons name="musical-notes" size={24} color={color} />,
+            }}
+          />
+          <Tabs.Screen
+            name="settings"
+            options={{
+              title: 'Ayarlar',
+              tabBarIcon: ({ color }) => <Ionicons name="settings-outline" size={24} color={color} />,
+            }}
+          />
+          <Tabs.Screen
+            name="library"
+            options={{
+              href: null,
+            }}
+          />
+          <Tabs.Screen
+            name="explore"
+            options={{
+              href: null,
+            }}
+          />
+        </Tabs>
+
+        {/* Kalıcı Alt Mini Çalar (Tab Bar üzerinde yüzer) */}
+        <View
+          style={{ position: 'absolute', bottom: 56, left: 0, right: 0 }}
+          pointerEvents="box-none">
+          <MiniPlayer />
+        </View>
+
+        {/* Tam Ekran Çalar (Mini Çalara dokunulunca açılan Modal) */}
+        <FullscreenPlayerModal />
+      </View>
+    </GestureHandlerRootView>
   );
 }
