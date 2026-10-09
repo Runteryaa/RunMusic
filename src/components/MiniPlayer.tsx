@@ -131,8 +131,9 @@ export function MiniPlayer() {
 
   // PanResponder for gestures (Swipe Left/Right, Swipe Up) with real-time animation
   const panResponder = React.useMemo(
-    () =>
-      PanResponder.create({
+    () => {
+      // eslint-disable-next-line react-hooks/refs
+      return PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, gesture) =>
@@ -186,7 +187,8 @@ export function MiniPlayer() {
             }).start();
           }
         },
-      }),
+      });
+    },
     [openFullscreenPlayer, skipNext, skipPrev, miniPanX]
   );
 

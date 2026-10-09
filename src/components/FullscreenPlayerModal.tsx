@@ -467,7 +467,7 @@ export function FullscreenPlayerModal() {
 
   const handleTouchCalc = (e: GestureResponderEvent) => {
     if (barWidth <= 0 || duration <= 0) return 0;
-    const x = Math.max(0, Math.min(barWidth, e.nativeEvent.locationX));
+    const x = Math.max(0, Math.min(barWidth, e.nativeEvent.pageX - 24));
     return (x / barWidth) * duration;
   };
 
@@ -738,7 +738,7 @@ export function FullscreenPlayerModal() {
     return null;
   }
 
-  const remainingSeconds = Math.max(0, duration - currentPosition);
+
 
   return (
     <Modal
@@ -1110,7 +1110,7 @@ export function FullscreenPlayerModal() {
             <View style={styles.timeRow}>
               <Text style={styles.timeText}>{formatTime(currentPosition)}</Text>
               <Text style={styles.timeText}>
-                {duration > 0 ? `-${formatTime(remainingSeconds)}` : '0:00'}
+                {duration > 0 ? formatTime(duration) : '0:00'}
               </Text>
             </View>
           </View>
