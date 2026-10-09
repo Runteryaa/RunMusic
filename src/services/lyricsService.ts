@@ -227,9 +227,9 @@ function similarity(a: string, b: string): number {
 }
 
 function scoreResult(result: any, expectedArtist: string, expectedTrack: string): number {
-  const artistSim = similarity(result.artistName, expectedArtist);
-  const trackSim = similarity(result.trackName, expectedTrack);
-  const score = artistSim * 0.65 + trackSim * 0.35;
+  const artistSim = expectedArtist ? similarity(result.artistName, expectedArtist) : 0.8;
+  const trackSim = expectedTrack ? similarity(result.trackName, expectedTrack) : 0.8;
+  const score = expectedArtist ? artistSim * 0.65 + trackSim * 0.35 : trackSim;
   return score + (result.syncedLyrics ? 0.001 : 0);
 }
 
@@ -247,6 +247,8 @@ function pickBest(results: any[], expectedArtist: string, expectedTrack: string)
   return topTier.find((r) => r.syncedLyrics) || topTier[0] || null;
 }
 
+const LRCLIB_CLIENT_HEADER = 'LyricPopup Chrome Extension v1.0.0';
+
 export async function searchLrclib(title: string, artist = ''): Promise<LyricsResult | null> {
   try {
     const { expectedArtist, expectedTrack, cleanedFullTitle, dashMatch } = getSearchKeywords(
@@ -254,18 +256,52 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
       artist
     );
 
+    // 1. Doğrudan exact /api/get endpoint'ini dene (En hızlı, 503 yükünden etkilenmez)
+    if (expectedArtist && expectedTrack) {
+      try {
+        const getUrl = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(
+          expectedArtist
+        )}&track_name=${encodeURIComponent(expectedTrack)}`;
+        const getRes = await fetch(getUrl, {
+          headers: { 'Lrclib-Client': LRCLIB_CLIENT_HEADER },
+        });
+        if (getRes.ok) {
+          const directData = await getRes.json();
+          if (directData && (directData.syncedLyrics || directData.plainLyrics)) {
+            return {
+              id: `lrclib-${directData.id}`,
+              trackName: directData.trackName,
+              artistName: directData.artistName,
+              syncedLyrics: directData.syncedLyrics || null,
+              plainLyrics: directData.plainLyrics || null,
+              parsedLines: directData.syncedLyrics ? parseLRC(directData.syncedLyrics) : [],
+              source: 'lrclib',
+            };
+          }
+        }
+      } catch {
+        // Doğrudan get başarısız olursa arama stratejileriyle devam et
+      }
+    }
+
+    // 2. Çoklu arama stratejileri (/api/search)
     const strategies: Record<string, string>[] = [];
-    if (dashMatch && expectedArtist) {
+    if (expectedArtist && expectedTrack) {
       strategies.push({ track_name: expectedTrack, artist_name: expectedArtist });
+      strategies.push({ q: `${expectedArtist} - ${expectedTrack}` });
+      strategies.push({ q: `${expectedArtist} ${expectedTrack}` });
+    }
+    if (dashMatch && cleanedFullTitle) {
       strategies.push({ q: cleanedFullTitle });
-      if (cleanedFullTitle !== title) {
-        strategies.push({ q: title });
-      }
-    } else {
+    }
+    if (cleanedFullTitle && cleanedFullTitle !== expectedTrack) {
       strategies.push({ q: cleanedFullTitle });
-      if (cleanedFullTitle !== title) {
-        strategies.push({ q: title });
-      }
+    }
+    if (expectedTrack) {
+      strategies.push({ q: expectedTrack });
+    }
+    if (title && title !== expectedTrack) {
+      strategies.push({ q: title });
     }
 
     const allCandidatesMap = new Map<number, { r: any; score: number }>();
@@ -275,9 +311,18 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
       for (const [k, v] of Object.entries(params)) {
         url.searchParams.set(k, v);
       }
-      const res = await fetch(url.toString(), {
-        headers: { 'Lrclib-Client': 'RunMusic Mobile App v1.0.0' },
+      let res = await fetch(url.toString(), {
+        headers: { 'Lrclib-Client': LRCLIB_CLIENT_HEADER },
       });
+
+      // 503 Server Overloaded durumunda bir kez kısa bekleme ile tekrar dene
+      if (res.status === 503) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        res = await fetch(url.toString(), {
+          headers: { 'Lrclib-Client': LRCLIB_CLIENT_HEADER },
+        });
+      }
+
       if (!res.ok) continue;
       const data = await res.json();
       if (!Array.isArray(data) || data.length === 0) continue;
