@@ -8,6 +8,7 @@ import TrackPlayer, { Capability } from 'react-native-track-player';
 import playbackService from '../service';
 
 import { useStore } from '../store/useStore';
+import { getLastPlayback } from '../services/playbackStorage';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -44,30 +45,13 @@ export default function TabLayout() {
           await TrackPlayer.setRepeatMode(savedRepeatMode);
         }
 
-        // Uygulama açılışında en son dinlenen şarkıyı ve sırayı yükle (kullanıcı direkt devam edebilsin)
-        const lastPlayback = useStore.getState().lastPlaybackState;
-        if (lastPlayback) {
+        // Uygulama açılışında en son dinlenen şarkıyı bağımsız depolamadan yükle (hızlı ve hafif)
+        const lastPlayback = await getLastPlayback();
+        if (lastPlayback && lastPlayback.track) {
           try {
-            if (lastPlayback.queue && lastPlayback.queue.length > 0) {
-              await TrackPlayer.add(lastPlayback.queue);
-              const targetIdx =
-                lastPlayback.trackIndex ??
-                (lastPlayback.trackId
-                  ? lastPlayback.queue.findIndex(
-                      (t) => t.id === lastPlayback.trackId || t.url === lastPlayback.trackId
-                    )
-                  : 0);
-              if (targetIdx >= 0 && targetIdx < lastPlayback.queue.length) {
-                await TrackPlayer.skip(targetIdx);
-              }
-              if (lastPlayback.position && lastPlayback.position > 0) {
-                await TrackPlayer.seekTo(lastPlayback.position);
-              }
-            } else if (lastPlayback.track) {
-              await TrackPlayer.add([lastPlayback.track]);
-              if (lastPlayback.position && lastPlayback.position > 0) {
-                await TrackPlayer.seekTo(lastPlayback.position);
-              }
+            await TrackPlayer.add([lastPlayback.track]);
+            if (lastPlayback.position && lastPlayback.position > 0) {
+              await TrackPlayer.seekTo(lastPlayback.position);
             }
           } catch (restoreErr) {
             console.warn('Failed to restore last playback state', restoreErr);

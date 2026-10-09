@@ -36,25 +36,22 @@ import {
   cleanYouTubeTitle,
   getSearchKeywords,
 } from '../services/lyricsService';
+import { saveLastPlayback } from '../services/playbackStorage';
 
 export default function PlayerScreen() {
   const activeTrack = useActiveTrack();
   const { playing } = useIsPlaying();
   const progress = useProgress(250);
 
-  const {
-    isShuffle,
-    setIsShuffle,
-    repeatMode,
-    setRepeatMode,
-    artworkMap,
-    metadataMap,
-    lyricsCache,
-    setLyrics,
-    getLyricsFromCache,
-    setLastPlaybackState,
-    setLastPlaybackPosition,
-  } = useStore();
+  const isShuffle = useStore((s) => s.isShuffle);
+  const setIsShuffle = useStore((s) => s.setIsShuffle);
+  const repeatMode = useStore((s) => s.repeatMode);
+  const setRepeatMode = useStore((s) => s.setRepeatMode);
+  const artworkMap = useStore((s) => s.artworkMap);
+  const metadataMap = useStore((s) => s.metadataMap);
+  const lyricsCache = useStore((s) => s.lyricsCache);
+  const setLyrics = useStore((s) => s.setLyrics);
+  const getLyricsFromCache = useStore((s) => s.getLyricsFromCache);
 
   const [barWidth, setBarWidth] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -131,14 +128,22 @@ export default function PlayerScreen() {
   const displayArtist = rawArtist;
   const displayTitle = rawTitle;
 
+  const updatedMetadataTrackIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (activeTrack && activeIndex >= 0) {
+      const trackId = activeTrack.id || activeTrack.url;
+      if (updatedMetadataTrackIdRef.current === trackId) {
+        return;
+      }
+
       const meta = activeTrack.id ? metadataMap[activeTrack.id] : undefined;
       const needsArtwork = !activeTrack.artwork && (meta?.artwork || (activeTrack.id && artworkMap[activeTrack.id]));
       const needsTitle = meta?.title && activeTrack.title !== meta.title;
       const needsArtist = meta?.artist && meta.artist !== 'Local Audio' && activeTrack.artist !== meta.artist;
 
       if (needsArtwork || needsTitle || needsArtist) {
+        updatedMetadataTrackIdRef.current = trackId;
         TrackPlayer.updateMetadataForTrack(activeIndex, {
           ...(needsArtwork ? { artwork: meta?.artwork || artworkMap[activeTrack.id] } : {}),
           ...(needsTitle ? { title: meta!.title } : {}),
@@ -146,7 +151,8 @@ export default function PlayerScreen() {
         }).catch(() => {});
       }
     }
-  }, [activeTrack, activeIndex, artworkMap, metadataMap]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTrack?.id, activeTrack?.url, activeIndex]);
 
   const currentLyrics: LyricsResult | null = useMemo(() => {
     if (!activeTrack || !lyricsCache) return null;
@@ -280,45 +286,45 @@ export default function PlayerScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTrack?.id, activeTrack?.url, displayTitle, displayArtist]);
 
-  // En son dinlenen şarkıyı, sırayı ve konumu kalıcı olarak sakla
+  // En son dinlenen şarkıyı ve konumu kalıcı olarak sakla (bağımsız, hafif ~200 bayt depolama)
   useEffect(() => {
     if (activeTrack) {
-      TrackPlayer.getQueue()
-        .then((q) => {
-          TrackPlayer.getActiveTrackIndex().then((idx) => {
-            setLastPlaybackState({
-              trackId: activeTrack.id || activeTrack.url,
-              trackIndex: idx ?? 0,
-              track: {
-                id: activeTrack.id || activeTrack.url,
-                url: activeTrack.url,
-                title: activeTrack.title,
-                artist: activeTrack.artist,
-                artwork: typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined,
-              },
-              queue: q.map((item) => ({
-                id: item.id || item.url,
-                url: item.url,
-                title: item.title,
-                artist: item.artist,
-                artwork: typeof item.artwork === 'string' ? item.artwork : undefined,
-              })),
-              position: progress.position > 0 ? progress.position : undefined,
-            });
-          });
-        })
-        .catch(() => {});
+      TrackPlayer.getActiveTrackIndex().then((idx) => {
+        saveLastPlayback({
+          trackId: activeTrack.id || activeTrack.url,
+          trackIndex: idx ?? 0,
+          position: progress.position > 0 ? progress.position : 0,
+          track: {
+            id: activeTrack.id || activeTrack.url,
+            url: activeTrack.url,
+            title: activeTrack.title,
+            artist: activeTrack.artist,
+            artwork: typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined,
+          },
+        });
+      }).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTrack?.id, activeTrack?.url]);
 
   const lastSavedPosRef = useRef<number>(0);
   useEffect(() => {
-    if (progress.position > 0 && Math.abs(progress.position - lastSavedPosRef.current) >= 5) {
+    if (activeTrack && progress.position > 0 && Math.abs(progress.position - lastSavedPosRef.current) >= 10) {
       lastSavedPosRef.current = progress.position;
-      setLastPlaybackPosition(progress.position);
+      saveLastPlayback({
+        trackId: activeTrack.id || activeTrack.url,
+        trackIndex: activeIndex,
+        position: progress.position,
+        track: {
+          id: activeTrack.id || activeTrack.url,
+          url: activeTrack.url,
+          title: activeTrack.title,
+          artist: activeTrack.artist,
+          artwork: typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined,
+        },
+      });
     }
-  }, [progress.position, setLastPlaybackPosition]);
+  }, [progress.position, activeTrack, activeIndex]);
 
   const activeLineIndex = useMemo(() => {
     if (!parsedLines || parsedLines.length === 0) return -1;
@@ -441,8 +447,22 @@ export default function PlayerScreen() {
   const togglePlayback = async () => {
     if (playing) {
       await TrackPlayer.pause();
-      if (progress.position > 0) {
-        setLastPlaybackPosition(progress.position);
+      if (activeTrack && progress.position > 0) {
+        saveLastPlayback(
+          {
+            trackId: activeTrack.id || activeTrack.url,
+            trackIndex: activeIndex,
+            position: progress.position,
+            track: {
+              id: activeTrack.id || activeTrack.url,
+              url: activeTrack.url,
+              title: activeTrack.title,
+              artist: activeTrack.artist,
+              artwork: typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined,
+            },
+          },
+          true
+        );
       }
     } else {
       await TrackPlayer.play();

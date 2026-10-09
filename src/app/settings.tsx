@@ -17,18 +17,16 @@ import { TrackArtwork } from '../components/TrackArtwork';
 import { cleanYouTubeTitle } from '../services/lyricsService';
 
 export default function SettingsScreen() {
-  const {
-    settings,
-    updateSettings,
-    hiddenTrackIds,
-    allAssets,
-    unhideTrack,
-    unhideAllTracks,
-    artworkMap,
-    metadataMap,
-    lyricsCache,
-    clearLyricsCache,
-  } = useStore();
+  const settings = useStore((s) => s.settings);
+  const updateSettings = useStore((s) => s.updateSettings);
+  const hiddenTrackIds = useStore((s) => s.hiddenTrackIds);
+  const allAssets = useStore((s) => s.allAssets);
+  const unhideTrack = useStore((s) => s.unhideTrack);
+  const unhideAllTracks = useStore((s) => s.unhideAllTracks);
+  const artworkMap = useStore((s) => s.artworkMap);
+  const metadataMap = useStore((s) => s.metadataMap);
+  const lyricsCache = useStore((s) => s.lyricsCache);
+  const clearLyricsCache = useStore((s) => s.clearLyricsCache);
 
   const [isExpanded, setIsExpanded] = useState(false);
 

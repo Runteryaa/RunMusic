@@ -46,17 +46,15 @@ const SORT_OPTIONS: SortItem[] = [
 ];
 
 export default function LibraryScreen() {
-  const {
-    library,
-    setLibrary,
-    isScanning,
-    setIsScanning,
-    settings,
-    hideTrack,
-    artworkMap,
-    metadataMap,
-    setBatchTrackMetadata,
-  } = useStore();
+  const library = useStore((s) => s.library);
+  const setLibrary = useStore((s) => s.setLibrary);
+  const isScanning = useStore((s) => s.isScanning);
+  const setIsScanning = useStore((s) => s.setIsScanning);
+  const settings = useStore((s) => s.settings);
+  const hideTrack = useStore((s) => s.hideTrack);
+  const artworkMap = useStore((s) => s.artworkMap);
+  const metadataMap = useStore((s) => s.metadataMap);
+  const setBatchTrackMetadata = useStore((s) => s.setBatchTrackMetadata);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const router = useRouter();
 
@@ -196,12 +194,15 @@ export default function LibraryScreen() {
         try {
           const currentMeta = useStore.getState().metadataMap;
           const missing = validAudio.filter((a) => !currentMeta[a.id]);
-          for (let i = 0; i < missing.length; i += 25) {
-            const chunk = missing.slice(i, i + 25).map((a) => ({ id: a.id, uri: a.uri }));
+          if (missing.length === 0) return;
+          for (let i = 0; i < missing.length; i += 50) {
+            const chunk = missing.slice(i, i + 50).map((a) => ({ id: a.id, uri: a.uri }));
             const metaBatch = await getBatchMetadataAsync(chunk);
             if (Object.keys(metaBatch).length > 0) {
               setBatchTrackMetadata(metaBatch as any);
             }
+            // Give UI event loop breathing room so user taps and animations stay responsive
+            await new Promise((r) => setTimeout(r, 150));
           }
         } catch (e) {
           console.warn('Batch metadata extraction error:', e);
