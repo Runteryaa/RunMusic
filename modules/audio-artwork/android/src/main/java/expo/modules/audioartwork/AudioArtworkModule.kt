@@ -9,8 +9,6 @@ import android.provider.MediaStore
 import android.util.Size
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URLDecoder
@@ -20,24 +18,20 @@ class AudioArtworkModule : Module() {
     Name("AudioArtwork")
 
     AsyncFunction("getArtworkAsync") { uri: String, trackId: String? ->
-      withContext(Dispatchers.IO) {
-        extractArtwork(uri, trackId)
-      }
+      extractArtwork(uri, trackId)
     }
 
     AsyncFunction("getBatchArtworksAsync") { items: List<Map<String, String>> ->
-      withContext(Dispatchers.IO) {
-        val result = mutableMapOf<String, String>()
-        for (item in items) {
-          val id = item["id"] ?: continue
-          val uri = item["uri"] ?: continue
-          val art = extractArtwork(uri, id)
-          if (art != null) {
-            result[id] = art
-          }
+      val result = mutableMapOf<String, String>()
+      for (item in items) {
+        val id = item["id"] ?: continue
+        val uri = item["uri"] ?: continue
+        val art = extractArtwork(uri, id)
+        if (art != null) {
+          result[id] = art
         }
-        result
       }
+      result
     }
   }
 
