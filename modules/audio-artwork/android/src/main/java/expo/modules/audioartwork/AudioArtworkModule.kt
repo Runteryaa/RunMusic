@@ -316,32 +316,45 @@ class AudioArtworkModule : Module() {
 
   private fun extractDominantColor(rawUri: String): String? {
     try {
-      var cleanPath = rawUri
-      if (cleanPath.startsWith("file://")) {
-        cleanPath = cleanPath.substring(7)
-      }
-      cleanPath = URLDecoder.decode(cleanPath, "UTF-8")
-      val file = File(cleanPath)
-      if (!file.exists() || file.length() == 0L) return null
+      val context = appContext.reactContext ?: return null
+      val bitmap: Bitmap? = if (rawUri.startsWith("content://")) {
+        context.contentResolver.openInputStream(Uri.parse(rawUri))?.use { stream ->
+          val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+          BitmapFactory.decodeStream(stream, null, boundsOptions)
+          val w = boundsOptions.outWidth
+          val h = boundsOptions.outHeight
+          if (w <= 0 || h <= 0) return null
+          context.contentResolver.openInputStream(Uri.parse(rawUri))?.use { stream2 ->
+            val decodeOptions = BitmapFactory.Options().apply {
+              inSampleSize = Math.max(1, Math.min(w / 32, h / 32))
+              inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            BitmapFactory.decodeStream(stream2, null, decodeOptions)
+          }
+        }
+      } else {
+        var cleanPath = rawUri
+        if (cleanPath.startsWith("file://")) {
+          cleanPath = cleanPath.substring(7)
+        }
+        cleanPath = URLDecoder.decode(cleanPath, "UTF-8")
+        val file = File(cleanPath)
+        if (!file.exists() || file.length() == 0L) return null
 
-      val boundsOptions = BitmapFactory.Options().apply {
-        inJustDecodeBounds = true
-      }
-      BitmapFactory.decodeFile(file.absolutePath, boundsOptions)
-      val w = boundsOptions.outWidth
-      val h = boundsOptions.outHeight
-      if (w <= 0 || h <= 0) return null
+        val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, boundsOptions)
+        val w = boundsOptions.outWidth
+        val h = boundsOptions.outHeight
+        if (w <= 0 || h <= 0) return null
 
-      val targetSize = 32
-      val sampleSize = Math.max(1, Math.min(w / targetSize, h / targetSize))
-      val decodeOptions = BitmapFactory.Options().apply {
-        inSampleSize = sampleSize
-        inPreferredConfig = Bitmap.Config.ARGB_8888
+        val decodeOptions = BitmapFactory.Options().apply {
+          inSampleSize = Math.max(1, Math.min(w / 32, h / 32))
+          inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        BitmapFactory.decodeFile(file.absolutePath, decodeOptions)
       }
-      val bitmap = BitmapFactory.decodeFile(file.absolutePath, decodeOptions) ?: return null
 
-      var bestColor = 0
-      var maxScore = -1f
+      if (bitmap == null) return null
 
       val width = bitmap.width
       val height = bitmap.height
@@ -349,21 +362,30 @@ class AudioArtworkModule : Module() {
       bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
       bitmap.recycle()
 
+      var bestColor = 0
+      var maxScore = -1f
+      var sumR = 0L
+      var sumG = 0L
+      var sumB = 0L
+
       for (pixel in pixels) {
         val r = (pixel shr 16) and 0xff
         val g = (pixel shr 8) and 0xff
         val b = pixel and 0xff
+        sumR += r
+        sumG += g
+        sumB += b
 
         val max = Math.max(r, Math.max(g, b))
         val min = Math.min(r, Math.min(g, b))
         val lightness = (max + min) / 2f
-        if (lightness < 25 || lightness > 230) continue
+        if (lightness < 20 || lightness > 235) continue
 
         val delta = (max - min).toFloat()
         val saturation = if (max == 0) 0f else delta / max.toFloat()
-        if (saturation < 0.2f) continue
+        if (saturation < 0.15f) continue
 
-        val score = saturation * 2.5f + (lightness / 255f)
+        val score = saturation * 2.8f + (lightness / 255f)
         if (score > maxScore) {
           maxScore = score
           bestColor = pixel
@@ -375,6 +397,11 @@ class AudioArtworkModule : Module() {
         val g = (bestColor shr 8) and 0xff
         val b = bestColor and 0xff
         return String.format("#%02x%02x%02x", r, g, b)
+      } else if (pixels.isNotEmpty()) {
+        val avgR = (sumR / pixels.size).toInt()
+        val avgG = (sumG / pixels.size).toInt()
+        val avgB = (sumB / pixels.size).toInt()
+        return String.format("#%02x%02x%02x", avgR, avgG, avgB)
       }
     } catch (_: Exception) {}
     return null

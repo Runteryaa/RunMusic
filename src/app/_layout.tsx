@@ -13,6 +13,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { getLastPlayback } from '../services/playbackStorage';
 import { MiniPlayer } from '../components/MiniPlayer';
 import { FullscreenPlayerModal } from '../components/FullscreenPlayerModal';
+import { getArtworkAsync } from '../../modules/audio-artwork/src';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -23,6 +24,7 @@ function MainAppLayout() {
   const activeTrack = useActiveTrack();
   const theme = useThemeStore((s) => s.theme);
   const updateThemeFromArtwork = useThemeStore((s) => s.updateThemeFromArtwork);
+  const setArtwork = useStore((s) => s.setArtwork);
   const activeTrackId = activeTrack?.id;
   const storeArtwork = useStore((s) =>
     activeTrackId ? s.metadataMap[activeTrackId]?.artwork || s.artworkMap[activeTrackId] : undefined
@@ -30,6 +32,21 @@ function MainAppLayout() {
 
   const artworkUri =
     storeArtwork || (typeof activeTrack?.artwork === 'string' ? activeTrack.artwork : undefined);
+
+  // Aktif şarkının kapak görseli henüz önbellekte yoksa anında çek ve temayı tetikle
+  useEffect(() => {
+    if (!artworkUri && activeTrack?.url && activeTrackId) {
+      let isMounted = true;
+      getArtworkAsync(activeTrack.url, activeTrackId).then((resolved) => {
+        if (isMounted && resolved) {
+          setArtwork(activeTrackId, resolved);
+        }
+      });
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [artworkUri, activeTrack?.url, activeTrackId, setArtwork]);
 
   const trackSeed = activeTrack?.title || activeTrack?.id || (typeof activeTrack?.url === 'string' ? activeTrack.url : undefined);
 

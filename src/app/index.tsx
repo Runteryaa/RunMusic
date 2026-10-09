@@ -21,7 +21,7 @@ import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
-import { getBatchMetadataAsync } from '../../modules/audio-artwork/src';
+import { getBatchMetadataAsync, getArtworkAsync } from '../../modules/audio-artwork/src';
 import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
 
 type SortOption =
@@ -315,6 +315,12 @@ export default function LibraryScreen() {
       }
       await TrackPlayer.play();
       openFullscreenPlayer();
+
+      if (!artworkMap[selectedAsset.id] && !metadataMap[selectedAsset.id]?.artwork) {
+        getArtworkAsync(selectedAsset.uri, selectedAsset.id).then((art: string | null) => {
+          if (art) useStore.getState().setArtwork(selectedAsset.id, art);
+        });
+      }
     } catch (e) {
       console.error('Failed to play track', e);
     }
