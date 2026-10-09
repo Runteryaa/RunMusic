@@ -3,13 +3,12 @@ import {
   ThemeColors,
   DEFAULT_THEME,
   extractThemeFromImageUri,
-  extractThemeFromSeed,
 } from '../services/colorThemeService';
 
 interface ThemeState {
   theme: ThemeColors;
   currentArtworkUri: string | null;
-  updateThemeFromArtwork: (uri: string | null | undefined, fallbackSeed?: string) => Promise<void>;
+  updateThemeFromArtwork: (uri: string | null | undefined) => Promise<void>;
   resetTheme: () => void;
 }
 
@@ -17,27 +16,24 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   theme: DEFAULT_THEME,
   currentArtworkUri: null,
 
-  updateThemeFromArtwork: async (uri, fallbackSeed) => {
-    const key = uri || fallbackSeed || null;
-    if (!key) {
+  updateThemeFromArtwork: async (uri) => {
+    if (!uri) {
       if (get().currentArtworkUri !== null) {
         set({ theme: DEFAULT_THEME, currentArtworkUri: null });
       }
       return;
     }
 
-    if (get().currentArtworkUri === key) {
+    if (get().currentArtworkUri === uri) {
       return;
     }
 
-    set({ currentArtworkUri: key });
+    set({ currentArtworkUri: uri });
 
     try {
-      const extractedTheme = uri
-        ? await extractThemeFromImageUri(uri)
-        : extractThemeFromSeed(fallbackSeed || 'default');
+      const extractedTheme = await extractThemeFromImageUri(uri);
       // Şarkı değiştiyse sadece aktif olana uygula
-      if (get().currentArtworkUri === key) {
+      if (get().currentArtworkUri === uri) {
         set({ theme: extractedTheme });
       }
     } catch {

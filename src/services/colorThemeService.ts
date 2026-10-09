@@ -257,45 +257,16 @@ export function createThemeFromHex(hex: string): ThemeColors {
   return createThemeFromRgb(r, g, b);
 }
 
-// Canlı Apple Music renk paletleri (Sadece kapak görseli hiç olmayan şarkılar için)
-const VIBRANT_PALETTES: [number, number, number][] = [
-  [147, 51, 234], // Deep Purple
-  [225, 29, 72],  // Crimson Rose
-  [37, 99, 235],  // Electric Royal Blue
-  [13, 148, 136], // Neon Emerald Teal
-  [234, 88, 12],  // Sunset Amber
-  [16, 185, 129], // Bright Mint
-  [217, 70, 239], // Vivid Magenta
-  [79, 70, 229],  // Deep Indigo
-  [202, 138, 4],  // Warm Gold
-  [6, 182, 212],  // Cyan Azure
-];
-
-function hashString(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash << 5) - hash + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-}
-
-function getFallbackTheme(key: string): ThemeColors {
-  const idx = hashString(key) % VIBRANT_PALETTES.length;
-  const [r, g, b] = VIBRANT_PALETTES[idx];
-  return createThemeFromRgb(r, g, b);
-}
-
-export function extractThemeFromSeed(seed: string): ThemeColors {
-  return getFallbackTheme(seed);
+export function extractThemeFromSeed(_seed?: string): ThemeColors {
+  return DEFAULT_THEME;
 }
 
 /**
  * Albüm kapağının gerçek görselinden tema rengi çıkartır:
  * 1. Android native donanım hızlandırmalı dominant renk (<1ms)
- * 2. expo-image native C++/Glide Blurhash analizi (<0.1ms)
- * 3. expo-image native Thumbhash analizi (<0.01ms)
- * JS thread'ini ASLA dondurmaz ve rastgele renk üretmez.
+ * 2. expo-image Glide ImageRef üzerinden Thumbhash / Blurhash analizi (<0.1ms)
+ * 3. Doğrudan URI üzerinden Thumbhash analizi
+ * 4. Asla rastgele pembe/cyan gibi renkler üretmez; görsel yoksa varsayılan temayı korur.
  */
 export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors> {
   if (!uri || typeof uri !== 'string') {
@@ -318,22 +289,43 @@ export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors
     // Devam et
   }
 
-  // 2. expo-image native C++/Glide Blurhash üzerinden görselin gerçek baskın rengini çıkar
+  // 2. expo-image Glide üzerinden görsel referansını alıp Thumbhash/Blurhash ile renk çıkar
   try {
-    const blurhash = await Image.generateBlurhashAsync(uri, [4, 3]);
-    if (blurhash) {
-      const rgb = extractVibrantFromBlurhash(blurhash);
-      if (rgb) {
-        const theme = createThemeFromRgb(rgb[0], rgb[1], rgb[2]);
-        themeCache.set(uri, theme);
-        return theme;
+    const imageRef = await Image.loadAsync({ uri });
+    if (imageRef) {
+      try {
+        const thumbhash = await Image.generateThumbhashAsync(imageRef);
+        if (thumbhash) {
+          const rgb = extractRgbFromThumbhash(thumbhash);
+          if (rgb) {
+            const theme = createThemeFromRgb(rgb[0], rgb[1], rgb[2]);
+            themeCache.set(uri, theme);
+            return theme;
+          }
+        }
+      } catch {
+        // Devam et
+      }
+
+      try {
+        const blurhash = await Image.generateBlurhashAsync(imageRef, { width: 4, height: 3 });
+        if (blurhash) {
+          const rgb = extractVibrantFromBlurhash(blurhash);
+          if (rgb) {
+            const theme = createThemeFromRgb(rgb[0], rgb[1], rgb[2]);
+            themeCache.set(uri, theme);
+            return theme;
+          }
+        }
+      } catch {
+        // Devam et
       }
     }
   } catch {
     // Devam et
   }
 
-  // 3. expo-image native Thumbhash üzerinden gerçek renkleri çıkar
+  // 3. expo-image native Thumbhash doğrudan URI üzerinden dene
   try {
     const thumbhash = await Image.generateThumbhashAsync(uri);
     if (thumbhash) {
@@ -348,7 +340,6 @@ export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors
     // Devam et
   }
 
-  // 4. Son çare: Görsel dosyası bozuk veya okunamıyorsa
-  const fallbackTheme = getFallbackTheme(uri);
-  return fallbackTheme;
+  // 4. Görsel okunamadıysa veya yoksa rastgele renkler yerine varsayılan temayı koru
+  return DEFAULT_THEME;
 }

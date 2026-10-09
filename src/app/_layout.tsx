@@ -48,11 +48,13 @@ function MainAppLayout() {
     }
   }, [artworkUri, activeTrack?.url, activeTrackId, setArtwork]);
 
-  const trackSeed = activeTrack?.title || activeTrack?.id || (typeof activeTrack?.url === 'string' ? activeTrack.url : undefined);
-
   useEffect(() => {
-    updateThemeFromArtwork(artworkUri, trackSeed);
-  }, [artworkUri, trackSeed, updateThemeFromArtwork]);
+    if (artworkUri) {
+      updateThemeFromArtwork(artworkUri);
+    } else if (!activeTrackId) {
+      updateThemeFromArtwork(null);
+    }
+  }, [artworkUri, activeTrackId, updateThemeFromArtwork]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#121212' }}>

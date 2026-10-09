@@ -332,6 +332,24 @@ class AudioArtworkModule : Module() {
             BitmapFactory.decodeStream(stream2, null, decodeOptions)
           }
         }
+      } else if (rawUri.startsWith("http://") || rawUri.startsWith("https://")) {
+        try {
+          java.net.URL(rawUri).openStream()?.use { stream ->
+            val bytes = stream.readBytes()
+            val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, boundsOptions)
+            val w = boundsOptions.outWidth
+            val h = boundsOptions.outHeight
+            if (w <= 0 || h <= 0) return null
+            val decodeOptions = BitmapFactory.Options().apply {
+              inSampleSize = Math.max(1, Math.min(w / 32, h / 32))
+              inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+          }
+        } catch (_: Exception) {
+          null
+        }
       } else {
         var cleanPath = rawUri
         if (cleanPath.startsWith("file://")) {
