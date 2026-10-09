@@ -249,48 +249,63 @@ export default function LibraryScreen() {
     }
   }, [scanMedia, library.length]);
 
+  // Compute info once per track to avoid O(N log N) regex operations during sorting
+  const libraryWithInfo = useMemo(() => {
+    return library.map(asset => ({
+      asset,
+      info: getTrackDisplayInfo(asset)
+    }));
+  }, [library, getTrackDisplayInfo]);
+
   // Sorting comparator
   const sortComparator = useCallback(
-    (a: MediaLibrary.Asset, b: MediaLibrary.Asset, option: SortOption) => {
-      const nameA = getTrackDisplayInfo(a).title.toLowerCase();
-      const nameB = getTrackDisplayInfo(b).title.toLowerCase();
+    (
+      a: { asset: MediaLibrary.Asset; info: { title: string; artist: string } },
+      b: { asset: MediaLibrary.Asset; info: { title: string; artist: string } },
+      option: SortOption
+    ) => {
+      const nameA = a.info.title.toLowerCase();
+      const nameB = b.info.title.toLowerCase();
       switch (option) {
         case 'name_asc':
           return nameA.localeCompare(nameB);
         case 'name_desc':
           return nameB.localeCompare(nameA);
         case 'duration_asc':
-          return (a.duration || 0) - (b.duration || 0);
+          return (a.asset.duration || 0) - (b.asset.duration || 0);
         case 'duration_desc':
-          return (b.duration || 0) - (a.duration || 0);
+          return (b.asset.duration || 0) - (a.asset.duration || 0);
         case 'date_desc':
-          return (b.creationTime || 0) - (a.creationTime || 0);
+          return (b.asset.creationTime || 0) - (a.asset.creationTime || 0);
         case 'date_asc':
-          return (a.creationTime || 0) - (b.creationTime || 0);
+          return (a.asset.creationTime || 0) - (b.asset.creationTime || 0);
         default:
           return 0;
       }
     },
-    [getTrackDisplayInfo]
+    []
   );
 
-  const fullSortedList = useMemo(() => {
-    return [...library].sort((a, b) => sortComparator(a, b, sortOption));
-  }, [library, sortOption, sortComparator]);
+  const fullSortedListWithInfo = useMemo(() => {
+    return [...libraryWithInfo].sort((a, b) => sortComparator(a, b, sortOption));
+  }, [libraryWithInfo, sortOption, sortComparator]);
 
-  // Displayed list
+  // The final sorted array of raw assets for TrackPlayer integration
+  const fullSortedList = useMemo(() => fullSortedListWithInfo.map(item => item.asset), [fullSortedListWithInfo]);
+
+  // Displayed list (array of raw assets)
   const displayedList = useMemo(() => {
     if (!searchQuery.trim()) return fullSortedList;
     const q = searchQuery.toLowerCase().trim();
-    return fullSortedList.filter((item) => {
-      const info = getTrackDisplayInfo(item);
+    
+    return fullSortedListWithInfo.filter((item) => {
       return (
-        info.title.toLowerCase().includes(q) ||
-        info.artist.toLowerCase().includes(q) ||
-        cleanTitle(item.filename).toLowerCase().includes(q)
+        item.info.title.toLowerCase().includes(q) ||
+        item.info.artist.toLowerCase().includes(q) ||
+        cleanTitle(item.asset.filename).toLowerCase().includes(q)
       );
-    });
-  }, [fullSortedList, searchQuery, getTrackDisplayInfo]);
+    }).map(item => item.asset);
+  }, [fullSortedListWithInfo, fullSortedList, searchQuery]);
 
   const playTrack = async (selectedAsset: MediaLibrary.Asset) => {
     try {

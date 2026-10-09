@@ -934,16 +934,6 @@ export function FullscreenPlayerModal() {
                 />
               </Animated.View>
             ) : null}
-
-            <View style={styles.swipeHintRow}>
-              <Ionicons
-                name="swap-horizontal"
-                size={14}
-                color="rgba(255, 255, 255, 0.45)"
-                style={{ marginRight: 6 }}
-              />
-              <Text style={styles.swipeHintText}>Geçiş için kaydırın • Sözler için dokunun</Text>
-            </View>
           </Animated.View>
 
           {/* 2. Senkronize Şarkı Sözleri Görünümü (Yumuşak solma ve büyüme geçişi) */}
@@ -1089,12 +1079,6 @@ export function FullscreenPlayerModal() {
                 {displayArtist}
               </Text>
             </View>
-            <TouchableOpacity
-              style={styles.metaActionBtn}
-              activeOpacity={0.7}
-              onPress={() => setIsQueueModalOpen(true)}>
-              <Ionicons name="star-outline" size={22} color="rgba(255, 255, 255, 0.75)" />
-            </TouchableOpacity>
           </View>
 
           {/* İlerleme Çubuğu (Apple Music Scrubber) */}
@@ -1107,7 +1091,13 @@ export function FullscreenPlayerModal() {
               onResponderGrant={handleSeekGrant}
               onResponderMove={handleSeekMove}
               onResponderRelease={handleSeekRelease}>
-              <View style={styles.progressBarBackground}>
+              <View
+                style={[
+                  styles.progressBarBackground,
+                  {
+                    height: isDragging ? 10 : 7,
+                  }
+                ]}>
                 <View
                   style={[
                     styles.progressBarFill,
@@ -1115,17 +1105,6 @@ export function FullscreenPlayerModal() {
                   ]}
                 />
               </View>
-              {duration > 0 ? (
-                <View
-                  style={[
-                    styles.progressKnob,
-                    {
-                      backgroundColor: theme.primaryLight,
-                      left: Math.max(0, Math.min(barWidth - 10, barWidth * progressPercent - 5)),
-                    },
-                  ]}
-                />
-              ) : null}
             </View>
             <View style={styles.timeRow}>
               <Text style={styles.timeText}>{formatTime(currentPosition)}</Text>
@@ -1651,27 +1630,20 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   progressTouchContainer: {
-    height: 36,
+    height: 40,
     justifyContent: 'center',
   },
   progressBarBackground: {
-    height: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    borderRadius: 2,
+    height: 7,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    borderRadius: 4,
     overflow: 'hidden',
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#ffffff',
+    borderRadius: 4,
   },
-  progressKnob: {
-    position: 'absolute',
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#ffffff',
-    top: 7,
-  },
+  // progressKnob removed
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
