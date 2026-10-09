@@ -21,6 +21,7 @@ export default function SettingsScreen() {
     unhideTrack,
     unhideAllTracks,
     artworkMap,
+    metadataMap,
     lyricsCache,
     clearLyricsCache,
   } = useStore();
@@ -35,12 +36,12 @@ export default function SettingsScreen() {
       return {
         id,
         asset,
-        title: asset ? cleanTitle(asset.filename) : `Şarkı (${id})`,
+        title: metadataMap[id]?.title || (asset ? cleanTitle(asset.filename) : `Şarkı (${id})`),
         duration: asset?.duration,
         albumId: asset?.albumId,
       };
     });
-  }, [allAssets, hiddenTrackIds]);
+  }, [allAssets, hiddenTrackIds, metadataMap]);
 
   const cachedLyricsCount = useMemo(() => {
     return Object.keys(lyricsCache || {}).length;
@@ -91,7 +92,7 @@ export default function SettingsScreen() {
                   {hiddenTrackItems.map((item) => (
                     <View key={item.id} style={styles.hiddenTrackItem}>
                       <TrackArtwork
-                        uri={artworkMap[item.id]}
+                        uri={metadataMap[item.id]?.artwork || artworkMap[item.id]}
                         trackId={item.id}
                         trackUri={item.asset?.uri}
                         size={38}

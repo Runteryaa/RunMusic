@@ -1,1 +1,7 @@
-// Define your exported module types here.
+export interface AudioTrackMetadata {
+  id?: string;
+  title?: string | null;
+  artist?: string | null;
+  album?: string | null;
+  artwork?: string | null;
+}

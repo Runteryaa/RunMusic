@@ -3,13 +3,20 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { RepeatMode } from 'react-native-track-player';
-import { LyricsResult } from '../services/lyricsService';
+import { LyricsResult, getLyricsCacheKeys } from '../services/lyricsService';
 
 export interface FilterSettings {
   minLengthSec: number | null;
   maxLengthSec: number | null;
   minSizeMB: number | null;
   maxSizeMB: number | null;
+}
+
+export interface TrackMetadata {
+  title?: string;
+  artist?: string;
+  album?: string;
+  artwork?: string;
 }
 
 interface AppState {
@@ -28,8 +35,13 @@ interface AppState {
   setArtwork: (id: string, uri: string) => void;
   setBatchArtworks: (artworks: Record<string, string>) => void;
 
+  metadataMap: Record<string, TrackMetadata>;
+  setTrackMetadata: (id: string, metadata: TrackMetadata) => void;
+  setBatchTrackMetadata: (batch: Record<string, TrackMetadata>) => void;
+
   lyricsCache: Record<string, LyricsResult>;
-  setLyrics: (id: string, lyrics: LyricsResult) => void;
+  setLyrics: (id: string, lyrics: LyricsResult, alternateKeys?: string[]) => void;
+  getLyricsFromCache: (params: { id?: string; url?: string; title?: string; artist?: string }) => LyricsResult | null;
   clearLyricsCache: () => void;
 
   library: MediaLibrary.Asset[];
@@ -45,7 +57,7 @@ interface AppState {
 
 export const useStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       artworkMap: {},
       setArtwork: (id, uri) =>
         set((state) => ({
@@ -56,11 +68,50 @@ export const useStore = create<AppState>()(
           artworkMap: { ...state.artworkMap, ...artworks },
         })),
 
+      metadataMap: {},
+      setTrackMetadata: (id, metadata) =>
+        set((state) => {
+          const artworkUpdate = metadata.artwork ? { [id]: metadata.artwork } : {};
+          return {
+            metadataMap: { ...state.metadataMap, [id]: metadata },
+            artworkMap: { ...state.artworkMap, ...artworkUpdate },
+          };
+        }),
+      setBatchTrackMetadata: (batch) =>
+        set((state) => {
+          const artworkUpdates: Record<string, string> = {};
+          for (const [id, meta] of Object.entries(batch)) {
+            if (meta.artwork) {
+              artworkUpdates[id] = meta.artwork;
+            }
+          }
+          return {
+            metadataMap: { ...state.metadataMap, ...batch },
+            artworkMap: { ...state.artworkMap, ...artworkUpdates },
+          };
+        }),
+
       lyricsCache: {},
-      setLyrics: (id, lyrics) =>
-        set((state) => ({
-          lyricsCache: { ...state.lyricsCache, [id]: lyrics },
-        })),
+      setLyrics: (id, lyrics, alternateKeys) =>
+        set((state) => {
+          const updated = { ...state.lyricsCache, [id]: lyrics };
+          if (alternateKeys && alternateKeys.length > 0) {
+            for (const key of alternateKeys) {
+              if (key) updated[key] = lyrics;
+            }
+          }
+          return { lyricsCache: updated };
+        }),
+      getLyricsFromCache: (params) => {
+        const state = get();
+        const cache = state.lyricsCache;
+        if (!cache) return null;
+        const keys = getLyricsCacheKeys(params);
+        for (const k of keys) {
+          if (cache[k]) return cache[k];
+        }
+        return null;
+      },
       clearLyricsCache: () => set({ lyricsCache: {} }),
 
       settings: {
@@ -128,6 +179,7 @@ export const useStore = create<AppState>()(
         hiddenTrackIds: state.hiddenTrackIds,
         allAssets: state.allAssets,
         artworkMap: state.artworkMap,
+        metadataMap: state.metadataMap,
         lyricsCache: state.lyricsCache,
       }),
       onRehydrateStorage: () => (state) => {

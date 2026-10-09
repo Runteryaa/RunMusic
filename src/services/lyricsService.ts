@@ -81,7 +81,11 @@ export function cleanTrackTitle(str: string): string {
 }
 
 export function parseArtistAndTitle(rawTitle: string, defaultArtist = ''): { artist: string; title: string } {
-  const clean = rawTitle.replace(/\.[^/.]+$/, '').trim();
+  const safeDefaultArtist =
+    defaultArtist && defaultArtist !== 'Local Audio' && defaultArtist !== 'Bilinmeyen Sanatçı'
+      ? defaultArtist
+      : '';
+  const clean = (rawTitle || '').replace(/\.[^/.]+$/, '').trim();
   const titleBeforePipe = clean.split('|')[0].trim();
   const dashMatch = titleBeforePipe.match(/^(.+?)\s*[-–—]\s*(.+)$/);
 
@@ -89,15 +93,47 @@ export function parseArtistAndTitle(rawTitle: string, defaultArtist = ''): { art
     const artist = cleanTrackTitle(dashMatch[1]);
     const title = cleanTrackTitle(dashMatch[2]);
     return {
-      artist: artist || cleanTrackTitle(defaultArtist),
+      artist: artist || cleanTrackTitle(safeDefaultArtist),
       title: title || cleanTrackTitle(titleBeforePipe),
     };
   }
 
   return {
-    artist: cleanTrackTitle(defaultArtist),
+    artist: cleanTrackTitle(safeDefaultArtist),
     title: cleanTrackTitle(titleBeforePipe),
   };
+}
+
+export function createLyricsLookupKey(title?: string, artist?: string): string {
+  const normTitle = normalise(cleanTrackTitle(title || ''));
+  const normArtist = normalise(cleanTrackTitle(artist || ''));
+  if (normArtist && normArtist !== 'local audio' && normArtist !== 'bilinmeyen sanatci') {
+    return `art_${normArtist}___tit_${normTitle}`;
+  }
+  return `tit_${normTitle}`;
+}
+
+export function getLyricsCacheKeys(params: {
+  id?: string;
+  url?: string;
+  title?: string;
+  artist?: string;
+}): string[] {
+  const keys = new Set<string>();
+  if (params.id) keys.add(params.id);
+  if (params.url) keys.add(params.url);
+
+  const { title, artist } = parseArtistAndTitle(params.title || '', params.artist || '');
+  if (title) {
+    keys.add(createLyricsLookupKey(title, artist));
+    keys.add(createLyricsLookupKey(title));
+  }
+  if (params.title && params.title !== title) {
+    keys.add(createLyricsLookupKey(params.title, params.artist));
+    keys.add(createLyricsLookupKey(params.title));
+  }
+
+  return Array.from(keys).filter(Boolean);
 }
 
 function normalise(str: string): string {

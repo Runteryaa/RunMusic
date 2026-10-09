@@ -27,6 +27,7 @@ import {
   LyricsResult,
   fetchLyricsOnline,
   parseArtistAndTitle,
+  getLyricsCacheKeys,
 } from '../services/lyricsService';
 
 export default function PlayerScreen() {
@@ -40,8 +41,10 @@ export default function PlayerScreen() {
     repeatMode,
     setRepeatMode,
     artworkMap,
+    metadataMap,
     lyricsCache,
     setLyrics,
+    getLyricsFromCache,
   } = useStore();
 
   const [barWidth, setBarWidth] = useState(0);
@@ -95,28 +98,71 @@ export default function PlayerScreen() {
     }
   }, [activeTrack]);
 
+  const activeMeta = activeTrack?.id ? metadataMap[activeTrack.id] : undefined;
+  const parsedActive = parseArtistAndTitle(cleanTitle(activeTrack?.title || ''), activeTrack?.artist || '');
+  const displayTitle = activeMeta?.title?.trim() || parsedActive.title || cleanTitle(activeTrack?.title) || 'Bilinmeyen Parça';
+  const displayArtist =
+    activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
+      ? activeMeta.artist.trim()
+      : (parsedActive.artist && parsedActive.artist !== 'Local Audio' && parsedActive.artist !== 'Bilinmeyen Sanatçı'
+          ? parsedActive.artist
+          : (activeTrack?.artist && activeTrack.artist !== 'Local Audio' && activeTrack.artist !== 'Bilinmeyen Sanatçı'
+              ? activeTrack.artist
+              : 'Bilinmeyen Sanatçı'));
+
   useEffect(() => {
-    if (activeTrack && activeTrack.id && artworkMap[activeTrack.id] && !activeTrack.artwork) {
-      TrackPlayer.updateMetadataForTrack(activeIndex, {
-        artwork: artworkMap[activeTrack.id],
-      }).catch(() => {});
+    if (activeTrack && activeIndex >= 0) {
+      const meta = activeTrack.id ? metadataMap[activeTrack.id] : undefined;
+      const needsArtwork = !activeTrack.artwork && (meta?.artwork || (activeTrack.id && artworkMap[activeTrack.id]));
+      const needsTitle = meta?.title && activeTrack.title !== meta.title;
+      const needsArtist = meta?.artist && meta.artist !== 'Local Audio' && activeTrack.artist !== meta.artist;
+
+      if (needsArtwork || needsTitle || needsArtist) {
+        TrackPlayer.updateMetadataForTrack(activeIndex, {
+          ...(needsArtwork ? { artwork: meta?.artwork || artworkMap[activeTrack.id] } : {}),
+          ...(needsTitle ? { title: meta!.title } : {}),
+          ...(needsArtist ? { artist: meta!.artist } : {}),
+        }).catch(() => {});
+      }
     }
-  }, [activeTrack, activeIndex, artworkMap]);
+  }, [activeTrack, activeIndex, artworkMap, metadataMap]);
 
   const currentLyrics: LyricsResult | null = useMemo(() => {
-    if (!activeTrack?.id) return null;
-    return lyricsCache[activeTrack.id] || null;
-  }, [activeTrack?.id, lyricsCache]);
+    if (!activeTrack || !lyricsCache) return null;
+    return getLyricsFromCache({
+      id: activeTrack.id,
+      url: activeTrack.url,
+      title: displayTitle,
+      artist: displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '',
+    });
+  }, [activeTrack, lyricsCache, getLyricsFromCache, displayTitle, displayArtist]);
 
   const loadLyricsForTrack = async (title: string, artist?: string, force = false) => {
-    if (!activeTrack?.id) return;
-    if (!force && lyricsCache[activeTrack.id]) return;
+    if (!activeTrack) return;
+    const cleanArtist = artist && artist !== 'Local Audio' && artist !== 'Bilinmeyen Sanatçı' ? artist : '';
+    const cached = getLyricsFromCache({
+      id: activeTrack.id,
+      url: activeTrack.url,
+      title,
+      artist: cleanArtist,
+    });
+    if (!force && cached) {
+      // Offline cached lyrics exist! Display instantly with 0 ms delay!
+      return;
+    }
 
     setIsLoadingLyrics(true);
     try {
-      const result = await fetchLyricsOnline(title, artist || '');
-      if (result && activeTrack?.id) {
-        setLyrics(activeTrack.id, result);
+      const result = await fetchLyricsOnline(title, cleanArtist);
+      if (result) {
+        const altKeys = getLyricsCacheKeys({
+          id: activeTrack.id,
+          url: activeTrack.url,
+          title,
+          artist: cleanArtist,
+        });
+        const saveId = activeTrack.id || activeTrack.url || title;
+        setLyrics(saveId, result, altKeys);
       }
     } catch (e) {
       console.warn('Failed to load lyrics', e);
@@ -127,12 +173,12 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     if (activeTrack) {
-      const { title, artist } = parseArtistAndTitle(activeTrack.title || '', activeTrack.artist || '');
-      setManualQuery(artist ? `${artist} - ${title}` : title);
-      loadLyricsForTrack(title, artist);
+      const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
+      setManualQuery(searchArtist ? `${searchArtist} - ${displayTitle}` : displayTitle);
+      loadLyricsForTrack(displayTitle, searchArtist);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTrack?.id]);
+  }, [activeTrack?.id, activeTrack?.url, displayTitle, displayArtist]);
 
   const activeLineIndex = useMemo(() => {
     if (!currentLyrics?.parsedLines || currentLyrics.parsedLines.length === 0) return -1;
@@ -165,12 +211,20 @@ export default function PlayerScreen() {
   }, [activeLineIndex, isLyricsModalOpen, currentLyrics?.parsedLines]);
 
   const handleManualSearch = async () => {
-    if (!manualQuery.trim() || !activeTrack?.id) return;
+    if (!manualQuery.trim() || !activeTrack) return;
     setIsLoadingLyrics(true);
     try {
       const result = await fetchLyricsOnline(manualQuery.trim());
       if (result) {
-        setLyrics(activeTrack.id, result);
+        const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
+        const altKeys = getLyricsCacheKeys({
+          id: activeTrack.id,
+          url: activeTrack.url,
+          title: displayTitle,
+          artist: searchArtist,
+        });
+        const saveId = activeTrack.id || activeTrack.url || displayTitle;
+        setLyrics(saveId, result, altKeys);
         setIsManualSearchOpen(false);
       }
     } catch (e) {
@@ -298,6 +352,14 @@ export default function PlayerScreen() {
 
   const renderQueueItem = ({ item, index }: { item: Track; index: number }) => {
     const isCurrent = index === activeIndex;
+    const qMeta = item.id ? metadataMap[item.id] : undefined;
+    const qTitle = qMeta?.title?.trim() || cleanTitle(item.title) || 'Bilinmeyen Parça';
+    const qArtist =
+      qMeta?.artist?.trim() && qMeta.artist !== 'Local Audio' && qMeta.artist !== 'Bilinmeyen Sanatçı'
+        ? qMeta.artist.trim()
+        : (item.artist && item.artist !== 'Local Audio' && item.artist !== 'Bilinmeyen Sanatçı'
+            ? item.artist
+            : 'Bilinmeyen Sanatçı');
 
     return (
       <TouchableOpacity
@@ -306,7 +368,7 @@ export default function PlayerScreen() {
         <View style={styles.queueItemLeft}>
           <View style={{ marginRight: 12 }}>
             <TrackArtwork
-              uri={(item.id && artworkMap[item.id]) || item.artwork}
+              uri={(item.id && (metadataMap[item.id]?.artwork || artworkMap[item.id])) || item.artwork}
               trackId={item.id}
               trackUri={item.url}
               size={40}
@@ -318,10 +380,10 @@ export default function PlayerScreen() {
             <Text
               style={[styles.queueItemTitle, isCurrent && styles.queueItemTitleActive]}
               numberOfLines={1}>
-              {cleanTitle(item.title)}
+              {qTitle}
             </Text>
             <Text style={styles.queueItemArtist} numberOfLines={1}>
-              {isCurrent ? 'Şu An Çalıyor' : item.artist || 'Local Audio'}
+              {isCurrent ? 'Şu An Çalıyor' : qArtist}
             </Text>
           </View>
         </View>
@@ -343,7 +405,7 @@ export default function PlayerScreen() {
       {/* Album Art Card */}
       <View style={styles.albumArtContainer}>
         <TrackArtwork
-          uri={(activeTrack?.id && artworkMap[activeTrack.id]) || activeTrack?.artwork}
+          uri={(activeTrack?.id && (metadataMap[activeTrack.id]?.artwork || artworkMap[activeTrack.id])) || activeTrack?.artwork}
           trackId={activeTrack?.id}
           trackUri={activeTrack?.url}
           size={250}
@@ -356,10 +418,10 @@ export default function PlayerScreen() {
       {/* Track Info */}
       <View style={styles.infoContainer}>
         <Text style={styles.title} numberOfLines={1}>
-          {cleanTitle(activeTrack?.title)}
+          {displayTitle}
         </Text>
         <Text style={styles.subtitle} numberOfLines={1}>
-          {activeTrack?.artist || 'Local Audio'}
+          {displayArtist}
         </Text>
       </View>
 
@@ -559,7 +621,7 @@ export default function PlayerScreen() {
             <View style={styles.lyricsHeader}>
               <View style={styles.lyricsHeaderLeft}>
                 <Text style={styles.lyricsHeaderTitle} numberOfLines={1}>
-                  {cleanTitle(activeTrack?.title)}
+                  {displayTitle}
                 </Text>
                 <View style={styles.lyricsSourceBadgeRow}>
                   {currentLyrics ? (

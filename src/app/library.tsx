@@ -19,7 +19,8 @@ import { useStore } from '../store/useStore';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { TrackArtwork } from '../components/TrackArtwork';
-import { getBatchArtworksAsync } from '../../modules/audio-artwork/src';
+import { getBatchMetadataAsync } from '../../modules/audio-artwork/src';
+import { parseArtistAndTitle } from '../services/lyricsService';
 
 type SortOption =
   | 'name_asc'
@@ -53,7 +54,8 @@ export default function LibraryScreen() {
     settings,
     hideTrack,
     artworkMap,
-    setBatchArtworks,
+    metadataMap,
+    setBatchTrackMetadata,
   } = useStore();
   const [statusMessage, setStatusMessage] = useState<string>('');
   const router = useRouter();
@@ -70,6 +72,22 @@ export default function LibraryScreen() {
   const [selectedTrackForMenu, setSelectedTrackForMenu] = useState<MediaLibrary.Asset | null>(null);
 
   const cleanTitle = (raw: string) => raw.replace(/\.[^/.]+$/, '');
+
+  const getTrackDisplayInfo = useCallback(
+    (asset: MediaLibrary.Asset) => {
+      const meta = metadataMap[asset.id];
+      const parsed = parseArtistAndTitle(cleanTitle(asset.filename));
+      const title = meta?.title?.trim() || parsed.title || cleanTitle(asset.filename);
+      const artist =
+        meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
+          ? meta.artist.trim()
+          : (parsed.artist && parsed.artist !== 'Local Audio' && parsed.artist !== 'Bilinmeyen Sanatçı'
+              ? parsed.artist
+              : '');
+      return { title, artist };
+    },
+    [metadataMap]
+  );
 
   const handleHideTrack = async (asset: MediaLibrary.Asset) => {
     setSelectedTrackForMenu(null);
@@ -168,20 +186,20 @@ export default function LibraryScreen() {
       setLibrary(validAudio);
       setStatusMessage(`Found ${validAudio.length} track(s).`);
 
-      // Background extraction of missing artworks
+      // Background extraction of missing metadata & artworks
       (async () => {
         try {
-          const currentMap = useStore.getState().artworkMap;
-          const missing = validAudio.filter((a) => !currentMap[a.id]);
+          const currentMeta = useStore.getState().metadataMap;
+          const missing = validAudio.filter((a) => !currentMeta[a.id]);
           for (let i = 0; i < missing.length; i += 25) {
             const chunk = missing.slice(i, i + 25).map((a) => ({ id: a.id, uri: a.uri }));
-            const arts = await getBatchArtworksAsync(chunk);
-            if (Object.keys(arts).length > 0) {
-              setBatchArtworks(arts);
+            const metaBatch = await getBatchMetadataAsync(chunk);
+            if (Object.keys(metaBatch).length > 0) {
+              setBatchTrackMetadata(metaBatch as any);
             }
           }
         } catch (e) {
-          console.warn('Batch artwork extraction error:', e);
+          console.warn('Batch metadata extraction error:', e);
         }
       })();
     } catch (e: any) {
@@ -191,7 +209,7 @@ export default function LibraryScreen() {
     } finally {
       setIsScanning(false);
     }
-  }, [settings, setLibrary, setIsScanning, setBatchArtworks]);
+  }, [settings, setLibrary, setIsScanning, setBatchTrackMetadata]);
 
   useEffect(() => {
     scanMedia();
@@ -200,8 +218,8 @@ export default function LibraryScreen() {
   // Sorting comparator
   const sortComparator = useCallback(
     (a: MediaLibrary.Asset, b: MediaLibrary.Asset, option: SortOption) => {
-      const nameA = cleanTitle(a.filename).toLowerCase();
-      const nameB = cleanTitle(b.filename).toLowerCase();
+      const nameA = getTrackDisplayInfo(a).title.toLowerCase();
+      const nameB = getTrackDisplayInfo(b).title.toLowerCase();
       switch (option) {
         case 'name_asc':
           return nameA.localeCompare(nameB, undefined, { numeric: true });
@@ -219,7 +237,7 @@ export default function LibraryScreen() {
           return 0;
       }
     },
-    []
+    [getTrackDisplayInfo]
   );
 
   // Full library sorted by the active sortOption
@@ -231,21 +249,31 @@ export default function LibraryScreen() {
   const displayedList = useMemo(() => {
     if (!searchQuery.trim()) return fullSortedList;
     const q = searchQuery.toLowerCase().trim();
-    return fullSortedList.filter((item) => cleanTitle(item.filename).toLowerCase().includes(q));
-  }, [fullSortedList, searchQuery]);
+    return fullSortedList.filter((item) => {
+      const info = getTrackDisplayInfo(item);
+      return (
+        info.title.toLowerCase().includes(q) ||
+        info.artist.toLowerCase().includes(q) ||
+        cleanTitle(item.filename).toLowerCase().includes(q)
+      );
+    });
+  }, [fullSortedList, searchQuery, getTrackDisplayInfo]);
 
   const playTrack = async (selectedAsset: MediaLibrary.Asset) => {
     try {
       await TrackPlayer.reset();
 
-      // Add the entire sorted library into queue with extracted cover art
-      const tracks = fullSortedList.map((asset) => ({
-        id: asset.id,
-        url: asset.uri,
-        title: cleanTitle(asset.filename),
-        artist: 'Local Audio',
-        artwork: artworkMap[asset.id] || undefined,
-      }));
+      // Add the entire sorted library into queue with extracted metadata and cover art
+      const tracks = fullSortedList.map((asset) => {
+        const info = getTrackDisplayInfo(asset);
+        return {
+          id: asset.id,
+          url: asset.uri,
+          title: info.title,
+          artist: info.artist,
+          artwork: metadataMap[asset.id]?.artwork || artworkMap[asset.id] || undefined,
+        };
+      });
 
       await TrackPlayer.add(tracks);
 
@@ -266,6 +294,7 @@ export default function LibraryScreen() {
   };
 
   const renderItem = ({ item }: { item: MediaLibrary.Asset }) => {
+    const info = getTrackDisplayInfo(item);
     return (
       <View style={styles.trackItem}>
         <TouchableOpacity
@@ -274,7 +303,7 @@ export default function LibraryScreen() {
           onPress={() => playTrack(item)}>
           <View style={{ marginRight: 12 }}>
             <TrackArtwork
-              uri={artworkMap[item.id]}
+              uri={metadataMap[item.id]?.artwork || artworkMap[item.id]}
               trackId={item.id}
               trackUri={item.uri}
               size={42}
@@ -284,13 +313,14 @@ export default function LibraryScreen() {
           </View>
           <View style={styles.trackInfo}>
             <Text style={styles.trackTitle} numberOfLines={1}>
-              {cleanTitle(item.filename)}
+              {info.title}
             </Text>
-            <Text style={styles.trackDuration}>
+            <Text style={styles.trackDuration} numberOfLines={1}>
               {Math.floor(item.duration / 60)}:
               {Math.floor(item.duration % 60)
                 .toString()
                 .padStart(2, '0')}
+              {info.artist ? ` • ${info.artist}` : ''}
             </Text>
           </View>
         </TouchableOpacity>
@@ -472,7 +502,7 @@ export default function LibraryScreen() {
               <>
                 <View style={styles.trackModalHeader}>
                   <TrackArtwork
-                    uri={artworkMap[selectedTrackForMenu.id]}
+                    uri={metadataMap[selectedTrackForMenu.id]?.artwork || artworkMap[selectedTrackForMenu.id]}
                     trackId={selectedTrackForMenu.id}
                     trackUri={selectedTrackForMenu.uri}
                     size={46}
@@ -481,13 +511,16 @@ export default function LibraryScreen() {
                   />
                   <View style={styles.trackModalHeaderInfo}>
                     <Text style={styles.trackModalTitle} numberOfLines={1}>
-                      {cleanTitle(selectedTrackForMenu.filename)}
+                      {getTrackDisplayInfo(selectedTrackForMenu).title}
                     </Text>
-                    <Text style={styles.trackModalDuration}>
+                    <Text style={styles.trackModalDuration} numberOfLines={1}>
                       {Math.floor(selectedTrackForMenu.duration / 60)}:
                       {Math.floor(selectedTrackForMenu.duration % 60)
                         .toString()
                         .padStart(2, '0')}
+                      {getTrackDisplayInfo(selectedTrackForMenu).artist
+                        ? ` • ${getTrackDisplayInfo(selectedTrackForMenu).artist}`
+                        : ''}
                     </Text>
                   </View>
                   <TouchableOpacity onPress={() => setSelectedTrackForMenu(null)}>
