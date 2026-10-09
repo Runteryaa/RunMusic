@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { getBatchMetadataAsync } from '../../modules/audio-artwork/src';
-import { parseArtistAndTitle } from '../services/lyricsService';
+import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
 
 type SortOption =
   | 'name_asc'
@@ -71,19 +71,23 @@ export default function LibraryScreen() {
   // Track action menu state
   const [selectedTrackForMenu, setSelectedTrackForMenu] = useState<MediaLibrary.Asset | null>(null);
 
-  const cleanTitle = (raw: string) => raw.replace(/\.[^/.]+$/, '');
+  const cleanTitle = (raw: string) => cleanYouTubeTitle(raw);
 
   const getTrackDisplayInfo = useCallback(
     (asset: MediaLibrary.Asset) => {
       const meta = metadataMap[asset.id];
-      const parsed = parseArtistAndTitle(cleanTitle(asset.filename));
-      const title = meta?.title?.trim() || parsed.title || cleanTitle(asset.filename);
+      const keywords = getSearchKeywords(asset.filename);
+      const title =
+        (meta?.title?.trim() ? cleanYouTubeTitle(meta.title) : '') ||
+        keywords.expectedTrack ||
+        cleanYouTubeTitle(asset.filename);
       const artist =
-        meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
-          ? meta.artist.trim()
-          : (parsed.artist && parsed.artist !== 'Local Audio' && parsed.artist !== 'Bilinmeyen Sanatçı'
-              ? parsed.artist
-              : '');
+        (meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
+          ? cleanYouTubeTitle(meta.artist)
+          : '') ||
+        (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
+          ? keywords.expectedArtist
+          : '');
       return { title, artist };
     },
     [metadataMap]

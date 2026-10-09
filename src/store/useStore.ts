@@ -41,7 +41,13 @@ interface AppState {
 
   lyricsCache: Record<string, LyricsResult>;
   setLyrics: (id: string, lyrics: LyricsResult, alternateKeys?: string[]) => void;
-  getLyricsFromCache: (params: { id?: string; url?: string; title?: string; artist?: string }) => LyricsResult | null;
+  getLyricsFromCache: (params: {
+    id?: string;
+    url?: string;
+    title?: string;
+    artist?: string;
+    rawTitle?: string;
+  }) => LyricsResult | null;
   clearLyricsCache: () => void;
 
   library: MediaLibrary.Asset[];

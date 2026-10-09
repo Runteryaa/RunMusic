@@ -11,6 +11,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../store/useStore';
 import { TrackArtwork } from '../components/TrackArtwork';
+import { cleanYouTubeTitle } from '../services/lyricsService';
 
 export default function SettingsScreen() {
   const {
@@ -28,15 +29,22 @@ export default function SettingsScreen() {
 
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const cleanTitle = (raw: string) => raw.replace(/\.[^/.]+$/, '');
-
   const hiddenTrackItems = useMemo(() => {
     return hiddenTrackIds.map((id) => {
       const asset = allAssets.find((a) => a.id === id);
+      const meta = metadataMap[id];
+      let title = meta?.title?.trim() || '';
+      if (!title && asset) {
+        title = cleanYouTubeTitle(asset.filename);
+      } else if (title) {
+        title = cleanYouTubeTitle(title);
+      } else {
+        title = `Şarkı (${id})`;
+      }
       return {
         id,
         asset,
-        title: metadataMap[id]?.title || (asset ? cleanTitle(asset.filename) : `Şarkı (${id})`),
+        title,
         duration: asset?.duration,
         albumId: asset?.albumId,
       };

@@ -26,8 +26,9 @@ import {
   LyricLine,
   LyricsResult,
   fetchLyricsOnline,
-  parseArtistAndTitle,
   getLyricsCacheKeys,
+  cleanYouTubeTitle,
+  getSearchKeywords,
 } from '../services/lyricsService';
 
 export default function PlayerScreen() {
@@ -78,7 +79,7 @@ export default function PlayerScreen() {
 
   const cleanTitle = (raw?: string) => {
     if (!raw) return 'No Song Playing';
-    return raw.replace(/\.[^/.]+$/, '');
+    return cleanYouTubeTitle(raw);
   };
 
   const refreshQueue = async () => {
@@ -99,16 +100,21 @@ export default function PlayerScreen() {
   }, [activeTrack]);
 
   const activeMeta = activeTrack?.id ? metadataMap[activeTrack.id] : undefined;
-  const parsedActive = parseArtistAndTitle(cleanTitle(activeTrack?.title || ''), activeTrack?.artist || '');
-  const displayTitle = activeMeta?.title?.trim() || parsedActive.title || cleanTitle(activeTrack?.title) || 'Bilinmeyen Parça';
+  const activeKeywords = getSearchKeywords(activeTrack?.title || '', activeTrack?.artist || '');
+  const displayTitle =
+    (activeMeta?.title?.trim() ? cleanYouTubeTitle(activeMeta.title) : '') ||
+    activeKeywords.expectedTrack ||
+    cleanYouTubeTitle(activeTrack?.title || '') ||
+    'Bilinmeyen Parça';
   const displayArtist =
-    activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
-      ? activeMeta.artist.trim()
-      : (parsedActive.artist && parsedActive.artist !== 'Local Audio' && parsedActive.artist !== 'Bilinmeyen Sanatçı'
-          ? parsedActive.artist
-          : (activeTrack?.artist && activeTrack.artist !== 'Local Audio' && activeTrack.artist !== 'Bilinmeyen Sanatçı'
-              ? activeTrack.artist
-              : 'Bilinmeyen Sanatçı'));
+    (activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
+      ? cleanYouTubeTitle(activeMeta.artist)
+      : '') ||
+    (activeKeywords.expectedArtist && activeKeywords.expectedArtist !== 'Local Audio' && activeKeywords.expectedArtist !== 'Bilinmeyen Sanatçı'
+      ? activeKeywords.expectedArtist
+      : (activeTrack?.artist && activeTrack.artist !== 'Local Audio' && activeTrack.artist !== 'Bilinmeyen Sanatçı'
+          ? cleanYouTubeTitle(activeTrack.artist)
+          : 'Bilinmeyen Sanatçı'));
 
   useEffect(() => {
     if (activeTrack && activeIndex >= 0) {
@@ -134,21 +140,26 @@ export default function PlayerScreen() {
       url: activeTrack.url,
       title: displayTitle,
       artist: displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '',
+      rawTitle: activeTrack.title,
     });
   }, [activeTrack, lyricsCache, getLyricsFromCache, displayTitle, displayArtist]);
 
   const loadLyricsForTrack = async (title: string, artist?: string, force = false) => {
     if (!activeTrack) return;
     const cleanArtist = artist && artist !== 'Local Audio' && artist !== 'Bilinmeyen Sanatçı' ? artist : '';
-    const cached = getLyricsFromCache({
-      id: activeTrack.id,
-      url: activeTrack.url,
-      title,
-      artist: cleanArtist,
-    });
-    if (!force && cached) {
-      // Offline cached lyrics exist! Display instantly with 0 ms delay!
-      return;
+
+    if (!force) {
+      const cached = getLyricsFromCache({
+        id: activeTrack.id,
+        url: activeTrack.url,
+        title,
+        artist: cleanArtist,
+        rawTitle: activeTrack.title,
+      });
+      if (cached) {
+        // Kaydedilmiş söz var! Online veya offline fark etmeksizin kayıtlı sözü göster!
+        return;
+      }
     }
 
     setIsLoadingLyrics(true);
@@ -160,6 +171,7 @@ export default function PlayerScreen() {
           url: activeTrack.url,
           title,
           artist: cleanArtist,
+          rawTitle: activeTrack.title,
         });
         const saveId = activeTrack.id || activeTrack.url || title;
         setLyrics(saveId, result, altKeys);
@@ -175,7 +187,20 @@ export default function PlayerScreen() {
     if (activeTrack) {
       const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
       setManualQuery(searchArtist ? `${searchArtist} - ${displayTitle}` : displayTitle);
-      loadLyricsForTrack(displayTitle, searchArtist);
+
+      const cached = getLyricsFromCache({
+        id: activeTrack.id,
+        url: activeTrack.url,
+        title: displayTitle,
+        artist: searchArtist,
+        rawTitle: activeTrack.title,
+      });
+
+      // Yalnızca önbellekte henüz şarkı sözü yoksa otomatik ara!
+      // Kaydedilmiş söz varsa kullanıcı yenilemediği sürece onu göster!
+      if (!cached) {
+        loadLyricsForTrack(displayTitle, searchArtist, false);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTrack?.id, activeTrack?.url, displayTitle, displayArtist]);
@@ -353,13 +378,21 @@ export default function PlayerScreen() {
   const renderQueueItem = ({ item, index }: { item: Track; index: number }) => {
     const isCurrent = index === activeIndex;
     const qMeta = item.id ? metadataMap[item.id] : undefined;
-    const qTitle = qMeta?.title?.trim() || cleanTitle(item.title) || 'Bilinmeyen Parça';
+    const qKeywords = getSearchKeywords(item.title || '', item.artist || '');
+    const qTitle =
+      (qMeta?.title?.trim() ? cleanYouTubeTitle(qMeta.title) : '') ||
+      qKeywords.expectedTrack ||
+      cleanTitle(item.title) ||
+      'Bilinmeyen Parça';
     const qArtist =
-      qMeta?.artist?.trim() && qMeta.artist !== 'Local Audio' && qMeta.artist !== 'Bilinmeyen Sanatçı'
-        ? qMeta.artist.trim()
+      (qMeta?.artist?.trim() && qMeta.artist !== 'Local Audio' && qMeta.artist !== 'Bilinmeyen Sanatçı'
+        ? cleanYouTubeTitle(qMeta.artist)
+        : '') ||
+      (qKeywords.expectedArtist && qKeywords.expectedArtist !== 'Local Audio' && qKeywords.expectedArtist !== 'Bilinmeyen Sanatçı'
+        ? qKeywords.expectedArtist
         : (item.artist && item.artist !== 'Local Audio' && item.artist !== 'Bilinmeyen Sanatçı'
-            ? item.artist
-            : 'Bilinmeyen Sanatçı');
+            ? cleanYouTubeTitle(item.artist)
+            : 'Bilinmeyen Sanatçı'));
 
     return (
       <TouchableOpacity
@@ -647,6 +680,20 @@ export default function PlayerScreen() {
               </View>
 
               <View style={styles.lyricsHeaderActions}>
+                <TouchableOpacity
+                  style={styles.lyricsRefreshBtn}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
+                    loadLyricsForTrack(displayTitle, searchArtist, true);
+                  }}
+                  disabled={isLoadingLyrics}>
+                  {isLoadingLyrics ? (
+                    <ActivityIndicator size="small" color="#3b82f6" />
+                  ) : (
+                    <Ionicons name="refresh" size={18} color="#a1a1aa" />
+                  )}
+                </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.lyricsSearchToggleBtn}
                   onPress={() => setIsManualSearchOpen(!isManualSearchOpen)}>
@@ -1170,6 +1217,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  lyricsRefreshBtn: {
+    padding: 7,
+    backgroundColor: '#27272a',
+    borderRadius: 8,
   },
   lyricsSearchToggleBtn: {
     padding: 7,

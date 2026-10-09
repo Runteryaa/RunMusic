@@ -44,9 +44,12 @@ export function parseLRC(lrc: string): LyricLine[] {
 }
 
 /**
- * Common noise patterns in audio/video titles to strip before searching.
+ * Common YouTube suffix/noise patterns to strip from track & artist strings.
+ * Order matters: strip compound phrases before individual words.
+ * Ported directly from Runteryaa/YT-LyricPopup background.js.
  */
-const NOISE_PATTERNS = [
+export const YT_NOISE_PATTERNS = [
+  // Video type labels (inside or outside brackets)
   /official\s*(music\s*)?video/gi,
   /official\s*audio/gi,
   /official\s*lyric\s*video/gi,
@@ -62,22 +65,75 @@ const NOISE_PATTERNS = [
   /visuali[sz]er/gi,
   /\bvideo\s*clip\b/gi,
   /\bofficial\b/gi,
+
+  // Quality / format tags
   /\b(4k|8k|hd|hq|full\s*hd|1080p|720p|explicit)\b/gi,
+
+  // "Prod." credits
   /prod\.?\s*(by\s*)?[^,\-\[\]()\n]+/gi,
-  /[\(\[]\s*feat\.?.*?[\)\]]/gi,
-  /[\(\[]\s*ft\.?.*?[\)\]]/gi,
+
+  // Features — must come AFTER prod. strip
+  /[\(\[]\s*feat\.?.*?[\)\]]/gi,     // (feat. x) or [feat. x]
+  /[\(\[]\s*ft\.?.*?[\)\]]/gi,       // (ft. x)
   /,?\s*feat(uring)?\.?\s+[^,\-\[\]()\n]+/gi,
   /,?\s*ft\.?\s+[^,\-\[\]()\n]+/gi,
+
+  // Bracketed/parenthesised leftovers (generic — run last)
   /\([^)]*\)/g,
   /\[[^\]]*\]/g,
 ];
 
-export function cleanTrackTitle(str: string): string {
-  let s = (str || '').replace(/\.[^/.]+$/, '').replace(/"/g, '');
-  for (const pat of NOISE_PATTERNS) {
+/**
+ * Strip YouTube noise from a title segment (track name or full title).
+ * Preserves the core song/artist name.
+ * Ported directly from Runteryaa/YT-LyricPopup background.js.
+ */
+export function cleanYouTubeTitle(str: string): string {
+  let s = str || '';
+
+  // Remove file extension if present (for local audio files!)
+  s = s.replace(/\.[^/.]+$/, '');
+
+  // Remove wrapping or standalone double quotes
+  s = s.replace(/"/g, '');
+
+  for (const pat of YT_NOISE_PATTERNS) {
     s = s.replace(pat, ' ');
   }
+  // Collapse multiple spaces / trim trailing punctuation
   return s.replace(/\s+/g, ' ').replace(/[\s,\-–—|]+$/, '').trim();
+}
+
+// Alias for backwards compatibility
+export const cleanTrackTitle = cleanYouTubeTitle;
+
+/**
+ * Extracts and cleans search keywords from a video / audio title.
+ * Ported directly from Runteryaa/YT-LyricPopup background.js.
+ */
+export function getSearchKeywords(videoTitle: string, channelName = '') {
+  // Strip extension and anything after a pipe character since it's usually just metadata
+  const titleBeforePipe = (videoTitle || '').replace(/\.[^/.]+$/, '').split('|')[0].trim();
+
+  // Parse "Artist - Title" (lazy on artist side to handle "A & B - Song")
+  const dashMatch = titleBeforePipe.match(/^(.+?)\s*[-–—]\s*(.+)$/);
+
+  // Clean both halves: strip "Official Music Video", "ft. x", "4K", etc.
+  const rawArtist = dashMatch ? dashMatch[1].trim() : '';
+  const rawTrack = dashMatch ? dashMatch[2].trim() : titleBeforePipe.trim();
+
+  const expectedArtist = cleanYouTubeTitle(rawArtist);
+  const expectedTrack = cleanYouTubeTitle(rawTrack);
+  const cleanChannel = cleanYouTubeTitle(channelName);
+
+  let cleanedFullTitle = expectedTrack;
+  if (dashMatch && expectedArtist) {
+    cleanedFullTitle = `${expectedArtist} - ${expectedTrack}`;
+  } else if (dashMatch && !expectedArtist) {
+    cleanedFullTitle = expectedTrack;
+  }
+
+  return { expectedArtist, expectedTrack, cleanChannel, cleanedFullTitle, dashMatch, titleBeforePipe };
 }
 
 export function parseArtistAndTitle(rawTitle: string, defaultArtist = ''): { artist: string; title: string } {
@@ -85,28 +141,18 @@ export function parseArtistAndTitle(rawTitle: string, defaultArtist = ''): { art
     defaultArtist && defaultArtist !== 'Local Audio' && defaultArtist !== 'Bilinmeyen Sanatçı'
       ? defaultArtist
       : '';
-  const clean = (rawTitle || '').replace(/\.[^/.]+$/, '').trim();
-  const titleBeforePipe = clean.split('|')[0].trim();
-  const dashMatch = titleBeforePipe.match(/^(.+?)\s*[-–—]\s*(.+)$/);
 
-  if (dashMatch) {
-    const artist = cleanTrackTitle(dashMatch[1]);
-    const title = cleanTrackTitle(dashMatch[2]);
-    return {
-      artist: artist || cleanTrackTitle(safeDefaultArtist),
-      title: title || cleanTrackTitle(titleBeforePipe),
-    };
-  }
+  const { expectedArtist, expectedTrack } = getSearchKeywords(rawTitle, safeDefaultArtist);
 
   return {
-    artist: cleanTrackTitle(safeDefaultArtist),
-    title: cleanTrackTitle(titleBeforePipe),
+    artist: expectedArtist || cleanYouTubeTitle(safeDefaultArtist),
+    title: expectedTrack || cleanYouTubeTitle(rawTitle),
   };
 }
 
 export function createLyricsLookupKey(title?: string, artist?: string): string {
-  const normTitle = normalise(cleanTrackTitle(title || ''));
-  const normArtist = normalise(cleanTrackTitle(artist || ''));
+  const normTitle = normalise(cleanYouTubeTitle(title || ''));
+  const normArtist = normalise(cleanYouTubeTitle(artist || ''));
   if (normArtist && normArtist !== 'local audio' && normArtist !== 'bilinmeyen sanatci') {
     return `art_${normArtist}___tit_${normTitle}`;
   }
@@ -118,19 +164,41 @@ export function getLyricsCacheKeys(params: {
   url?: string;
   title?: string;
   artist?: string;
+  rawTitle?: string;
 }): string[] {
   const keys = new Set<string>();
   if (params.id) keys.add(params.id);
-  if (params.url) keys.add(params.url);
-
-  const { title, artist } = parseArtistAndTitle(params.title || '', params.artist || '');
-  if (title) {
-    keys.add(createLyricsLookupKey(title, artist));
-    keys.add(createLyricsLookupKey(title));
+  if (params.url) {
+    keys.add(params.url);
+    try {
+      const filename = decodeURIComponent(params.url.split('/').pop() || '');
+      if (filename) {
+        const cleanFn = filename.replace(/\.[^/.]+$/, '');
+        keys.add(`fn_${cleanFn}`);
+        keys.add(`fn_${cleanYouTubeTitle(cleanFn)}`);
+      }
+    } catch {}
   }
-  if (params.title && params.title !== title) {
+
+  const { expectedArtist, expectedTrack, cleanedFullTitle } = getSearchKeywords(
+    params.title || params.rawTitle || '',
+    params.artist || ''
+  );
+
+  if (expectedTrack) {
+    keys.add(createLyricsLookupKey(expectedTrack, expectedArtist));
+    keys.add(createLyricsLookupKey(expectedTrack));
+  }
+  if (cleanedFullTitle) {
+    keys.add(createLyricsLookupKey(cleanedFullTitle));
+  }
+  if (params.title) {
     keys.add(createLyricsLookupKey(params.title, params.artist));
     keys.add(createLyricsLookupKey(params.title));
+  }
+  if (params.rawTitle && params.rawTitle !== params.title) {
+    keys.add(createLyricsLookupKey(params.rawTitle, params.artist));
+    keys.add(createLyricsLookupKey(params.rawTitle));
   }
 
   return Array.from(keys).filter(Boolean);
@@ -181,18 +249,26 @@ function pickBest(results: any[], expectedArtist: string, expectedTrack: string)
 
 export async function searchLrclib(title: string, artist = ''): Promise<LyricsResult | null> {
   try {
-    const clean = parseArtistAndTitle(title, artist);
-    const expectedArtist = clean.artist;
-    const expectedTrack = clean.title;
-    const fullQuery = expectedArtist ? `${expectedArtist} - ${expectedTrack}` : expectedTrack;
+    const { expectedArtist, expectedTrack, cleanedFullTitle, dashMatch } = getSearchKeywords(
+      title,
+      artist
+    );
 
     const strategies: Record<string, string>[] = [];
-    if (expectedArtist && expectedTrack) {
+    if (dashMatch && expectedArtist) {
       strategies.push({ track_name: expectedTrack, artist_name: expectedArtist });
-      strategies.push({ q: fullQuery });
+      strategies.push({ q: cleanedFullTitle });
+      if (cleanedFullTitle !== title) {
+        strategies.push({ q: title });
+      }
     } else {
-      strategies.push({ q: expectedTrack });
+      strategies.push({ q: cleanedFullTitle });
+      if (cleanedFullTitle !== title) {
+        strategies.push({ q: title });
+      }
     }
+
+    const allCandidatesMap = new Map<number, { r: any; score: number }>();
 
     for (const params of strategies) {
       const url = new URL('https://lrclib.net/api/search');
@@ -206,18 +282,40 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
       const data = await res.json();
       if (!Array.isArray(data) || data.length === 0) continue;
 
-      const best = pickBest(data, expectedArtist, expectedTrack);
-      if (best && (best.syncedLyrics || best.plainLyrics)) {
+      for (const r of data) {
+        if (!allCandidatesMap.has(r.id)) {
+          allCandidatesMap.set(r.id, { r, score: scoreResult(r, expectedArtist, expectedTrack) });
+        }
+      }
+
+      const bestLocal = pickBest(data, expectedArtist, expectedTrack);
+      if (bestLocal && bestLocal.syncedLyrics) {
         return {
-          id: `lrclib-${best.id}`,
-          trackName: best.trackName,
-          artistName: best.artistName,
-          syncedLyrics: best.syncedLyrics || null,
-          plainLyrics: best.plainLyrics || null,
-          parsedLines: best.syncedLyrics ? parseLRC(best.syncedLyrics) : [],
+          id: `lrclib-${bestLocal.id}`,
+          trackName: bestLocal.trackName,
+          artistName: bestLocal.artistName,
+          syncedLyrics: bestLocal.syncedLyrics,
+          plainLyrics: bestLocal.plainLyrics || null,
+          parsedLines: parseLRC(bestLocal.syncedLyrics),
           source: 'lrclib',
         };
       }
+    }
+
+    const allResults = Array.from(allCandidatesMap.values()).map((x) => x.r);
+    if (allResults.length === 0) return null;
+
+    const best = pickBest(allResults, expectedArtist, expectedTrack);
+    if (best && (best.syncedLyrics || best.plainLyrics)) {
+      return {
+        id: `lrclib-${best.id}`,
+        trackName: best.trackName,
+        artistName: best.artistName,
+        syncedLyrics: best.syncedLyrics || null,
+        plainLyrics: best.plainLyrics || null,
+        parsedLines: best.syncedLyrics ? parseLRC(best.syncedLyrics) : [],
+        source: 'lrclib',
+      };
     }
   } catch (e) {
     console.warn('LRCLIB fetch error:', e);
@@ -300,11 +398,11 @@ function extractGeniusLyrics(rawHtml: string): string {
 
 export async function searchGenius(title: string, artist = ''): Promise<LyricsResult | null> {
   try {
-    const clean = parseArtistAndTitle(title, artist);
-    const query = `${clean.artist} ${clean.title}`.trim();
-    if (!query) return null;
+    const { expectedArtist, expectedTrack, cleanedFullTitle } = getSearchKeywords(title, artist);
+    const query = expectedArtist && expectedTrack ? `${expectedArtist} ${expectedTrack}` : cleanedFullTitle;
+    if (!query.trim()) return null;
 
-    const searchUrl = `https://genius.com/api/search/multi?per_page=1&q=${encodeURIComponent(query)}`;
+    const searchUrl = `https://genius.com/api/search/multi?per_page=1&q=${encodeURIComponent(query.trim())}`;
     const res = await fetch(searchUrl, {
       headers: {
         'User-Agent':
@@ -335,7 +433,7 @@ export async function searchGenius(title: string, artist = ''): Promise<LyricsRe
     return {
       id: `genius-${bestHit.id}`,
       trackName: bestHit.title,
-      artistName: bestHit.primary_artist?.name || clean.artist,
+      artistName: bestHit.primary_artist?.name || expectedArtist || 'Genius',
       syncedLyrics: null,
       plainLyrics,
       parsedLines: [],
