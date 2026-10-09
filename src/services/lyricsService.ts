@@ -259,9 +259,9 @@ export function getSearchKeywords(videoTitle: string, channelName = '') {
 
   let cleanedFullTitle = expectedTrack;
   if (dashMatch && expectedArtist) {
-    cleanedFullTitle = `${expectedArtist} - ${expectedTrack}`;
+    cleanedFullTitle = `${expectedArtist} ${expectedTrack}`;
   } else if (expectedArtist && expectedTrack) {
-    cleanedFullTitle = `${expectedArtist} - ${expectedTrack}`;
+    cleanedFullTitle = `${expectedArtist} ${expectedTrack}`;
   }
 
   return { expectedArtist, expectedTrack, cleanChannel, cleanedFullTitle, dashMatch, titleBeforePipe };
@@ -461,7 +461,6 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
     const strategies: Record<string, string>[] = [];
     if (expectedArtist && expectedTrack) {
       strategies.push({ track_name: expectedTrack, artist_name: expectedArtist });
-      strategies.push({ q: `${expectedArtist} - ${expectedTrack}` });
       strategies.push({ q: `${expectedArtist} ${expectedTrack}` });
     }
     if (dashMatch && cleanedFullTitle) {
@@ -784,7 +783,6 @@ export async function searchAllCandidates(query: string, artist = ''): Promise<L
     if (expectedArtist && expectedTrack) {
       strategies.push({ track_name: expectedTrack, artist_name: expectedArtist });
       strategies.push({ q: `${expectedArtist} ${expectedTrack}` });
-      strategies.push({ q: `${expectedArtist} - ${expectedTrack}` });
     }
     if (cleanedFullTitle && cleanedFullTitle !== trimmedQuery) {
       strategies.push({ q: cleanedFullTitle });
