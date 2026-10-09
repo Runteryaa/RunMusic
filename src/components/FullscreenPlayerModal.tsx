@@ -143,6 +143,41 @@ export function FullscreenPlayerModal() {
     (activeTrack?.id ? metadataMap[activeTrack.id]?.artwork || artworkMap[activeTrack.id] : undefined) ||
     (typeof activeTrack?.artwork === 'string' ? activeTrack.artwork : undefined);
 
+  // Önceki ve sonraki şarkıyı belirleme (Kapak geçiş önizlemesi için)
+  const prevTrack = useMemo(() => {
+    if (queue.length <= 1) return null;
+    if (activeIndex > 0) return queue[activeIndex - 1];
+    if (repeatMode === RepeatMode.Queue) return queue[queue.length - 1];
+    return null;
+  }, [queue, activeIndex, repeatMode]);
+
+  const nextTrack = useMemo(() => {
+    if (queue.length <= 1) return null;
+    if (activeIndex < queue.length - 1) return queue[activeIndex + 1];
+    if (repeatMode === RepeatMode.Queue) return queue[0];
+    return null;
+  }, [queue, activeIndex, repeatMode]);
+
+  const prevArtworkUri = useMemo(() => {
+    if (!prevTrack) return undefined;
+    const meta = prevTrack.id ? metadataMap[prevTrack.id] : undefined;
+    return (
+      meta?.artwork ||
+      (prevTrack.id && artworkMap[prevTrack.id]) ||
+      (typeof prevTrack.artwork === 'string' ? prevTrack.artwork : undefined)
+    );
+  }, [prevTrack, metadataMap, artworkMap]);
+
+  const nextArtworkUri = useMemo(() => {
+    if (!nextTrack) return undefined;
+    const meta = nextTrack.id ? metadataMap[nextTrack.id] : undefined;
+    return (
+      meta?.artwork ||
+      (nextTrack.id && artworkMap[nextTrack.id]) ||
+      (typeof nextTrack.artwork === 'string' ? nextTrack.artwork : undefined)
+    );
+  }, [nextTrack, metadataMap, artworkMap]);
+
   // Metadata check (tek seferlik ref korumalı)
   const updatedMetadataTrackIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -440,6 +475,12 @@ export function FullscreenPlayerModal() {
   };
 
   const artworkScale = useMemo(() => new Animated.Value(1), []);
+  const panX = useMemo(() => new Animated.Value(0), []);
+  const lyricsTransition = useMemo(() => new Animated.Value(0), []);
+  const playBtnScale = useMemo(() => new Animated.Value(1), []);
+  const [isSkipping, setIsSkipping] = useState(false);
+
+  const CARD_OFFSET = ARTWORK_SIZE + 24;
 
   useEffect(() => {
     Animated.spring(artworkScale, {
@@ -450,6 +491,34 @@ export function FullscreenPlayerModal() {
       useNativeDriver: true,
     }).start();
   }, [playing, artworkScale]);
+
+  useEffect(() => {
+    Animated.spring(lyricsTransition, {
+      toValue: isLyricsMode ? 1 : 0,
+      damping: 20,
+      mass: 0.9,
+      stiffness: 150,
+      useNativeDriver: true,
+    }).start();
+  }, [isLyricsMode, lyricsTransition]);
+
+  const handlePlayPressIn = useCallback(() => {
+    Animated.spring(playBtnScale, {
+      toValue: 0.88,
+      useNativeDriver: true,
+      speed: 50,
+      bounciness: 4,
+    }).start();
+  }, [playBtnScale]);
+
+  const handlePlayPressOut = useCallback(() => {
+    Animated.spring(playBtnScale, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 30,
+      bounciness: 12,
+    }).start();
+  }, [playBtnScale]);
 
   const skipNext = useCallback(async () => {
     try {
@@ -501,37 +570,103 @@ export function FullscreenPlayerModal() {
     await TrackPlayer.setRepeatMode(nextMode);
   }, [repeatMode, setRepeatMode]);
 
-  // Gestures: Middle container (Cover / Lyrics) - Swipe left/right skips track, Swipe down closes modal, Tap toggles lyrics
+  // Gestures: Middle container (Interactive Carousel Artwork / Lyrics)
   const artworkPanResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: (_, gesture) =>
-          Math.abs(gesture.dx) > 15 || Math.abs(gesture.dy) > 15,
+        onStartShouldSetPanResponder: () => !isLyricsMode && !isSkipping,
+        onMoveShouldSetPanResponder: (_, gesture) => {
+          if (isLyricsMode || isSkipping) return false;
+          return Math.abs(gesture.dx) > 10 || Math.abs(gesture.dy) > 12;
+        },
+        onPanResponderMove: (_, gesture) => {
+          if (isSkipping) return;
+          // Belirgin dikey kaydırma varsa (aşağı çekip kapatma) yatay hareketi engelle
+          if (gesture.dy > 18 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.4) {
+            return;
+          }
+          let targetDx = gesture.dx;
+          // Eğer sonraki veya önceki şarkı yoksa lastik direnci uygula
+          if (targetDx < 0 && !nextTrack) {
+            targetDx = targetDx * 0.28;
+          } else if (targetDx > 0 && !prevTrack) {
+            targetDx = targetDx * 0.28;
+          }
+          panX.setValue(targetDx);
+        },
         onPanResponderRelease: (_, gesture) => {
-          // Normal dokunma: Sözler moduna geç
-          if (Math.abs(gesture.dx) < 12 && Math.abs(gesture.dy) < 12) {
+          if (isSkipping) return;
+
+          // 1. Dokunma (Tap): Sözler moduna geç
+          if (Math.abs(gesture.dx) < 10 && Math.abs(gesture.dy) < 10) {
             toggleLyricsMode();
             return;
           }
-          // Aşağı kaydırma: Tam ekran çaları kapat (Apple Music tarzı)
+
+          // 2. Aşağı kaydırma: Tam ekran çaları kapat
           if (gesture.dy > 50 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.1) {
+            Animated.spring(panX, { toValue: 0, useNativeDriver: true }).start();
             closeFullscreenPlayer();
             return;
           }
-          // Sağa/Sola kaydırma: Şarkı değiştir (Apple Music gesture skip)
-          if (Math.abs(gesture.dx) > 35) {
-            if (gesture.dx < 0) {
-              // Sola kaydırıldı -> Sonraki şarkı
+
+          // 3. Yatay kaydırma: Şarkı değiştirme eşiği
+          const threshold = ARTWORK_SIZE * 0.25;
+          const isQuickFlingLeft = gesture.dx < -30 && gesture.vx < -0.4;
+          const isQuickFlingRight = gesture.dx > 30 && gesture.vx > 0.4;
+
+          if ((gesture.dx < -threshold || isQuickFlingLeft) && nextTrack) {
+            // Sola kaydırıldı -> Sonraki şarkıya yumuşak animasyonla geç
+            setIsSkipping(true);
+            Animated.spring(panX, {
+              toValue: -CARD_OFFSET,
+              velocity: gesture.vx,
+              tension: 65,
+              friction: 9,
+              useNativeDriver: true,
+            }).start(() => {
               skipNext();
-            } else {
-              // Sağa kaydırıldı -> Önceki şarkı
+              panX.setValue(0);
+              setIsSkipping(false);
+            });
+          } else if ((gesture.dx > threshold || isQuickFlingRight) && prevTrack) {
+            // Sağa kaydırıldı -> Önceki şarkıya yumuşak animasyonla geç
+            setIsSkipping(true);
+            Animated.spring(panX, {
+              toValue: CARD_OFFSET,
+              velocity: gesture.vx,
+              tension: 65,
+              friction: 9,
+              useNativeDriver: true,
+            }).start(() => {
               skipPrev();
-            }
+              panX.setValue(0);
+              setIsSkipping(false);
+            });
+          } else {
+            // Eşik geçilmedi -> Merkeze tatlı bir yay efektiyle geri dön
+            Animated.spring(panX, {
+              toValue: 0,
+              velocity: gesture.vx,
+              tension: 70,
+              friction: 8,
+              useNativeDriver: true,
+            }).start();
           }
         },
       }),
-    [toggleLyricsMode, closeFullscreenPlayer, skipNext, skipPrev]
+    [
+      isLyricsMode,
+      isSkipping,
+      nextTrack,
+      prevTrack,
+      panX,
+      CARD_OFFSET,
+      toggleLyricsMode,
+      closeFullscreenPlayer,
+      skipNext,
+      skipPrev,
+    ]
   );
 
   // Gestures: Top grabber handle - Pull down closes modal
@@ -602,134 +737,274 @@ export function FullscreenPlayerModal() {
           </TouchableOpacity>
         </View>
 
-        {/* ORTA BÖLÜM: Kapak Fotoğrafı <---> Senkronize Şarkı Sözleri Değişimi */}
+        {/* ORTA BÖLÜM: Kapak Fotoğrafı Carousel <---> Senkronize Şarkı Sözleri Değişimi */}
         <View style={styles.middleContainer} {...artworkPanResponder.panHandlers}>
-          {!isLyricsMode ? (
-            /* Kapak Görünümü (Apple Music ölçekleme + sağa/sola kaydırınca şarkı geçişi) */
-            <View style={styles.coverCenterBox}>
+          {/* 1. Kapak Carousel Görünümü (Apple Music etkileşimli kenar önizlemeli geçiş) */}
+          <Animated.View
+            style={[
+              styles.coverCenterBox,
+              {
+                opacity: lyricsTransition.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [1, 0],
+                }),
+                transform: [
+                  {
+                    scale: lyricsTransition.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1, 0.9],
+                    }),
+                  },
+                ],
+              },
+            ]}
+            pointerEvents={isLyricsMode ? 'none' : 'auto'}>
+            {/* Önceki Şarkı Kapağı (Soldan süzülen önizleme) */}
+            {prevTrack ? (
               <Animated.View
                 style={[
-                  styles.artworkWrapper,
-                  { transform: [{ scale: artworkScale }] },
-                ]}>
+                  styles.neighborArtworkWrapper,
+                  {
+                    transform: [
+                      {
+                        translateX: panX.interpolate({
+                          inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
+                          outputRange: [-CARD_OFFSET * 2, -CARD_OFFSET, 0],
+                          extrapolate: 'clamp',
+                        }),
+                      },
+                      {
+                        scale: panX.interpolate({
+                          inputRange: [0, CARD_OFFSET],
+                          outputRange: [0.82, 1],
+                          extrapolate: 'clamp',
+                        }),
+                      },
+                    ],
+                    opacity: panX.interpolate({
+                      inputRange: [0, CARD_OFFSET * 0.75],
+                      outputRange: [0.25, 1],
+                      extrapolate: 'clamp',
+                    }),
+                  },
+                ]}
+                pointerEvents="none">
                 <TrackArtwork
-                  uri={currentArtworkUri}
-                  trackId={activeTrack.id}
-                  trackUri={activeTrack.url}
+                  uri={prevArtworkUri}
+                  trackId={prevTrack.id}
+                  trackUri={prevTrack.url}
                   size={ARTWORK_SIZE}
                   borderRadius={18}
                   iconSize={84}
                 />
               </Animated.View>
-              <View style={styles.swipeHintRow}>
-                <Ionicons
-                  name="swap-horizontal"
-                  size={14}
-                  color="rgba(255, 255, 255, 0.45)"
-                  style={{ marginRight: 6 }}
+            ) : null}
+
+            {/* Mevcut Şarkı Kapağı (Merkezde, kaydırılan ana kart) */}
+            <Animated.View
+              style={[
+                styles.artworkWrapper,
+                {
+                  transform: [
+                    { translateX: panX },
+                    { scale: artworkScale },
+                    {
+                      scale: panX.interpolate({
+                        inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
+                        outputRange: [0.85, 1, 0.85],
+                        extrapolate: 'clamp',
+                      }),
+                    },
+                    {
+                      rotate: panX.interpolate({
+                        inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
+                        outputRange: ['-5deg', '0deg', '5deg'],
+                        extrapolate: 'clamp',
+                      }),
+                    },
+                  ],
+                  opacity: panX.interpolate({
+                    inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
+                    outputRange: [0.45, 1, 0.45],
+                    extrapolate: 'clamp',
+                  }),
+                },
+              ]}>
+              <TrackArtwork
+                uri={currentArtworkUri}
+                trackId={activeTrack.id}
+                trackUri={activeTrack.url}
+                size={ARTWORK_SIZE}
+                borderRadius={18}
+                iconSize={84}
+              />
+            </Animated.View>
+
+            {/* Sonraki Şarkı Kapağı (Sağdan süzülen önizleme) */}
+            {nextTrack ? (
+              <Animated.View
+                style={[
+                  styles.neighborArtworkWrapper,
+                  {
+                    transform: [
+                      {
+                        translateX: panX.interpolate({
+                          inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
+                          outputRange: [0, CARD_OFFSET, CARD_OFFSET * 2],
+                          extrapolate: 'clamp',
+                        }),
+                      },
+                      {
+                        scale: panX.interpolate({
+                          inputRange: [-CARD_OFFSET, 0],
+                          outputRange: [1, 0.82],
+                          extrapolate: 'clamp',
+                        }),
+                      },
+                    ],
+                    opacity: panX.interpolate({
+                      inputRange: [-CARD_OFFSET * 0.75, 0],
+                      outputRange: [1, 0.25],
+                      extrapolate: 'clamp',
+                    }),
+                  },
+                ]}
+                pointerEvents="none">
+                <TrackArtwork
+                  uri={nextArtworkUri}
+                  trackId={nextTrack.id}
+                  trackUri={nextTrack.url}
+                  size={ARTWORK_SIZE}
+                  borderRadius={18}
+                  iconSize={84}
                 />
-                <Text style={styles.swipeHintText}>Geçiş için kaydırın • Sözler için dokunun</Text>
-              </View>
+              </Animated.View>
+            ) : null}
+
+            <View style={styles.swipeHintRow}>
+              <Ionicons
+                name="swap-horizontal"
+                size={14}
+                color="rgba(255, 255, 255, 0.45)"
+                style={{ marginRight: 6 }}
+              />
+              <Text style={styles.swipeHintText}>Geçiş için kaydırın • Sözler için dokunun</Text>
             </View>
-          ) : (
-            /* Senkronize Şarkı Sözleri Görünümü (Kapak yerine gelen alan) */
-            <View style={styles.lyricsCardContainer}>
-              <View style={styles.lyricsCardHeader}>
-                <View style={[styles.lyricsSourceBadge, { backgroundColor: theme.surface }]}>
-                  <Ionicons
-                    name={currentLyrics?.source === 'lrclib' ? 'sparkles' : 'document-text-outline'}
-                    size={12}
-                    color={theme.primary}
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text style={[styles.lyricsSourceText, { color: theme.textAccent }]}>
-                    {currentLyrics?.syncedLyrics
-                      ? 'LRCLIB (Senkronize)'
-                      : currentLyrics?.source === 'genius'
-                      ? 'Genius (Düz Metin)'
-                      : 'Şarkı Sözleri'}
-                  </Text>
-                </View>
+          </Animated.View>
+
+          {/* 2. Senkronize Şarkı Sözleri Görünümü (Yumuşak solma ve büyüme geçişi) */}
+          <Animated.View
+            style={[
+              styles.lyricsCardContainer,
+              StyleSheet.absoluteFill,
+              {
+                opacity: lyricsTransition,
+                transform: [
+                  {
+                    scale: lyricsTransition.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.92, 1],
+                    }),
+                  },
+                ],
+              },
+            ]}
+            pointerEvents={isLyricsMode ? 'auto' : 'none'}>
+            <View style={styles.lyricsCardHeader}>
+              <View style={[styles.lyricsSourceBadge, { backgroundColor: theme.surface }]}>
+                <Ionicons
+                  name={currentLyrics?.source === 'lrclib' ? 'sparkles' : 'document-text-outline'}
+                  size={12}
+                  color={theme.primary}
+                  style={{ marginRight: 4 }}
+                />
+                <Text style={[styles.lyricsSourceText, { color: theme.textAccent }]}>
+                  {currentLyrics?.syncedLyrics
+                    ? 'LRCLIB (Senkronize)'
+                    : currentLyrics?.source === 'genius'
+                    ? 'Genius (Düz Metin)'
+                    : 'Şarkı Sözleri'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.lyricsSearchBtn}
+                activeOpacity={0.7}
+                onPress={toggleManualSearch}>
+                <Ionicons name="search" size={14} color={theme.primary} />
+                <Text style={[styles.lyricsSearchBtnText, { color: theme.primary }]}>Manuel Ara</Text>
+              </TouchableOpacity>
+            </View>
+
+            {isLoadingLyrics ? (
+              <View style={styles.lyricsLoadingCenter}>
+                <ActivityIndicator size="large" color={theme.primary} />
+                <Text style={styles.lyricsLoadingText}>Sözler aranıyor...</Text>
+              </View>
+            ) : currentLyrics?.syncedLyrics && parsedLines.length > 0 ? (
+              /* Senkronize Söz Akışı (Apple Music Tipografisi) */
+              <FlatList
+                ref={lyricsFlatListRef}
+                data={parsedLines}
+                keyExtractor={(_, index) => `lyric-line-${index}`}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.lyricsListContent}
+                onScrollBeginDrag={() => {
+                  isUserScrollingRef.current = true;
+                  if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+                }}
+                onScrollEndDrag={() => {
+                  if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+                  scrollTimeoutRef.current = setTimeout(() => {
+                    isUserScrollingRef.current = false;
+                  }, 4000);
+                }}
+                renderItem={({ item, index }) => {
+                  const isActive = index === activeLineIndex;
+                  return (
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => TrackPlayer.seekTo(item.time)}
+                      style={[styles.lyricRow, isActive && styles.lyricRowActive]}>
+                      <Text
+                        style={[
+                          styles.lyricText,
+                          isActive && [
+                            styles.lyricTextActive,
+                            { textShadowColor: theme.glowColor },
+                          ],
+                        ]}>
+                        {item.text}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            ) : currentLyrics?.plainLyrics ? (
+              /* Düz Metin Söz Akışı */
+              <ScrollView
+                style={styles.plainLyricsScroll}
+                contentContainerStyle={styles.lyricsListContent}
+                showsVerticalScrollIndicator={false}>
+                <Text style={styles.plainLyricsText}>{currentLyrics.plainLyrics}</Text>
+              </ScrollView>
+            ) : (
+              /* Söz Bulunamadı Durumu */
+              <View style={styles.lyricsEmptyState}>
+                <Ionicons name="mic-off-outline" size={38} color="#52525b" />
+                <Text style={styles.lyricsEmptyTitle}>Şarkı sözü bulunamadı</Text>
+                <Text style={styles.lyricsEmptySubtitle}>
+                  Farklı bir başlık veya sanatçı ile aramak için butona dokunun
+                </Text>
                 <TouchableOpacity
-                  style={styles.lyricsSearchBtn}
-                  activeOpacity={0.7}
+                  style={[styles.lyricsEmptySearchBtn, { backgroundColor: theme.primary }]}
+                  activeOpacity={0.8}
                   onPress={toggleManualSearch}>
-                  <Ionicons name="search" size={14} color={theme.primary} />
-                  <Text style={[styles.lyricsSearchBtnText, { color: theme.primary }]}>Manuel Ara</Text>
+                  <Ionicons name="search" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={styles.lyricsEmptySearchBtnText}>Arama Yap</Text>
                 </TouchableOpacity>
               </View>
-
-              {isLoadingLyrics ? (
-                <View style={styles.lyricsLoadingCenter}>
-                  <ActivityIndicator size="large" color={theme.primary} />
-                  <Text style={styles.lyricsLoadingText}>Sözler aranıyor...</Text>
-                </View>
-              ) : currentLyrics?.syncedLyrics && parsedLines.length > 0 ? (
-                /* Senkronize Söz Akışı (Apple Music Tipografisi) */
-                <FlatList
-                  ref={lyricsFlatListRef}
-                  data={parsedLines}
-                  keyExtractor={(_, index) => `lyric-line-${index}`}
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={styles.lyricsListContent}
-                  onScrollBeginDrag={() => {
-                    isUserScrollingRef.current = true;
-                    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-                  }}
-                  onScrollEndDrag={() => {
-                    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-                    scrollTimeoutRef.current = setTimeout(() => {
-                      isUserScrollingRef.current = false;
-                    }, 4000);
-                  }}
-                  renderItem={({ item, index }) => {
-                    const isActive = index === activeLineIndex;
-                    return (
-                      <TouchableOpacity
-                        activeOpacity={0.7}
-                        onPress={() => TrackPlayer.seekTo(item.time)}
-                        style={[styles.lyricRow, isActive && styles.lyricRowActive]}>
-                        <Text
-                          style={[
-                            styles.lyricText,
-                            isActive && [
-                              styles.lyricTextActive,
-                              { textShadowColor: theme.glowColor },
-                            ],
-                          ]}>
-                          {item.text}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  }}
-                />
-              ) : currentLyrics?.plainLyrics ? (
-                /* Düz Metin Söz Akışı */
-                <ScrollView
-                  style={styles.plainLyricsScroll}
-                  contentContainerStyle={styles.lyricsListContent}
-                  showsVerticalScrollIndicator={false}>
-                  <Text style={styles.plainLyricsText}>{currentLyrics.plainLyrics}</Text>
-                </ScrollView>
-              ) : (
-                /* Söz Bulunamadı Durumu */
-                <View style={styles.lyricsEmptyState}>
-                  <Ionicons name="mic-off-outline" size={38} color="#52525b" />
-                  <Text style={styles.lyricsEmptyTitle}>Şarkı sözü bulunamadı</Text>
-                  <Text style={styles.lyricsEmptySubtitle}>
-                    Farklı bir başlık veya sanatçı ile aramak için butona dokunun
-                  </Text>
-                  <TouchableOpacity
-                    style={[styles.lyricsEmptySearchBtn, { backgroundColor: theme.primary }]}
-                    activeOpacity={0.8}
-                    onPress={toggleManualSearch}>
-                    <Ionicons name="search" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                    <Text style={styles.lyricsEmptySearchBtnText}>Arama Yap</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-          )}
+            )}
+          </Animated.View>
         </View>
 
         {/* ALT BÖLÜM: Apple Music Şarkı Bilgileri, Scrubber ve Kontroller */}
@@ -800,18 +1075,22 @@ export function FullscreenPlayerModal() {
               <Ionicons name="play-skip-back" size={38} color="#ffffff" />
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.applePlayBtn}
-              activeOpacity={0.65}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              onPress={togglePlayback}>
-              <Ionicons
-                name={playing ? 'pause' : 'play'}
-                size={52}
-                color="#ffffff"
-                style={!playing ? { marginLeft: 4 } : undefined}
-              />
-            </TouchableOpacity>
+            <Animated.View style={{ transform: [{ scale: playBtnScale }] }}>
+              <TouchableOpacity
+                style={styles.applePlayBtn}
+                activeOpacity={0.85}
+                onPressIn={handlePlayPressIn}
+                onPressOut={handlePlayPressOut}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                onPress={togglePlayback}>
+                <Ionicons
+                  name={playing ? 'pause' : 'play'}
+                  size={52}
+                  color="#ffffff"
+                  style={!playing ? { marginLeft: 4 } : undefined}
+                />
+              </TouchableOpacity>
+            </Animated.View>
 
             <TouchableOpacity
               style={styles.appleNavBtn}
@@ -1090,8 +1369,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 10,
+    overflow: 'hidden',
+    position: 'relative',
   },
   coverCenterBox: {
+    width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1103,6 +1385,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.55,
     shadowRadius: 24,
     elevation: 20,
+  },
+  neighborArtworkWrapper: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    elevation: 16,
   },
   swipeHintRow: {
     flexDirection: 'row',

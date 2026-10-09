@@ -5,6 +5,7 @@ import {
   View,
   TouchableOpacity,
   PanResponder,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import TrackPlayer, {
@@ -125,30 +126,70 @@ export function MiniPlayer() {
     }
   };
 
-  // PanResponder for gestures (Tap, Swipe Left/Right, Swipe Up)
+  const miniPanX = React.useMemo(() => new Animated.Value(0), []);
+  const [isMiniSkipping, setIsMiniSkipping] = React.useState(false);
+
+  // PanResponder for gestures (Tap, Swipe Left/Right, Swipe Up) with real-time animation
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponder: () => !isMiniSkipping,
         onMoveShouldSetPanResponder: (_, gesture) =>
-          Math.abs(gesture.dx) > 15 || Math.abs(gesture.dy) > 15,
+          !isMiniSkipping && (Math.abs(gesture.dx) > 10 || Math.abs(gesture.dy) > 10),
+        onPanResponderMove: (_, gesture) => {
+          if (isMiniSkipping) return;
+          if (gesture.dy < -15 && Math.abs(gesture.dy) > Math.abs(gesture.dx)) return;
+          miniPanX.setValue(gesture.dx * 0.7);
+        },
         onPanResponderRelease: (_, gesture) => {
+          if (isMiniSkipping) return;
           if (Math.abs(gesture.dx) < 10 && Math.abs(gesture.dy) < 10) {
             // Normal dokunma: Tam ekran çaları aç
             openFullscreenPlayer();
-          } else if (gesture.dy < -30) {
+            return;
+          }
+          if (gesture.dy < -30 && Math.abs(gesture.dy) > Math.abs(gesture.dx)) {
             // Yukarı kaydırma: Tam ekran çaları aç
             openFullscreenPlayer();
-          } else if (gesture.dx < -40) {
+            return;
+          }
+          if (gesture.dx < -35) {
             // Sola kaydırma: Sonraki şarkı
-            skipNext();
-          } else if (gesture.dx > 40) {
+            setIsMiniSkipping(true);
+            Animated.spring(miniPanX, {
+              toValue: -90,
+              tension: 70,
+              friction: 9,
+              useNativeDriver: true,
+            }).start(() => {
+              skipNext();
+              miniPanX.setValue(0);
+              setIsMiniSkipping(false);
+            });
+          } else if (gesture.dx > 35) {
             // Sağa kaydırma: Önceki şarkı
-            skipPrev();
+            setIsMiniSkipping(true);
+            Animated.spring(miniPanX, {
+              toValue: 90,
+              tension: 70,
+              friction: 9,
+              useNativeDriver: true,
+            }).start(() => {
+              skipPrev();
+              miniPanX.setValue(0);
+              setIsMiniSkipping(false);
+            });
+          } else {
+            Animated.spring(miniPanX, {
+              toValue: 0,
+              tension: 80,
+              friction: 8,
+              useNativeDriver: true,
+            }).start();
           }
         },
       }),
-    [openFullscreenPlayer, skipNext, skipPrev]
+    [openFullscreenPlayer, skipNext, skipPrev, miniPanX, isMiniSkipping]
   );
 
   if (!activeTrack) {
@@ -169,7 +210,18 @@ export function MiniPlayer() {
         />
       </View>
 
-      <View style={styles.contentRow}>
+      <Animated.View
+        style={[
+          styles.contentRow,
+          {
+            transform: [{ translateX: miniPanX }],
+            opacity: miniPanX.interpolate({
+              inputRange: [-80, 0, 80],
+              outputRange: [0.4, 1, 0.4],
+              extrapolate: 'clamp',
+            }),
+          },
+        ]}>
         {/* Cover Thumbnail */}
         <View style={styles.artworkBox}>
           <TrackArtwork
@@ -215,7 +267,7 @@ export function MiniPlayer() {
             <Ionicons name="play-skip-forward" size={22} color="#ffffff" />
           </TouchableOpacity>
         </View>
-      </View>
+      </Animated.View>
     </View>
   );
 }
