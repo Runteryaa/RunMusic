@@ -294,8 +294,39 @@ export default function LibraryScreen() {
 
   const playTrack = async (selectedAsset: MediaLibrary.Asset) => {
     try {
-      await TrackPlayer.reset();
+      const targetArtwork =
+        metadataMap[selectedAsset.id]?.artwork || artworkMap[selectedAsset.id] || undefined;
 
+      // 1. Temayı hemen yeni seçilen şarkının kapağına geçir ki ara renk / flash olmasın
+      if (targetArtwork) {
+        useThemeStore.getState().updateThemeFromArtwork(targetArtwork);
+      }
+
+      // 2. Mevcut kuyrukta şarkı var mı denetle
+      const queue = await TrackPlayer.getQueue();
+      const existingIndex = queue.findIndex(
+        (item) => item.id === selectedAsset.id || item.url === selectedAsset.uri
+      );
+
+      // Eğer seçilen şarkı zaten kuyruktaysa, ASLA sıfırlama yapma! Doğrudan o şarkıya atla
+      if (existingIndex >= 0) {
+        await TrackPlayer.skip(existingIndex);
+        await TrackPlayer.play();
+        openFullscreenPlayer();
+
+        if (!targetArtwork) {
+          getArtworkAsync(selectedAsset.uri, selectedAsset.id).then((art: string | null) => {
+            if (art) {
+              useStore.getState().setArtwork(selectedAsset.id, art);
+              useThemeStore.getState().updateThemeFromArtwork(art);
+            }
+          });
+        }
+        return;
+      }
+
+      // 3. Kuyruk henüz oluşturulmamışsa veya boşsa:
+      const targetIndex = fullSortedList.findIndex((item) => item.id === selectedAsset.id);
       const tracks = fullSortedList.map((asset) => {
         const info = getTrackDisplayInfo(asset);
         return {
@@ -307,18 +338,20 @@ export default function LibraryScreen() {
         };
       });
 
-      await TrackPlayer.add(tracks);
-
-      const targetIndex = fullSortedList.findIndex((item) => item.id === selectedAsset.id);
+      // Kuyruğu ayarla ve hedef şarkıya atla
+      await TrackPlayer.setQueue(tracks);
       if (targetIndex >= 0) {
         await TrackPlayer.skip(targetIndex);
       }
       await TrackPlayer.play();
       openFullscreenPlayer();
 
-      if (!artworkMap[selectedAsset.id] && !metadataMap[selectedAsset.id]?.artwork) {
+      if (!targetArtwork) {
         getArtworkAsync(selectedAsset.uri, selectedAsset.id).then((art: string | null) => {
-          if (art) useStore.getState().setArtwork(selectedAsset.id, art);
+          if (art) {
+            useStore.getState().setArtwork(selectedAsset.id, art);
+            useThemeStore.getState().updateThemeFromArtwork(art);
+          }
         });
       }
     } catch (e) {
