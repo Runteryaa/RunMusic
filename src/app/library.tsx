@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { getBatchMetadataAsync } from '../../modules/audio-artwork/src';
-import { cleanYouTubeTitle, getSearchKeywords, stripArtistFromTitle } from '../services/lyricsService';
+import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
 
 type SortOption =
   | 'name_asc'
@@ -88,7 +88,7 @@ export default function LibraryScreen() {
         (meta?.title?.trim() ? cleanYouTubeTitle(meta.title) : '') ||
         keywords.expectedTrack ||
         cleanYouTubeTitle(asset.filename);
-      const title = stripArtistFromTitle(rawTitle, artist) || rawTitle;
+      const title = rawTitle;
       return { title, artist };
     },
     [metadataMap]

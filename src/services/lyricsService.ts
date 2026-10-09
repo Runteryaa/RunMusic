@@ -149,40 +149,57 @@ export function stripArtistFromTitle(title: string, artist?: string): string {
     return result;
   }
 
+  // Yardımcı: Eğer ayıklama sonucu "&", "+", "feat" gibi işaretlerle başlıyorsa,
+  // şarkıda birden fazla kişi vardır (örn: "Keskin & KÖKSVL - Yapma Gadaşım").
+  // Bu durumda eğer tire (-) varsa tireden sonrasını (gerçek şarkı adını) al,
+  // yoksa orijinal başlığı bozmadan iade et.
+  const sanitizeRemainder = (stripped: string): string => {
+    const s = stripped.trim();
+    if (!s) return result;
+    if (/^([&+,/|~_-]|(feat|ft|with|x)\b)/i.test(s)) {
+      const dashMatch = s.match(/[-–—]\s*(.+)$/);
+      if (dashMatch && dashMatch[1]?.trim()) {
+        return dashMatch[1].trim();
+      }
+      return result;
+    }
+    return s;
+  };
+
   const escapedArt = cleanArt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   // 1. Başlığın başında sanatçı ve ayırıcı varsa: "Artist - Title", "Artist : Title", "Artist / Title", "Artist _ Title"
   const prefixSeparatorRegex = new RegExp(`^${escapedArt}\\s*[-–—:|~_/]\\s*`, 'i');
   if (prefixSeparatorRegex.test(result)) {
-    const stripped = result.replace(prefixSeparatorRegex, '').trim();
+    const stripped = sanitizeRemainder(result.replace(prefixSeparatorRegex, ''));
     if (stripped.length > 0) return stripped;
   }
 
   // 2. Başlığın başında boşlukla ayrılmış sanatçı varsa: "Artist Title"
   const prefixSpaceRegex = new RegExp(`^${escapedArt}\\s+`, 'i');
   if (prefixSpaceRegex.test(result)) {
-    const stripped = result.replace(prefixSpaceRegex, '').trim();
+    const stripped = sanitizeRemainder(result.replace(prefixSpaceRegex, ''));
     if (stripped.length > 0) return stripped;
   }
 
   // 3. Başlığın sonunda sanatçı ve ayırıcı varsa: "Title - Artist", "Title : Artist", vb.
   const suffixSeparatorRegex = new RegExp(`\\s*[-–—:|~_/]\\s*${escapedArt}$`, 'i');
   if (suffixSeparatorRegex.test(result)) {
-    const stripped = result.replace(suffixSeparatorRegex, '').trim();
+    const stripped = sanitizeRemainder(result.replace(suffixSeparatorRegex, ''));
     if (stripped.length > 0) return stripped;
   }
 
   // 4. "Title by Artist"
   const suffixByRegex = new RegExp(`\\s+by\\s+${escapedArt}$`, 'i');
   if (suffixByRegex.test(result)) {
-    const stripped = result.replace(suffixByRegex, '').trim();
+    const stripped = sanitizeRemainder(result.replace(suffixByRegex, ''));
     if (stripped.length > 0) return stripped;
   }
 
   // 5. Parantez içi sanatçı: "Title (Artist)" veya "Title [Artist]"
   const bracketRegex = new RegExp(`\\s*[\\[\\(]\\s*${escapedArt}\\s*[\\]\\)]`, 'i');
   if (bracketRegex.test(result)) {
-    const stripped = result.replace(bracketRegex, '').trim();
+    const stripped = sanitizeRemainder(result.replace(bracketRegex, ''));
     if (stripped.length > 0) return stripped;
   }
 
@@ -193,11 +210,12 @@ export function stripArtistFromTitle(title: string, artist?: string): string {
     const artWordCount = normArt.split(' ').filter(Boolean).length;
     const titleWords = result.split(/\s+/);
     if (titleWords.length > artWordCount) {
-      const stripped = titleWords
-        .slice(artWordCount)
-        .join(' ')
-        .replace(/^[-–—:|~_/]\s*/, '')
-        .trim();
+      const stripped = sanitizeRemainder(
+        titleWords
+          .slice(artWordCount)
+          .join(' ')
+          .replace(/^[-–—:|~_/]\s*/, '')
+      );
       if (stripped.length > 0) return stripped;
     }
   }

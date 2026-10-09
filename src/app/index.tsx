@@ -35,7 +35,6 @@ import {
   getLyricsCacheKeys,
   cleanYouTubeTitle,
   getSearchKeywords,
-  stripArtistFromTitle,
 } from '../services/lyricsService';
 
 export default function PlayerScreen() {
@@ -130,9 +129,7 @@ export default function PlayerScreen() {
     'Bilinmeyen Parça';
 
   const displayArtist = rawArtist;
-  const displayTitle =
-    stripArtistFromTitle(rawTitle, displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : undefined) ||
-    rawTitle;
+  const displayTitle = rawTitle;
 
   useEffect(() => {
     if (activeTrack && activeIndex >= 0) {
@@ -259,7 +256,13 @@ export default function PlayerScreen() {
   useEffect(() => {
     if (activeTrack) {
       const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
-      setManualQuery(searchArtist ? `${searchArtist} - ${displayTitle}` : displayTitle);
+      const titleLower = displayTitle.toLowerCase();
+      const artistLower = searchArtist.toLowerCase();
+      let initialQuery = displayTitle;
+      if (searchArtist && !titleLower.includes(artistLower)) {
+        initialQuery = `${searchArtist} - ${displayTitle}`;
+      }
+      setManualQuery(initialQuery);
 
       const cached = getLyricsFromCache({
         id: activeTrack.id,
