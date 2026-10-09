@@ -7,8 +7,11 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Updates from 'expo-updates';
+import Constants from 'expo-constants';
 import { useStore } from '../store/useStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { cleanYouTubeTitle } from '../services/lyricsService';
@@ -54,6 +57,55 @@ export default function SettingsScreen() {
   const cachedLyricsCount = useMemo(() => {
     return Object.keys(lyricsCache || {}).length;
   }, [lyricsCache]);
+
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+
+  const handleCheckUpdate = async () => {
+    if (!Updates.isEnabled) {
+      Alert.alert(
+        'OTA Bilgisi',
+        'Bu APK sürümünde dinamik OTA kanalı henüz aktif değil. Lütfen en güncel APK sürümünü GitHub Releases üzerinden yükleyin.'
+      );
+      return;
+    }
+
+    setIsCheckingUpdate(true);
+    try {
+      const check = await Updates.checkForUpdateAsync();
+      if (check.isAvailable) {
+        Alert.alert(
+          'Yeni Güncelleme Bulundu',
+          'Yeni bir güncelleme bulundu ve arka planda indiriliyor...'
+        );
+        const fetchResult = await Updates.fetchUpdateAsync();
+        if (fetchResult.isNew) {
+          Alert.alert(
+            'Güncelleme Hazır',
+            'Güncelleme başarıyla indirildi. Yeni sürümü uygulamak için şimdi yeniden başlatılsın mı?',
+            [
+              { text: 'Daha Sonra', style: 'cancel' },
+              {
+                text: 'Yeniden Başlat',
+                onPress: async () => {
+                  await Updates.reloadAsync();
+                },
+              },
+            ]
+          );
+        }
+      } else {
+        Alert.alert(
+          'Uygulama Güncel',
+          'Şu anda en son sürüme sahipsiniz. Yeni bir OTA güncellemesi bulunmuyor.'
+        );
+      }
+    } catch (e: any) {
+      console.warn('Update check failed:', e);
+      Alert.alert('Güncelleme Denetimi', e?.message || 'Güncelleme sunucusuna bağlanılamadı.');
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
@@ -231,6 +283,73 @@ export default function SettingsScreen() {
           value={settings.maxSizeMB?.toString() || ''}
           onChangeText={(val) => updateSettings({ maxSizeMB: val ? parseFloat(val) : null })}
         />
+      </View>
+
+      {/* Sürüm ve OTA Güncelleme Bilgisi */}
+      <View style={styles.versionCard}>
+        <View style={styles.versionHeader}>
+          <View style={styles.headerIconContainer}>
+            <Ionicons name="information-circle-outline" size={18} color="#3b82f6" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.accordionTitle}>Uygulama Bilgisi</Text>
+            <Text style={styles.versionCardSubtitle}>
+              RunMusic v{Constants.expoConfig?.version || '1.0.0'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.versionDetailsBox}>
+          <View style={styles.versionRow}>
+            <Text style={styles.versionRowLabel}>Sürüm (App Version):</Text>
+            <Text style={styles.versionRowValue}>v{Constants.expoConfig?.version || '1.0.0'}</Text>
+          </View>
+          <View style={styles.versionRow}>
+            <Text style={styles.versionRowLabel}>Çalışma Ortamı (Runtime):</Text>
+            <Text style={styles.versionRowValue}>{Updates.runtimeVersion || '1.0.0'}</Text>
+          </View>
+          <View style={styles.versionRow}>
+            <Text style={styles.versionRowLabel}>Kanal (Channel):</Text>
+            <Text style={styles.versionRowValue}>{Updates.channel || 'production'}</Text>
+          </View>
+          <View style={styles.versionRow}>
+            <Text style={styles.versionRowLabel}>Çalışan Paket:</Text>
+            <Text style={styles.versionRowValue}>
+              {Updates.updateId
+                ? `OTA (${Updates.updateId.slice(0, 8)})`
+                : Updates.isEmbeddedLaunch
+                ? 'Yerel APK (Embedded)'
+                : 'Standart'}
+            </Text>
+          </View>
+          {Updates.createdAt ? (
+            <View style={styles.versionRow}>
+              <Text style={styles.versionRowLabel}>Son Güncelleme:</Text>
+              <Text style={styles.versionRowValue}>
+                {new Date(Updates.createdAt).toLocaleDateString('tr-TR')}{' '}
+                {new Date(Updates.createdAt).toLocaleTimeString('tr-TR', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        <TouchableOpacity
+          style={styles.checkUpdateBtn}
+          activeOpacity={0.7}
+          onPress={handleCheckUpdate}
+          disabled={isCheckingUpdate}>
+          {isCheckingUpdate ? (
+            <ActivityIndicator size="small" color="#ffffff" />
+          ) : (
+            <>
+              <Ionicons name="cloud-download-outline" size={16} color="#ffffff" />
+              <Text style={styles.checkUpdateBtnText}>Güncellemeleri Denetle</Text>
+            </>
+          )}
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -437,6 +556,62 @@ const styles = StyleSheet.create({
   clearLyricsBtnText: {
     color: '#ef4444',
     fontSize: 12,
+    fontWeight: '600',
+  },
+  versionCard: {
+    backgroundColor: '#18181b',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    marginTop: 10,
+    marginBottom: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  versionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  versionCardSubtitle: {
+    fontSize: 12,
+    color: '#71717a',
+    marginTop: 2,
+  },
+  versionDetailsBox: {
+    backgroundColor: '#27272a55',
+    borderRadius: 10,
+    padding: 12,
+    gap: 8,
+    marginBottom: 14,
+  },
+  versionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  versionRowLabel: {
+    fontSize: 13,
+    color: '#a1a1aa',
+  },
+  versionRowValue: {
+    fontSize: 13,
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+  checkUpdateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3b82f6',
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  checkUpdateBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
     fontWeight: '600',
   },
 });
