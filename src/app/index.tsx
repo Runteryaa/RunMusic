@@ -26,6 +26,8 @@ import {
   LyricLine,
   LyricsResult,
   fetchLyricsOnline,
+  searchLrclib,
+  parseLRC,
   getLyricsCacheKeys,
   cleanYouTubeTitle,
   getSearchKeywords,
@@ -135,14 +137,34 @@ export default function PlayerScreen() {
 
   const currentLyrics: LyricsResult | null = useMemo(() => {
     if (!activeTrack || !lyricsCache) return null;
-    return getLyricsFromCache({
+    const item = getLyricsFromCache({
       id: activeTrack.id,
       url: activeTrack.url,
       title: displayTitle,
       artist: displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '',
       rawTitle: activeTrack.title,
     });
+    if (!item) return null;
+    // Eğer senkronize söz var ama parsedLines önbellekte eksikse anında parse et
+    if (item.syncedLyrics && (!item.parsedLines || item.parsedLines.length === 0)) {
+      return {
+        ...item,
+        parsedLines: parseLRC(item.syncedLyrics),
+      };
+    }
+    return item;
   }, [activeTrack, lyricsCache, getLyricsFromCache, displayTitle, displayArtist]);
+
+  const parsedLines = useMemo(() => {
+    if (!currentLyrics) return [];
+    if (currentLyrics.parsedLines && currentLyrics.parsedLines.length > 0) {
+      return currentLyrics.parsedLines;
+    }
+    if (currentLyrics.syncedLyrics) {
+      return parseLRC(currentLyrics.syncedLyrics);
+    }
+    return [];
+  }, [currentLyrics]);
 
   const loadLyricsForTrack = async (title: string, artist?: string, force = false) => {
     if (!activeTrack) return;
@@ -156,8 +178,31 @@ export default function PlayerScreen() {
         artist: cleanArtist,
         rawTitle: activeTrack.title,
       });
-      if (cached) {
-        // Kaydedilmiş söz var! Online veya offline fark etmeksizin kayıtlı sözü göster!
+
+      // 1. Zaten tam senkronize sözümüz varsa (LRCLIB), tekrar aramaya gerek yok!
+      if (cached && cached.syncedLyrics) {
+        return;
+      }
+
+      // 2. Eğer önbellekteki söz sadece düz metinse (örn: eski hatalı sürümden kalan Genius sözü),
+      // kullanıcıya mevcut sözü hemen göster (yükleme çarkı olmadan) AMA arka planda LRCLIB'den
+      // senkronize söz var mı diye kontrol et ve bulunursa otomatik olarak senkronize söze yükselt!
+      if (cached && !cached.syncedLyrics) {
+        searchLrclib(title, cleanArtist)
+          .then((lrclibResult) => {
+            if (lrclibResult && lrclibResult.syncedLyrics) {
+              const altKeys = getLyricsCacheKeys({
+                id: activeTrack.id,
+                url: activeTrack.url,
+                title,
+                artist: cleanArtist,
+                rawTitle: activeTrack.title,
+              });
+              const saveId = activeTrack.id || activeTrack.url || title;
+              setLyrics(saveId, lrclibResult, altKeys);
+            }
+          })
+          .catch(() => {});
         return;
       }
     }
@@ -196,9 +241,8 @@ export default function PlayerScreen() {
         rawTitle: activeTrack.title,
       });
 
-      // Yalnızca önbellekte henüz şarkı sözü yoksa otomatik ara!
-      // Kaydedilmiş söz varsa kullanıcı yenilemediği sürece onu göster!
-      if (!cached) {
+      // Eğer önbellekte hiç söz yoksa veya senkronize söz yoksa aramayı başlat
+      if (!cached || !cached.syncedLyrics) {
         loadLyricsForTrack(displayTitle, searchArtist, false);
       }
     }
@@ -206,21 +250,21 @@ export default function PlayerScreen() {
   }, [activeTrack?.id, activeTrack?.url, displayTitle, displayArtist]);
 
   const activeLineIndex = useMemo(() => {
-    if (!currentLyrics?.parsedLines || currentLyrics.parsedLines.length === 0) return -1;
+    if (!parsedLines || parsedLines.length === 0) return -1;
     const pos = progress.position;
-    for (let i = currentLyrics.parsedLines.length - 1; i >= 0; i--) {
-      if (pos >= currentLyrics.parsedLines[i].time) {
+    for (let i = parsedLines.length - 1; i >= 0; i--) {
+      if (pos >= parsedLines[i].time) {
         return i;
       }
     }
     return -1;
-  }, [currentLyrics?.parsedLines, progress.position]);
+  }, [parsedLines, progress.position]);
 
   useEffect(() => {
     if (
       isLyricsModalOpen &&
       activeLineIndex >= 0 &&
-      currentLyrics?.parsedLines &&
+      parsedLines.length > 0 &&
       !isUserScrollingRef.current
     ) {
       try {
@@ -233,7 +277,7 @@ export default function PlayerScreen() {
         // FlatList scrollToIndex before layout fallback
       }
     }
-  }, [activeLineIndex, isLyricsModalOpen, currentLyrics?.parsedLines]);
+  }, [activeLineIndex, isLyricsModalOpen, parsedLines.length]);
 
   const handleManualSearch = async () => {
     if (!manualQuery.trim() || !activeTrack) return;
@@ -743,11 +787,11 @@ export default function PlayerScreen() {
                 <Text style={styles.lyricsLoadingText}>Şarkı sözleri aranıyor...</Text>
                 <Text style={styles.lyricsLoadingSubtext}>LRCLIB & Genius taranıyor</Text>
               </View>
-            ) : currentLyrics?.syncedLyrics && currentLyrics.parsedLines.length > 0 ? (
+            ) : currentLyrics?.syncedLyrics && parsedLines.length > 0 ? (
               /* Synchronized Lyrics List */
               <FlatList
                 ref={lyricsFlatListRef}
-                data={currentLyrics.parsedLines}
+                data={parsedLines}
                 keyExtractor={(_, index) => `line_${index}`}
                 contentContainerStyle={styles.syncedLyricsListContent}
                 showsVerticalScrollIndicator={false}
@@ -755,19 +799,27 @@ export default function PlayerScreen() {
                   isUserScrollingRef.current = true;
                   if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
                 }}
-                onScrollEndDrag={() => {
+                onMomentumScrollBegin={() => {
+                  isUserScrollingRef.current = true;
+                  if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+                }}
+                onMomentumScrollEnd={() => {
+                  if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
                   scrollTimeoutRef.current = setTimeout(() => {
                     isUserScrollingRef.current = false;
-                  }, 2500);
+                  }, 1500);
                 }}
-                onScrollToIndexFailed={({ index }) => {
-                  setTimeout(() => {
-                    lyricsFlatListRef.current?.scrollToIndex({
-                      index,
-                      animated: true,
-                      viewPosition: 0.35,
-                    });
-                  }, 100);
+                onScrollEndDrag={() => {
+                  if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+                  scrollTimeoutRef.current = setTimeout(() => {
+                    isUserScrollingRef.current = false;
+                  }, 2000);
+                }}
+                onScrollToIndexFailed={(info) => {
+                  lyricsFlatListRef.current?.scrollToOffset({
+                    offset: Math.max(0, info.index * 56 - 100),
+                    animated: true,
+                  });
                 }}
                 renderItem={({ item, index }) => {
                   const isActive = index === activeLineIndex;

@@ -15,12 +15,13 @@ export interface LyricsResult {
 
 /**
  * Parse an LRC string into an array of { time: number, text: string } objects.
+ * Supports mm:ss.xx, mm:ss.xxx, mm:ss:xx, mm:ss, etc.
  */
 export function parseLRC(lrc: string): LyricLine[] {
   if (!lrc) return [];
   const lines = lrc.split('\n');
   const result: LyricLine[] = [];
-  const timeRegex = /\[(\d{1,3}):(\d{2})\.(\d{2,3})\]/g;
+  const timeRegex = /\[(\d{1,3}):(\d{2})(?:[\.:](\d{1,3}))?\]/g;
 
   for (const line of lines) {
     const times: number[] = [];
@@ -30,11 +31,11 @@ export function parseLRC(lrc: string): LyricLine[] {
     while ((match = timeRegex.exec(line)) !== null) {
       const minutes = parseInt(match[1], 10);
       const seconds = parseInt(match[2], 10);
-      const centiseconds = parseInt(match[3].padEnd(3, '0').slice(0, 3), 10);
+      const centiseconds = match[3] ? parseInt(match[3].padEnd(3, '0').slice(0, 3), 10) : 0;
       times.push(minutes * 60 + seconds + centiseconds / 1000);
     }
 
-    const text = line.replace(/\[\d{1,3}:\d{2}\.\d{2,3}\]/g, '').trim();
+    const text = line.replace(/\[\d{1,3}:\d{2}(?:[\.:]\d{1,3})?\]/g, '').trim();
     for (const t of times) {
       result.push({ time: t, text });
     }
@@ -83,16 +84,19 @@ export const YT_NOISE_PATTERNS = [
   /\[[^\]]*\]/g,
 ];
 
+export const AUDIO_EXTENSIONS_REGEX =
+  /\.(mp3|m4a|wav|flac|aac|ogg|opus|wma|aiff|alac|ape|mp4|webm)$/i;
+
 /**
  * Strip YouTube noise from a title segment (track name or full title).
- * Preserves the core song/artist name.
+ * Preserves the core song/artist name without breaking titles containing dots (like feat. or ft.).
  * Ported directly from Runteryaa/YT-LyricPopup background.js.
  */
 export function cleanYouTubeTitle(str: string): string {
   let s = str || '';
 
-  // Remove file extension if present (for local audio files!)
-  s = s.replace(/\.[^/.]+$/, '');
+  // Remove audio file extension if present (for local audio files!)
+  s = s.replace(AUDIO_EXTENSIONS_REGEX, '');
 
   // Remove wrapping or standalone double quotes
   s = s.replace(/"/g, '');
@@ -112,8 +116,14 @@ export const cleanTrackTitle = cleanYouTubeTitle;
  * Ported directly from Runteryaa/YT-LyricPopup background.js.
  */
 export function getSearchKeywords(videoTitle: string, channelName = '') {
-  // Strip extension and anything after a pipe character since it's usually just metadata
-  const titleBeforePipe = (videoTitle || '').replace(/\.[^/.]+$/, '').split('|')[0].trim();
+  // Strip audio extension and anything after a pipe character since it's usually just metadata
+  let titleBeforePipe = (videoTitle || '')
+    .replace(AUDIO_EXTENSIONS_REGEX, '')
+    .split('|')[0]
+    .trim();
+
+  // Strip leading track numbers like "01 - ", "01. ", "1 - ", etc.
+  titleBeforePipe = titleBeforePipe.replace(/^\d{1,3}\s*[\.\-–—]\s*/, '');
 
   // Parse "Artist - Title" (lazy on artist side to handle "A & B - Song")
   const dashMatch = titleBeforePipe.match(/^(.+?)\s*[-–—]\s*(.+)$/);
@@ -122,15 +132,15 @@ export function getSearchKeywords(videoTitle: string, channelName = '') {
   const rawArtist = dashMatch ? dashMatch[1].trim() : '';
   const rawTrack = dashMatch ? dashMatch[2].trim() : titleBeforePipe.trim();
 
-  const expectedArtist = cleanYouTubeTitle(rawArtist);
+  const expectedArtist = cleanYouTubeTitle(rawArtist || channelName);
   const expectedTrack = cleanYouTubeTitle(rawTrack);
   const cleanChannel = cleanYouTubeTitle(channelName);
 
   let cleanedFullTitle = expectedTrack;
   if (dashMatch && expectedArtist) {
     cleanedFullTitle = `${expectedArtist} - ${expectedTrack}`;
-  } else if (dashMatch && !expectedArtist) {
-    cleanedFullTitle = expectedTrack;
+  } else if (expectedArtist && expectedTrack) {
+    cleanedFullTitle = `${expectedArtist} - ${expectedTrack}`;
   }
 
   return { expectedArtist, expectedTrack, cleanChannel, cleanedFullTitle, dashMatch, titleBeforePipe };
@@ -173,7 +183,7 @@ export function getLyricsCacheKeys(params: {
     try {
       const filename = decodeURIComponent(params.url.split('/').pop() || '');
       if (filename) {
-        const cleanFn = filename.replace(/\.[^/.]+$/, '');
+        const cleanFn = filename.replace(AUDIO_EXTENSIONS_REGEX, '');
         keys.add(`fn_${cleanFn}`);
         keys.add(`fn_${cleanYouTubeTitle(cleanFn)}`);
       }
@@ -256,6 +266,8 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
       artist
     );
 
+    let directFallbackResult: LyricsResult | null = null;
+
     // 1. Doğrudan exact /api/get endpoint'ini dene (En hızlı, 503 yükünden etkilenmez)
     if (expectedArtist && expectedTrack) {
       try {
@@ -267,16 +279,28 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
         });
         if (getRes.ok) {
           const directData = await getRes.json();
-          if (directData && (directData.syncedLyrics || directData.plainLyrics)) {
-            return {
-              id: `lrclib-${directData.id}`,
-              trackName: directData.trackName,
-              artistName: directData.artistName,
-              syncedLyrics: directData.syncedLyrics || null,
-              plainLyrics: directData.plainLyrics || null,
-              parsedLines: directData.syncedLyrics ? parseLRC(directData.syncedLyrics) : [],
-              source: 'lrclib',
-            };
+          if (directData) {
+            if (directData.syncedLyrics) {
+              return {
+                id: `lrclib-${directData.id}`,
+                trackName: directData.trackName,
+                artistName: directData.artistName,
+                syncedLyrics: directData.syncedLyrics,
+                plainLyrics: directData.plainLyrics || null,
+                parsedLines: parseLRC(directData.syncedLyrics),
+                source: 'lrclib',
+              };
+            } else if (directData.plainLyrics) {
+              directFallbackResult = {
+                id: `lrclib-${directData.id}`,
+                trackName: directData.trackName,
+                artistName: directData.artistName,
+                syncedLyrics: null,
+                plainLyrics: directData.plainLyrics,
+                parsedLines: [],
+                source: 'lrclib',
+              };
+            }
           }
         }
       } catch {
@@ -348,7 +372,7 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
     }
 
     const allResults = Array.from(allCandidatesMap.values()).map((x) => x.r);
-    if (allResults.length === 0) return null;
+    if (allResults.length === 0) return directFallbackResult;
 
     const best = pickBest(allResults, expectedArtist, expectedTrack);
     if (best && (best.syncedLyrics || best.plainLyrics)) {
@@ -362,6 +386,8 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
         source: 'lrclib',
       };
     }
+
+    return directFallbackResult;
   } catch (e) {
     console.warn('LRCLIB fetch error:', e);
   }
