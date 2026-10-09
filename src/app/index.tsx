@@ -293,9 +293,9 @@ export default function LibraryScreen() {
   // The final sorted array of raw assets for TrackPlayer integration
   const fullSortedList = useMemo(() => fullSortedListWithInfo.map(item => item.asset), [fullSortedListWithInfo]);
 
-  // Displayed list (array of raw assets)
+  // Displayed list (array of objects with asset and precomputed info)
   const displayedList = useMemo(() => {
-    if (!searchQuery.trim()) return fullSortedList;
+    if (!searchQuery.trim()) return fullSortedListWithInfo;
     const q = searchQuery.toLowerCase().trim();
     
     return fullSortedListWithInfo.filter((item) => {
@@ -304,8 +304,8 @@ export default function LibraryScreen() {
         item.info.artist.toLowerCase().includes(q) ||
         cleanTitle(item.asset.filename).toLowerCase().includes(q)
       );
-    }).map(item => item.asset);
-  }, [fullSortedListWithInfo, fullSortedList, searchQuery]);
+    });
+  }, [fullSortedListWithInfo, searchQuery]);
 
   const playTrack = async (selectedAsset: MediaLibrary.Asset) => {
     try {
@@ -395,10 +395,10 @@ export default function LibraryScreen() {
     setIsSearchOpen(false);
   };
 
-  const renderItem = ({ item }: { item: MediaLibrary.Asset }) => {
-    const info = getTrackDisplayInfo(item);
+  const renderItem = ({ item }: { item: { asset: MediaLibrary.Asset; info: { title: string; artist: string } } }) => {
+    const { asset, info } = item;
     const isPlayingCurrent =
-      activeTrack && (activeTrack.id === item.id || activeTrack.url === item.uri);
+      activeTrack && (activeTrack.id === asset.id || activeTrack.url === asset.uri);
 
     const renderLeftActions = () => (
       <View style={[styles.swipeLeftActionBox, { backgroundColor: theme.primary }]}>
@@ -416,7 +416,7 @@ export default function LibraryScreen() {
         failOffsetY={[-15, 15]}
         onSwipeableOpen={(direction) => {
           if (direction === 'left') {
-            handleAddToQueue(item);
+            handleAddToQueue(asset);
           }
         }}>
         <View
@@ -430,12 +430,12 @@ export default function LibraryScreen() {
           <TouchableOpacity
             style={styles.trackMainContent}
             activeOpacity={0.7}
-            onPress={() => playTrack(item)}>
+            onPress={() => playTrack(asset)}>
             <View style={{ marginRight: 12 }}>
               <TrackArtwork
-                uri={metadataMap[item.id]?.artwork || artworkMap[item.id]}
-                trackId={item.id}
-                trackUri={item.uri}
+                uri={metadataMap[asset.id]?.artwork || artworkMap[asset.id]}
+                trackId={asset.id}
+                trackUri={asset.uri}
                 size={44}
                 borderRadius={10}
                 iconSize={20}
@@ -461,8 +461,8 @@ export default function LibraryScreen() {
                 </Text>
               </View>
               <Text style={styles.trackDuration} numberOfLines={1}>
-                {Math.floor(item.duration / 60)}:
-                {Math.floor(item.duration % 60)
+                {Math.floor(asset.duration / 60)}:
+                {Math.floor(asset.duration % 60)
                   .toString()
                   .padStart(2, '0')}
                 {info.artist ? ` • ${info.artist}` : ''}
@@ -472,7 +472,7 @@ export default function LibraryScreen() {
           <TouchableOpacity
             style={styles.trackMoreBtn}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            onPress={() => setSelectedTrackForMenu(item)}>
+            onPress={() => setSelectedTrackForMenu(asset)}>
             <Ionicons name="ellipsis-vertical" size={18} color="#a1a1aa" />
           </TouchableOpacity>
         </View>
@@ -549,7 +549,7 @@ export default function LibraryScreen() {
       {/* Track List */}
       <FlatList
         data={displayedList}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.asset.id}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
         initialNumToRender={15}

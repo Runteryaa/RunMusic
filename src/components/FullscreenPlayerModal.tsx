@@ -1092,6 +1092,7 @@ export function FullscreenPlayerModal() {
               onResponderMove={handleSeekMove}
               onResponderRelease={handleSeekRelease}>
               <View
+                pointerEvents="none"
                 style={[
                   styles.progressBarBackground,
                   {
