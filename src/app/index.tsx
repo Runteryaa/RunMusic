@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   TextInput,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import TrackPlayer, {
@@ -25,8 +26,11 @@ import { TrackArtwork } from '../components/TrackArtwork';
 import {
   LyricLine,
   LyricsResult,
+  LyricsCandidate,
   fetchLyricsOnline,
   searchLrclib,
+  searchAllCandidates,
+  resolveCandidateToLyricsResult,
   parseLRC,
   getLyricsCacheKeys,
   cleanYouTubeTitle,
@@ -64,6 +68,9 @@ export default function PlayerScreen() {
   const [isLoadingLyrics, setIsLoadingLyrics] = useState(false);
   const [isManualSearchOpen, setIsManualSearchOpen] = useState(false);
   const [manualQuery, setManualQuery] = useState('');
+  const [candidatesList, setCandidatesList] = useState<LyricsCandidate[]>([]);
+  const [isSearchingCandidates, setIsSearchingCandidates] = useState(false);
+  const [resolvingCandidateId, setResolvingCandidateId] = useState<string | null>(null);
   const lyricsFlatListRef = useRef<FlatList<LyricLine>>(null);
   const isUserScrollingRef = useRef(false);
   const scrollTimeoutRef = useRef<any>(null);
@@ -181,6 +188,9 @@ export default function PlayerScreen() {
 
       // 1. Zaten tam senkronize sözümüz varsa (LRCLIB), tekrar aramaya gerek yok!
       if (cached && cached.syncedLyrics) {
+        if (cached.candidates && cached.candidates.length > 0) {
+          setCandidatesList(cached.candidates);
+        }
         return;
       }
 
@@ -188,9 +198,15 @@ export default function PlayerScreen() {
       // kullanıcıya mevcut sözü hemen göster (yükleme çarkı olmadan) AMA arka planda LRCLIB'den
       // senkronize söz var mı diye kontrol et ve bulunursa otomatik olarak senkronize söze yükselt!
       if (cached && !cached.syncedLyrics) {
+        if (cached.candidates && cached.candidates.length > 0) {
+          setCandidatesList(cached.candidates);
+        }
         searchLrclib(title, cleanArtist)
           .then((lrclibResult) => {
             if (lrclibResult && lrclibResult.syncedLyrics) {
+              if (lrclibResult.candidates && lrclibResult.candidates.length > 0) {
+                setCandidatesList(lrclibResult.candidates);
+              }
               const altKeys = getLyricsCacheKeys({
                 id: activeTrack.id,
                 url: activeTrack.url,
@@ -211,6 +227,9 @@ export default function PlayerScreen() {
     try {
       const result = await fetchLyricsOnline(title, cleanArtist);
       if (result) {
+        if (result.candidates && result.candidates.length > 0) {
+          setCandidatesList(result.candidates);
+        }
         const altKeys = getLyricsCacheKeys({
           id: activeTrack.id,
           url: activeTrack.url,
@@ -281,25 +300,60 @@ export default function PlayerScreen() {
 
   const handleManualSearch = async () => {
     if (!manualQuery.trim() || !activeTrack) return;
-    setIsLoadingLyrics(true);
+    setIsSearchingCandidates(true);
     try {
-      const result = await fetchLyricsOnline(manualQuery.trim());
-      if (result) {
+      const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
+      const results = await searchAllCandidates(manualQuery.trim(), searchArtist);
+      setCandidatesList(results);
+      if (results.length === 0) {
+        Alert.alert('Sonuç Bulunamadı', 'Bu arama için şarkı sözü bulunamadı.');
+      }
+    } catch (e) {
+      console.warn('Manual lyrics search failed', e);
+    } finally {
+      setIsSearchingCandidates(false);
+    }
+  };
+
+  const handleSelectCandidate = async (candidate: LyricsCandidate) => {
+    if (!activeTrack) return;
+    setResolvingCandidateId(candidate.id);
+    try {
+      const resolved = await resolveCandidateToLyricsResult(candidate, candidatesList);
+      if (resolved) {
         const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
         const altKeys = getLyricsCacheKeys({
           id: activeTrack.id,
           url: activeTrack.url,
           title: displayTitle,
           artist: searchArtist,
+          rawTitle: activeTrack.title,
         });
         const saveId = activeTrack.id || activeTrack.url || displayTitle;
-        setLyrics(saveId, result, altKeys);
+        setLyrics(saveId, resolved, altKeys);
         setIsManualSearchOpen(false);
       }
     } catch (e) {
-      console.warn('Manual lyrics search failed', e);
+      console.warn('Failed to resolve candidate', e);
     } finally {
-      setIsLoadingLyrics(false);
+      setResolvingCandidateId(null);
+    }
+  };
+
+  const toggleManualSearch = () => {
+    const nextState = !isManualSearchOpen;
+    setIsManualSearchOpen(nextState);
+    if (nextState) {
+      if (currentLyrics?.candidates && currentLyrics.candidates.length > 0) {
+        setCandidatesList(currentLyrics.candidates);
+      } else if (activeTrack) {
+        const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
+        setIsSearchingCandidates(true);
+        searchAllCandidates(displayTitle, searchArtist)
+          .then((results) => setCandidatesList(results))
+          .catch(() => {})
+          .finally(() => setIsSearchingCandidates(false));
+      }
     }
   };
 
@@ -717,6 +771,17 @@ export default function PlayerScreen() {
                       </Text>
                     </View>
                   ) : null}
+                  {candidatesList.length > 1 || (currentLyrics?.candidates && currentLyrics.candidates.length > 1) ? (
+                    <TouchableOpacity
+                      style={styles.candidatesPillBtn}
+                      activeOpacity={0.7}
+                      onPress={toggleManualSearch}>
+                      <Ionicons name="list" size={12} color="#3b82f6" />
+                      <Text style={styles.candidatesPillText}>
+                        Sonuçlar ({candidatesList.length || currentLyrics?.candidates?.length || 0})
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
                   {currentLyrics?.syncedLyrics ? (
                     <Text style={styles.lyricsHintText}>• Satıra dokunarak atla</Text>
                   ) : null}
@@ -740,7 +805,7 @@ export default function PlayerScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.lyricsSearchToggleBtn}
-                  onPress={() => setIsManualSearchOpen(!isManualSearchOpen)}>
+                  onPress={toggleManualSearch}>
                   <Ionicons
                     name={isManualSearchOpen ? 'close' : 'search'}
                     size={20}
@@ -755,28 +820,111 @@ export default function PlayerScreen() {
               </View>
             </View>
 
-            {/* Manual Search Bar (if opened) */}
+            {/* Manual Search & Candidates Drawer */}
             {isManualSearchOpen && (
-              <View style={styles.manualSearchContainer}>
-                <TextInput
-                  style={styles.manualSearchInput}
-                  placeholder="Şarkı veya sanatçı adı..."
-                  placeholderTextColor="#71717a"
-                  value={manualQuery}
-                  onChangeText={setManualQuery}
-                  returnKeyType="search"
-                  onSubmitEditing={handleManualSearch}
-                />
-                <TouchableOpacity
-                  style={styles.manualSearchBtn}
-                  onPress={handleManualSearch}
-                  disabled={isLoadingLyrics}>
-                  {isLoadingLyrics ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text style={styles.manualSearchBtnText}>Ara</Text>
-                  )}
-                </TouchableOpacity>
+              <View style={styles.manualSearchWrapper}>
+                <View style={styles.manualSearchContainer}>
+                  <TextInput
+                    style={styles.manualSearchInput}
+                    placeholder="Şarkı veya sanatçı adı..."
+                    placeholderTextColor="#71717a"
+                    value={manualQuery}
+                    onChangeText={setManualQuery}
+                    returnKeyType="search"
+                    onSubmitEditing={handleManualSearch}
+                  />
+                  <TouchableOpacity
+                    style={styles.manualSearchBtn}
+                    onPress={handleManualSearch}
+                    disabled={isSearchingCandidates}>
+                    {isSearchingCandidates ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.manualSearchBtnText}>Ara</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {isSearchingCandidates ? (
+                  <View style={styles.searchingCandidatesBox}>
+                    <ActivityIndicator size="small" color="#3b82f6" />
+                    <Text style={styles.searchingCandidatesText}>
+                      Sonuçlar aranıyor (LRCLIB & Genius)...
+                    </Text>
+                  </View>
+                ) : candidatesList.length > 0 ? (
+                  <View style={styles.candidatesListBox}>
+                    <Text style={styles.candidatesListHeader}>
+                      Bulunan Sonuçlar ({candidatesList.length}) • Tercih ettiğinize dokunun:
+                    </Text>
+                    <ScrollView style={styles.candidatesScroll} nestedScrollEnabled={true}>
+                      {candidatesList.map((item) => {
+                        const isSelected = currentLyrics?.id === item.id;
+                        const isResolving = resolvingCandidateId === item.id;
+                        const dur = item.duration
+                          ? `${Math.floor(item.duration / 60)}:${String(
+                              Math.floor(item.duration % 60)
+                            ).padStart(2, '0')}`
+                          : '';
+
+                        return (
+                          <TouchableOpacity
+                            key={item.id}
+                            style={[styles.candidateItem, isSelected && styles.candidateItemActive]}
+                            onPress={() => handleSelectCandidate(item)}
+                            disabled={isResolving}>
+                            <View style={styles.candidateLeft}>
+                              <View style={styles.candidateTopRow}>
+                                <Text
+                                  style={[
+                                    styles.candidateTrack,
+                                    isSelected && styles.candidateTrackActive,
+                                  ]}
+                                  numberOfLines={1}>
+                                  {item.trackName}
+                                </Text>
+                                {item.hasSynced ? (
+                                  <View style={styles.badgeSynced}>
+                                    <Ionicons name="flash" size={10} color="#4ade80" />
+                                    <Text style={styles.badgeSyncedText}>Senkronize (LRCLIB)</Text>
+                                  </View>
+                                ) : item.source === 'lrclib' ? (
+                                  <View style={styles.badgeLrclibPlain}>
+                                    <Ionicons name="document-text" size={10} color="#60a5fa" />
+                                    <Text style={styles.badgeLrclibPlainText}>Düz (LRCLIB)</Text>
+                                  </View>
+                                ) : (
+                                  <View style={styles.badgeGeniusPlain}>
+                                    <Ionicons name="document-text" size={10} color="#fbbf24" />
+                                    <Text style={styles.badgeGeniusPlainText}>Düz (Genius)</Text>
+                                  </View>
+                                )}
+                              </View>
+                              <View style={styles.candidateBottomRow}>
+                                <Text style={styles.candidateArtist} numberOfLines={1}>
+                                  {item.artistName} {item.albumName ? `• ${item.albumName}` : ''}
+                                </Text>
+                                {dur ? <Text style={styles.candidateDur}>⏱ {dur}</Text> : null}
+                              </View>
+                            </View>
+
+                            <View style={styles.candidateRight}>
+                              {isResolving ? (
+                                <ActivityIndicator size="small" color="#3b82f6" />
+                              ) : isSelected ? (
+                                <View style={styles.selectedBadge}>
+                                  <Ionicons name="checkmark-circle" size={18} color="#3b82f6" />
+                                </View>
+                              ) : (
+                                <Ionicons name="chevron-forward" size={16} color="#52525b" />
+                              )}
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                ) : null}
               </View>
             )}
 
@@ -862,9 +1010,9 @@ export default function PlayerScreen() {
                 </Text>
                 <TouchableOpacity
                   style={styles.retrySearchBtn}
-                  onPress={() => setIsManualSearchOpen(true)}>
+                  onPress={toggleManualSearch}>
                   <Ionicons name="search" size={16} color="#3b82f6" />
-                  <Text style={styles.retrySearchBtnText}>Elle Arama Yap</Text>
+                  <Text style={styles.retrySearchBtnText}>Arama Yap / Sonuçları Gör</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -1261,6 +1409,22 @@ const styles = StyleSheet.create({
     color: '#3b82f6',
     fontWeight: '600',
   },
+  candidatesPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#27272a',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#3b82f6',
+  },
+  candidatesPillText: {
+    fontSize: 11,
+    color: '#3b82f6',
+    fontWeight: '600',
+  },
   lyricsHintText: {
     fontSize: 11,
     color: '#71717a',
@@ -1283,11 +1447,13 @@ const styles = StyleSheet.create({
   closeLyricsBtn: {
     padding: 4,
   },
+  manualSearchWrapper: {
+    marginBottom: 12,
+  },
   manualSearchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 12,
     backgroundColor: '#27272a',
     borderRadius: 10,
     paddingHorizontal: 12,
@@ -1309,6 +1475,133 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '600',
     fontSize: 13,
+  },
+  searchingCandidatesBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    justifyContent: 'center',
+  },
+  searchingCandidatesText: {
+    fontSize: 12,
+    color: '#a1a1aa',
+  },
+  candidatesListBox: {
+    backgroundColor: '#18181b',
+    borderRadius: 12,
+    padding: 10,
+    marginTop: 8,
+    maxHeight: 250,
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  candidatesListHeader: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#a1a1aa',
+    marginBottom: 8,
+  },
+  candidatesScroll: {
+    maxHeight: 210,
+  },
+  candidateItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: '#27272a',
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  candidateItemActive: {
+    borderColor: '#3b82f6',
+    borderWidth: 1.5,
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+  },
+  candidateLeft: {
+    flex: 1,
+    marginRight: 8,
+  },
+  candidateTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  candidateTrack: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+    flex: 1,
+  },
+  candidateTrackActive: {
+    color: '#60a5fa',
+  },
+  candidateBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 3,
+  },
+  candidateArtist: {
+    fontSize: 12,
+    color: '#a1a1aa',
+    flex: 1,
+  },
+  candidateDur: {
+    fontSize: 11,
+    color: '#71717a',
+    marginLeft: 6,
+  },
+  candidateRight: {
+    marginLeft: 6,
+  },
+  badgeSynced: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(74, 222, 128, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  badgeSyncedText: {
+    fontSize: 10,
+    color: '#4ade80',
+    fontWeight: '700',
+  },
+  badgeLrclibPlain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(96, 165, 250, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  badgeLrclibPlainText: {
+    fontSize: 10,
+    color: '#60a5fa',
+    fontWeight: '600',
+  },
+  badgeGeniusPlain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(251, 191, 36, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  badgeGeniusPlainText: {
+    fontSize: 10,
+    color: '#fbbf24',
+    fontWeight: '600',
+  },
+  selectedBadge: {
+    padding: 2,
   },
   lyricsLoadingContainer: {
     flex: 1,
