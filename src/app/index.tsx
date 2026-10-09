@@ -397,6 +397,8 @@ export default function LibraryScreen() {
         renderLeftActions={renderLeftActions}
         friction={2}
         leftThreshold={40}
+        activeOffsetX={[-25, 25]}
+        failOffsetY={[-15, 15]}
         onSwipeableOpen={(direction) => {
           if (direction === 'left') {
             handleAddToQueue(item);

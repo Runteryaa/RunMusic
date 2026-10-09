@@ -129,13 +129,16 @@ export function MiniPlayer() {
   const miniPanX = React.useMemo(() => new Animated.Value(0), []);
   const [isMiniSkipping, setIsMiniSkipping] = React.useState(false);
 
-  // PanResponder for gestures (Tap, Swipe Left/Right, Swipe Up) with real-time animation
+  // PanResponder for gestures (Swipe Left/Right, Swipe Up) with real-time animation
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => !isMiniSkipping,
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, gesture) =>
-          !isMiniSkipping && (Math.abs(gesture.dx) > 10 || Math.abs(gesture.dy) > 10),
+          !isMiniSkipping && (Math.abs(gesture.dx) > 12 || gesture.dy < -12),
+        onMoveShouldSetPanResponderCapture: (_, gesture) =>
+          !isMiniSkipping && (Math.abs(gesture.dx) > 12 || gesture.dy < -12),
         onPanResponderMove: (_, gesture) => {
           if (isMiniSkipping) return;
           if (gesture.dy < -15 && Math.abs(gesture.dy) > Math.abs(gesture.dx)) return;
@@ -143,12 +146,7 @@ export function MiniPlayer() {
         },
         onPanResponderRelease: (_, gesture) => {
           if (isMiniSkipping) return;
-          if (Math.abs(gesture.dx) < 10 && Math.abs(gesture.dy) < 10) {
-            // Normal dokunma: Tam ekran çaları aç
-            openFullscreenPlayer();
-            return;
-          }
-          if (gesture.dy < -30 && Math.abs(gesture.dy) > Math.abs(gesture.dx)) {
+          if (gesture.dy < -25 && Math.abs(gesture.dy) > Math.abs(gesture.dx)) {
             // Yukarı kaydırma: Tam ekran çaları aç
             openFullscreenPlayer();
             return;
@@ -222,34 +220,38 @@ export function MiniPlayer() {
             }),
           },
         ]}>
-        {/* Cover Thumbnail */}
-        <View style={styles.artworkBox}>
-          <TrackArtwork
-            uri={artworkUri}
-            trackId={activeTrack.id}
-            trackUri={activeTrack.url}
-            size={44}
-            borderRadius={8}
-            iconSize={22}
-          />
-        </View>
+        {/* Cover + Info: Dokunulduğunda tam ekran çaları açar */}
+        <TouchableOpacity
+          style={styles.mainInfoPressable}
+          activeOpacity={0.8}
+          onPress={openFullscreenPlayer}>
+          <View style={styles.artworkBox}>
+            <TrackArtwork
+              uri={artworkUri}
+              trackId={activeTrack.id}
+              trackUri={activeTrack.url}
+              size={44}
+              borderRadius={8}
+              iconSize={22}
+            />
+          </View>
 
-        {/* Title & Artist */}
-        <View style={styles.textDetailsBox}>
-          <Text style={styles.titleText} numberOfLines={1}>
-            {displayTitle}
-          </Text>
-          <Text style={styles.artistText} numberOfLines={1}>
-            {displayArtist}
-          </Text>
-        </View>
+          <View style={styles.textDetailsBox}>
+            <Text style={styles.titleText} numberOfLines={1}>
+              {displayTitle}
+            </Text>
+            <Text style={styles.artistText} numberOfLines={1}>
+              {displayArtist}
+            </Text>
+          </View>
+        </TouchableOpacity>
 
         {/* Controls: Play/Pause and Next */}
         <View style={styles.controlsBox}>
           <TouchableOpacity
             style={styles.controlIconBtn}
-            activeOpacity={0.7}
-            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+            activeOpacity={0.65}
+            hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
             onPress={togglePlayback}>
             <Ionicons
               name={playing ? 'pause' : 'play'}
@@ -261,8 +263,8 @@ export function MiniPlayer() {
 
           <TouchableOpacity
             style={styles.controlIconBtn}
-            activeOpacity={0.7}
-            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+            activeOpacity={0.65}
+            hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
             onPress={skipNext}>
             <Ionicons name="play-skip-forward" size={22} color="#ffffff" />
           </TouchableOpacity>
@@ -301,6 +303,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
+  },
+  mainInfoPressable: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   artworkBox: {
     marginRight: 12,

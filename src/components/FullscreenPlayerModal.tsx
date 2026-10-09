@@ -617,10 +617,15 @@ export function FullscreenPlayerModal() {
   const artworkPanResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => !isLyricsMode && !isSkipping,
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => {
           if (isLyricsMode || isSkipping) return false;
-          return Math.abs(gesture.dx) > 10 || Math.abs(gesture.dy) > 12;
+          return Math.abs(gesture.dx) > 12 || gesture.dy > 15;
+        },
+        onMoveShouldSetPanResponderCapture: (_, gesture) => {
+          if (isLyricsMode || isSkipping) return false;
+          return Math.abs(gesture.dx) > 12 || gesture.dy > 15;
         },
         onPanResponderMove: (_, gesture) => {
           if (isSkipping) return;
@@ -716,10 +721,12 @@ export function FullscreenPlayerModal() {
   const headerPanResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => gesture.dy > 12,
+        onMoveShouldSetPanResponderCapture: (_, gesture) => gesture.dy > 12,
         onPanResponderRelease: (_, gesture) => {
-          if (gesture.dy > 30) {
+          if (gesture.dy > 25) {
             closeFullscreenPlayer();
           }
         },
@@ -873,14 +880,18 @@ export function FullscreenPlayerModal() {
                   }),
                 },
               ]}>
-              <TrackArtwork
-                uri={currentArtworkUri}
-                trackId={activeTrack.id}
-                trackUri={activeTrack.url}
-                size={ARTWORK_SIZE}
-                borderRadius={18}
-                iconSize={84}
-              />
+              <TouchableOpacity
+                activeOpacity={0.92}
+                onPress={toggleLyricsMode}>
+                <TrackArtwork
+                  uri={currentArtworkUri}
+                  trackId={activeTrack.id}
+                  trackUri={activeTrack.url}
+                  size={ARTWORK_SIZE}
+                  borderRadius={18}
+                  iconSize={84}
+                />
+              </TouchableOpacity>
             </Animated.View>
 
             {/* Sonraki Şarkı Kapağı (Sağdan süzülen önizleme) */}
@@ -1129,7 +1140,7 @@ export function FullscreenPlayerModal() {
             <TouchableOpacity
               style={styles.appleNavBtn}
               onPress={skipPrev}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              hitSlop={{ top: 18, bottom: 18, left: 16, right: 16 }}
               activeOpacity={0.65}>
               <Ionicons name="play-skip-back" size={38} color="#ffffff" />
             </TouchableOpacity>
@@ -1140,7 +1151,7 @@ export function FullscreenPlayerModal() {
                 activeOpacity={0.85}
                 onPressIn={handlePlayPressIn}
                 onPressOut={handlePlayPressOut}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                hitSlop={{ top: 18, bottom: 18, left: 18, right: 18 }}
                 onPress={togglePlayback}>
                 <Ionicons
                   name={playing ? 'pause' : 'play'}
@@ -1154,7 +1165,7 @@ export function FullscreenPlayerModal() {
             <TouchableOpacity
               style={styles.appleNavBtn}
               onPress={skipNext}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              hitSlop={{ top: 18, bottom: 18, left: 16, right: 16 }}
               activeOpacity={0.65}>
               <Ionicons name="play-skip-forward" size={38} color="#ffffff" />
             </TouchableOpacity>
@@ -1173,6 +1184,7 @@ export function FullscreenPlayerModal() {
                 },
               ]}
               activeOpacity={0.7}
+              hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
               onPress={toggleLyricsMode}>
               <Ionicons
                 name="chatbubble-ellipses"
@@ -1213,6 +1225,7 @@ export function FullscreenPlayerModal() {
             <TouchableOpacity
               style={[styles.appleUtilBtn, isQueueModalOpen && styles.appleUtilBtnActive]}
               activeOpacity={0.7}
+              hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
               onPress={() => setIsQueueModalOpen(true)}>
               <Ionicons
                 name="list"
@@ -1638,7 +1651,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   progressTouchContainer: {
-    height: 24,
+    height: 36,
     justifyContent: 'center',
   },
   progressBarBackground: {
