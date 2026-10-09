@@ -71,6 +71,12 @@ export default function SettingsScreen() {
 
     setIsCheckingUpdate(true);
     try {
+      try {
+        Updates.setUpdateRequestHeadersOverride?.({ 'expo-channel-name': 'production' });
+      } catch (headerErr) {
+        console.warn('Failed to set update request headers override:', headerErr);
+      }
+
       const check = await Updates.checkForUpdateAsync();
       if (check.isAvailable) {
         Alert.alert(
@@ -101,7 +107,15 @@ export default function SettingsScreen() {
       }
     } catch (e: any) {
       console.warn('Update check failed:', e);
-      Alert.alert('Güncelleme Denetimi', e?.message || 'Güncelleme sunucusuna bağlanılamadı.');
+      const msg = e?.message || '';
+      if (msg.includes('failed to check for update') || msg.includes('channel-name')) {
+        Alert.alert(
+          'Güncelleme Yapılandırması',
+          'Mevcut APK sürümünde güncelleme kanalı tanımlı değil. Kanal desteği eklenmiş yeni APK sürümünü GitHub Releases üzerinden indirip kurmanız gerekmektedir. Yeni APK kurulduktan sonra sonraki tüm güncellemeler otomatik olarak buradan yüklenebilecektir.'
+        );
+      } else {
+        Alert.alert('Güncelleme Denetimi', e?.message || 'Güncelleme sunucusuna bağlanılamadı.');
+      }
     } finally {
       setIsCheckingUpdate(false);
     }

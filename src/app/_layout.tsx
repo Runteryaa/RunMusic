@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Updates from 'expo-updates';
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import TrackPlayer, { Capability } from 'react-native-track-player';
@@ -19,6 +20,14 @@ export default function TabLayout() {
   useEffect(() => {
     async function setup() {
       try {
+        try {
+          if (Updates.isEnabled) {
+            Updates.setUpdateRequestHeadersOverride?.({ 'expo-channel-name': 'production' });
+          }
+        } catch {
+          // Ignore if header override is not allowed or supported
+        }
+
         await TrackPlayer.setupPlayer();
         await TrackPlayer.updateOptions({
           capabilities: [

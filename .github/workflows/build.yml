@@ -53,8 +53,12 @@ jobs:
           sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
           grep -q 'reactNativeArchitectures' android/gradle.properties || echo 'reactNativeArchitectures=arm64-v8a' >> android/gradle.properties
 
-          echo "--- Configured gradle.properties ---"
+          # Ensure EXPO_UPDATES_CHANNEL is defined in AndroidManifest.xml
+          sed -i 's|</application>|    <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHANNEL" android:value="production"/>\n  </application>|' android/app/src/main/AndroidManifest.xml
+
+          echo "--- Configured gradle.properties & AndroidManifest.xml ---"
           grep -E '(newArch|reactNativeArchitectures)' android/gradle.properties
+          grep -i 'EXPO_UPDATES_CHANNEL' android/app/src/main/AndroidManifest.xml || true
 
       - name: 🏗 Build APK
         env:
