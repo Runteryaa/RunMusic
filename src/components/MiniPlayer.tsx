@@ -127,7 +127,7 @@ export function MiniPlayer() {
   };
 
   const miniPanX = React.useMemo(() => new Animated.Value(0), []);
-  const [isMiniSkipping, setIsMiniSkipping] = React.useState(false);
+  const isMiniSkippingRef = React.useRef(false);
 
   // PanResponder for gestures (Swipe Left/Right, Swipe Up) with real-time animation
   const panResponder = React.useMemo(
@@ -136,16 +136,16 @@ export function MiniPlayer() {
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, gesture) =>
-          !isMiniSkipping && (Math.abs(gesture.dx) > 12 || gesture.dy < -12),
+          !isMiniSkippingRef.current && (Math.abs(gesture.dx) > 12 || gesture.dy < -12),
         onMoveShouldSetPanResponderCapture: (_, gesture) =>
-          !isMiniSkipping && (Math.abs(gesture.dx) > 12 || gesture.dy < -12),
+          !isMiniSkippingRef.current && (Math.abs(gesture.dx) > 12 || gesture.dy < -12),
         onPanResponderMove: (_, gesture) => {
-          if (isMiniSkipping) return;
+          if (isMiniSkippingRef.current) return;
           if (gesture.dy < -15 && Math.abs(gesture.dy) > Math.abs(gesture.dx)) return;
           miniPanX.setValue(gesture.dx * 0.7);
         },
         onPanResponderRelease: (_, gesture) => {
-          if (isMiniSkipping) return;
+          if (isMiniSkippingRef.current) return;
           if (gesture.dy < -25 && Math.abs(gesture.dy) > Math.abs(gesture.dx)) {
             // Yukarı kaydırma: Tam ekran çaları aç
             openFullscreenPlayer();
@@ -153,7 +153,7 @@ export function MiniPlayer() {
           }
           if (gesture.dx < -35) {
             // Sola kaydırma: Sonraki şarkı
-            setIsMiniSkipping(true);
+            isMiniSkippingRef.current = true;
             Animated.spring(miniPanX, {
               toValue: -90,
               tension: 70,
@@ -162,11 +162,11 @@ export function MiniPlayer() {
             }).start(() => {
               skipNext();
               miniPanX.setValue(0);
-              setIsMiniSkipping(false);
+              isMiniSkippingRef.current = false;
             });
           } else if (gesture.dx > 35) {
             // Sağa kaydırma: Önceki şarkı
-            setIsMiniSkipping(true);
+            isMiniSkippingRef.current = true;
             Animated.spring(miniPanX, {
               toValue: 90,
               tension: 70,
@@ -175,7 +175,7 @@ export function MiniPlayer() {
             }).start(() => {
               skipPrev();
               miniPanX.setValue(0);
-              setIsMiniSkipping(false);
+              isMiniSkippingRef.current = false;
             });
           } else {
             Animated.spring(miniPanX, {
@@ -187,7 +187,7 @@ export function MiniPlayer() {
           }
         },
       }),
-    [openFullscreenPlayer, skipNext, skipPrev, miniPanX, isMiniSkipping]
+    [openFullscreenPlayer, skipNext, skipPrev, miniPanX]
   );
 
   if (!activeTrack) {
@@ -208,43 +208,45 @@ export function MiniPlayer() {
         />
       </View>
 
-      <Animated.View
-        style={[
-          styles.contentRow,
-          {
-            transform: [{ translateX: miniPanX }],
-            opacity: miniPanX.interpolate({
-              inputRange: [-80, 0, 80],
-              outputRange: [0.4, 1, 0.4],
-              extrapolate: 'clamp',
-            }),
-          },
-        ]}>
-        {/* Cover + Info: Dokunulduğunda tam ekran çaları açar */}
-        <TouchableOpacity
-          style={styles.mainInfoPressable}
-          activeOpacity={0.8}
-          onPress={openFullscreenPlayer}>
-          <View style={styles.artworkBox}>
-            <TrackArtwork
-              uri={artworkUri}
-              trackId={activeTrack.id}
-              trackUri={activeTrack.url}
-              size={44}
-              borderRadius={8}
-              iconSize={22}
-            />
-          </View>
+      <View style={styles.contentRow}>
+        <Animated.View
+          style={[
+            styles.animatedInfoRow,
+            {
+              transform: [{ translateX: miniPanX }],
+              opacity: miniPanX.interpolate({
+                inputRange: [-80, 0, 80],
+                outputRange: [0.4, 1, 0.4],
+                extrapolate: 'clamp',
+              }),
+            },
+          ]}>
+          {/* Cover + Info: Dokunulduğunda tam ekran çaları açar */}
+          <TouchableOpacity
+            style={styles.mainInfoPressable}
+            activeOpacity={0.8}
+            onPress={openFullscreenPlayer}>
+            <View style={styles.artworkBox}>
+              <TrackArtwork
+                uri={artworkUri}
+                trackId={activeTrack.id}
+                trackUri={activeTrack.url}
+                size={44}
+                borderRadius={8}
+                iconSize={22}
+              />
+            </View>
 
-          <View style={styles.textDetailsBox}>
-            <Text style={styles.titleText} numberOfLines={1}>
-              {displayTitle}
-            </Text>
-            <Text style={styles.artistText} numberOfLines={1}>
-              {displayArtist}
-            </Text>
-          </View>
-        </TouchableOpacity>
+            <View style={styles.textDetailsBox}>
+              <Text style={styles.titleText} numberOfLines={1}>
+                {displayTitle}
+              </Text>
+              <Text style={styles.artistText} numberOfLines={1}>
+                {displayArtist}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </Animated.View>
 
         {/* Controls: Play/Pause and Next */}
         <View style={styles.controlsBox}>
@@ -269,7 +271,7 @@ export function MiniPlayer() {
             <Ionicons name="play-skip-forward" size={22} color="#ffffff" />
           </TouchableOpacity>
         </View>
-      </Animated.View>
+      </View>
     </View>
   );
 }
@@ -303,6 +305,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
+    justifyContent: 'space-between',
+  },
+  animatedInfoRow: {
+    flex: 1,
+    flexDirection: 'row',
   },
   mainInfoPressable: {
     flex: 1,
