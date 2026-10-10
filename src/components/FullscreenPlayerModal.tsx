@@ -16,6 +16,7 @@ import {
   PanResponder,
 } from 'react-native';
 import { Image } from 'expo-image';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import TrackPlayer, {
   useActiveTrack,
@@ -68,6 +69,7 @@ export function FullscreenPlayerModal() {
   const lyricsCache = useStore((s) => s.lyricsCache);
   const setLyrics = useStore((s) => s.setLyrics);
   const getLyricsFromCache = useStore((s) => s.getLyricsFromCache);
+  const hideTrack = useStore((s) => s.hideTrack);
 
   const [barWidth, setBarWidth] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -75,6 +77,7 @@ export function FullscreenPlayerModal() {
 
   // Queue Sheet state
   const [isQueueModalOpen, setIsQueueModalOpen] = useState(false);
+  const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
   const [queue, setQueue] = useState<Track[]>([]);
   const [activeIndex, setActiveIndex] = useState<number>(0);
   const [shuffleNextIndex, setShuffleNextIndex] = useState<number | null>(null);
@@ -605,6 +608,26 @@ export function FullscreenPlayerModal() {
     }
   }, []);
 
+  const handleHideTrack = useCallback(() => {
+    if (activeTrack?.id) {
+      hideTrack(activeTrack.id);
+      setIsOptionsModalOpen(false);
+      skipNext();
+    }
+  }, [activeTrack, hideTrack, skipNext]);
+
+  const handleDeleteTrack = useCallback(async () => {
+    if (activeTrack?.id) {
+      try {
+        await MediaLibrary.deleteAssetsAsync([activeTrack.id]);
+        setIsOptionsModalOpen(false);
+        skipNext();
+      } catch (e) {
+        console.warn('Could not delete track', e);
+      }
+    }
+  }, [activeTrack, skipNext]);
+
   const gestureSkipPrev = useCallback(async () => {
     try {
       await TrackPlayer.skipToPrevious();
@@ -614,19 +637,20 @@ export function FullscreenPlayerModal() {
     }
   }, []);
 
-  const toggleRepeat = useCallback(async () => {
-    let nextMode: RepeatMode = RepeatMode.Off;
-    if (repeatMode === RepeatMode.Off) {
-      nextMode = RepeatMode.Queue;
+  const togglePlaybackMode = useCallback(async () => {
+    if (isShuffle) {
+      setIsShuffle(false);
+      setRepeatMode(RepeatMode.Queue);
+      await TrackPlayer.setRepeatMode(RepeatMode.Queue);
     } else if (repeatMode === RepeatMode.Queue) {
-      nextMode = RepeatMode.Track;
+      setRepeatMode(RepeatMode.Track);
+      await TrackPlayer.setRepeatMode(RepeatMode.Track);
     } else {
-      nextMode = RepeatMode.Off;
+      setRepeatMode(RepeatMode.Off);
+      await TrackPlayer.setRepeatMode(RepeatMode.Off);
+      setIsShuffle(true);
     }
-
-    setRepeatMode(nextMode);
-    await TrackPlayer.setRepeatMode(nextMode);
-  }, [repeatMode, setRepeatMode]);
+  }, [isShuffle, repeatMode, setRepeatMode, setIsShuffle]);
 
   // Gestures: Middle container (Interactive Carousel Artwork / Lyrics)
   const artworkPanResponder = useMemo(
@@ -797,7 +821,7 @@ export function FullscreenPlayerModal() {
           <TouchableOpacity
             style={styles.headerIconBtn}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            onPress={() => setIsQueueModalOpen(true)}>
+            onPress={() => setIsOptionsModalOpen(true)}>
             <Ionicons name="ellipsis-horizontal-circle" size={24} color="rgba(255, 255, 255, 0.75)" />
           </TouchableOpacity>
         </View>
@@ -1188,27 +1212,16 @@ export function FullscreenPlayerModal() {
               />
             </TouchableOpacity>
 
-            {/* Orta: Karışık ve Tekrar Kontrolleri */}
+            {/* Orta: Karışık ve Tekrar Kontrolleri (Tek Buton) */}
             <View style={styles.appleCenterUtilRow}>
               <TouchableOpacity
                 style={styles.appleSubUtilBtn}
-                onPress={() => setIsShuffle(!isShuffle)}
+                onPress={togglePlaybackMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Ionicons
-                  name="shuffle"
+                  name={isShuffle ? 'shuffle' : 'repeat'}
                   size={20}
-                  color={isShuffle ? theme.primary : 'rgba(255, 255, 255, 0.5)'}
-                />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.appleSubUtilBtn}
-                onPress={toggleRepeat}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Ionicons
-                  name="repeat"
-                  size={20}
-                  color={repeatMode !== RepeatMode.Off ? theme.primary : 'rgba(255, 255, 255, 0.5)'}
+                  color={(isShuffle || repeatMode !== RepeatMode.Off) ? theme.primary : 'rgba(255, 255, 255, 0.5)'}
                 />
                 {repeatMode === RepeatMode.Track ? (
                   <Text style={[styles.repeatBadge, { color: theme.primary }]}>1</Text>
@@ -1318,6 +1331,32 @@ export function FullscreenPlayerModal() {
                   </Text>
                 </View>
               )}
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        {/* Seçenekler Modalı */}
+        <Modal
+          visible={isOptionsModalOpen}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setIsOptionsModalOpen(false)}>
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => setIsOptionsModalOpen(false)}>
+            <Pressable style={styles.optionsModalBox} onPress={(e) => e.stopPropagation()}>
+              <TouchableOpacity
+                style={styles.optionsModalRow}
+                onPress={handleHideTrack}>
+                <Ionicons name="eye-off-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
+                <Text style={styles.optionsModalText}>Şarkıyı Gizle</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.optionsModalRow}
+                onPress={handleDeleteTrack}>
+                <Ionicons name="trash-outline" size={24} color="#ef4444" style={{ marginRight: 16 }} />
+                <Text style={[styles.optionsModalText, { color: '#ef4444' }]}>Şarkıyı Sil</Text>
+              </TouchableOpacity>
             </Pressable>
           </Pressable>
         </Modal>
@@ -1737,6 +1776,25 @@ const styles = StyleSheet.create({
     padding: 20,
     borderWidth: 1,
     borderColor: '#27272a',
+  },
+  optionsModalBox: {
+    width: '80%',
+    backgroundColor: '#18181b',
+    borderRadius: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  optionsModalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+  },
+  optionsModalText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '500',
   },
   searchModalHeader: {
     flexDirection: 'row',
