@@ -1877,9 +1877,19 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           animationType="slide"
           transparent
           onRequestClose={() => setIsQueueModalOpen(false)}>
-          <View style={styles.queueModalBackdrop} {...queueModalPanResponder.panHandlers}>
-            <View style={styles.queueModalCard}>
-              <View style={styles.queueHeader}>
+          {/* Dışına dokunmak kapatır. */}
+          <Pressable
+            style={styles.queueModalBackdrop}
+            onPress={() => setIsQueueModalOpen(false)}>
+            {/* Kart içindeki dokunuşlar arkaplana sızmasın. */}
+            <Pressable
+              style={styles.queueModalCard}
+              onPress={(e) => e.stopPropagation()}>
+              {/* Aşağı sürükleyerek kapatma BAŞLIK/tutamaç üzerinden yapılır.
+                  Jest tüm arkaplana bağlıyken liste dikey kaydırmayı sahiplendiği
+                  için sürükleme çalışmıyordu; tutamaç görünür olduğu için burası
+                  hem keşfedilebilir hem de listeyle çakışmaz. */}
+              <View style={styles.queueHeader} {...queueModalPanResponder.panHandlers}>
                 <View style={styles.queueHeaderHandle} />
                 <View style={styles.queueHeaderRow}>
                   <Text style={styles.queueTitle}>Çalma Sırası</Text>
@@ -1913,8 +1923,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   ) : null
                 }
               />
-            </View>
-          </View>
+            </Pressable>
+          </Pressable>
         </Modal>
       </View>
   );

@@ -4,6 +4,7 @@ import { saveQueueSnapshot } from './playbackStorage';
 import {
   buildPlayOrder,
   buildQueueRows,
+  computeUpcomingOrder,
   deriveQueueSections,
   shuffleArray,
   trackKey,
@@ -12,7 +13,14 @@ import {
 
 // Saf kuyruk matematiği ayrı modülde yaşar (native'siz, test edilebilir);
 // buradan yeniden dışa aktarılır ki çağıranlar tek yerden import etsin.
-export { buildPlayOrder, buildQueueRows, deriveQueueSections, shuffleArray, trackKey };
+export {
+  buildPlayOrder,
+  buildQueueRows,
+  computeUpcomingOrder,
+  deriveQueueSections,
+  shuffleArray,
+  trackKey,
+};
 export type { QueueEntry, QueueRow, QueueSections, QueueTrackLike } from './queueMath';
 
 /**
@@ -193,7 +201,7 @@ export async function setShuffle(enabled: boolean): Promise<void> {
   const store = useStore.getState();
   const { queue, activeIndex } = await readQueueState();
 
-  if (queue.length === 0 || store.contextIds.length === 0) {
+  if (queue.length === 0) {
     store.setIsShuffle(enabled);
     return;
   }
@@ -207,17 +215,16 @@ export async function setShuffle(enabled: boolean): Promise<void> {
 
   const sections = deriveQueueSections(queue, activeIndex, store.upNextIds);
   const history = queue.slice(0, activeIndex + 1);
-  const upNextTracks = sections.upNext.map((e) => e.track);
-  const upcomingContext = sections.context.map((e) => e.track);
 
-  // Shuffle kapalıyken bağlam, kaydedilmiş orijinal kütüphane sırasına döner.
-  const contextOrder = new Map(store.contextIds.map((id, i) => [id, i]));
-  const orderedContext = [...upcomingContext].sort(
-    (a, b) => (contextOrder.get(trackKey(a)) ?? 0) - (contextOrder.get(trackKey(b)) ?? 0)
-  );
+  const { upcoming, baselineIds } = computeUpcomingOrder({
+    enabled,
+    upNextTracks: sections.upNext.map((e) => e.track),
+    upcomingContext: sections.context.map((e) => e.track),
+    contextIds: store.contextIds,
+    fullQueue: queue,
+  });
 
-  const newUpcoming = [...upNextTracks, ...(enabled ? shuffleArray(orderedContext) : orderedContext)];
-  const newQueue = [...history, ...newUpcoming];
+  const newQueue = [...history, ...upcoming];
 
   await TrackPlayer.setQueue(newQueue);
   if (activeIndex > 0) {
@@ -232,7 +239,11 @@ export async function setShuffle(enabled: boolean): Promise<void> {
     await TrackPlayer.pause();
   }
 
-  store.setIsShuffle(enabled);
+  // Tek `set`: persist her set'te tüm store'u yazdığı için birleştiriyoruz.
+  useStore.setState({
+    isShuffle: enabled,
+    ...(baselineIds ? { contextIds: baselineIds } : {}),
+  });
   await persistQueue();
 }
 

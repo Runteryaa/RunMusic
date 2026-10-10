@@ -201,12 +201,18 @@ export default function TabLayout() {
             if (resumeAt && resumeAt > 0) {
               await TrackPlayer.seekTo(resumeAt);
             }
-            const store = useStore.getState();
-            store.setUpNextIds(snapshot.upNextIds ?? []);
-            store.setContextIds(snapshot.contextIds ?? []);
-            if (snapshot.isShuffle) {
-              store.setIsShuffle(true);
-            }
+            // Bağlam sırası kayıtta yoksa (eski kayıtlar) kuyruğun kendi sırasını
+            // taban kabul et; aksi halde shuffle kapatılamaz/karıştırılamazdı.
+            const restoredContextIds =
+              snapshot.contextIds && snapshot.contextIds.length > 0
+                ? snapshot.contextIds
+                : snapshot.queue.map((t) => t.id);
+
+            useStore.setState({
+              upNextIds: snapshot.upNextIds ?? [],
+              contextIds: restoredContextIds,
+              ...(snapshot.isShuffle ? { isShuffle: true } : {}),
+            });
           } else if (lastPlayback && lastPlayback.track) {
             // Tam kuyruk saklanmamışsa (ör. çok büyük kütüphane) eski davranış.
             await TrackPlayer.add([lastPlayback.track]);

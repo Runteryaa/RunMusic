@@ -347,8 +347,13 @@ export default function LibraryScreen() {
         (item) => item.id === selectedAsset.id || item.url === selectedAsset.uri
       );
 
-      // Eğer seçilen şarkı zaten kuyruktaysa, ASLA sıfırlama yapma! Doğrudan o şarkıya atla
-      if (existingIndex >= 0) {
+      // Şarkı zaten kuyruktaysa ve shuffle KAPALIYSA mevcut konuma atla.
+      //
+      // Shuffle AÇIKKEN ise (Spotify gibi) dokunulan şarkıdan başlayan YENİ ve
+      // KARIŞTIRILMIŞ bir kuyruk kurulur. Aksi halde kuyruk, shuffle açılmadan
+      // önceki liste düzeninde kalır ve "shuffle seçili ama sıra karışmıyor"
+      // durumu ortaya çıkar.
+      if (existingIndex >= 0 && !isShuffle) {
         await TrackPlayer.skip(existingIndex);
         await TrackPlayer.play();
         openFullscreenPlayer();

@@ -13,6 +13,7 @@
 import {
   buildPlayOrder,
   buildQueueRows,
+  computeUpcomingOrder,
   deriveQueueSections,
   shuffleArray,
   trackKey,
@@ -289,6 +290,127 @@ section('11) Panel satır sırası (buildQueueRows)');
   const shuffledRows = buildQueueRows(deriveQueueSections(q1, 1, []), 0, true);
   const ctxTitle = (shuffledRows.find((r) => r.kind === 'section' && r.key === 'sec-context') as any)?.title ?? '';
   check('shuffle açıkken bağlam başlığı "KARIŞIK" der', ctxTitle.includes('KARIŞIK'));
+}
+
+section('12) Shuffle aç/kapat sıralaması (computeUpcomingOrder)');
+
+{
+  const ctx = ['A', 'B', 'C', 'D', 'E', 'F'].map(t);
+  const contextIds = ctx.map((x) => trackKey(x));
+
+  // ASIL HATA: contextIds BOŞKEN shuffle açmak sırayı karıştırmıyordu.
+  const noBaseline = computeUpcomingOrder({
+    enabled: true,
+    upNextTracks: [],
+    upcomingContext: ctx,
+    contextIds: [],
+    fullQueue: ctx,
+  });
+  check(
+    'contextIds boşken shuffle yine de karıştırır (asıl hata)',
+    noBaseline.upcoming.length === ctx.length &&
+      JSON.stringify(noBaseline.upcoming) !== JSON.stringify(ctx)
+  );
+  check(
+    'contextIds boşken taban sıra döner (sonradan kapatabilmek için)',
+    JSON.stringify(noBaseline.baselineIds) === JSON.stringify(contextIds)
+  );
+
+  const withBaseline = computeUpcomingOrder({
+    enabled: true,
+    upNextTracks: [],
+    upcomingContext: ctx,
+    contextIds,
+    fullQueue: ctx,
+  });
+  check('orijinal sıra varsa taban döndürülmez', withBaseline.baselineIds === null);
+  check(
+    'shuffle bir permütasyondur (kayıp/tekrar yok)',
+    [...withBaseline.upcoming].map(trackKey).sort().join(',') === [...contextIds].sort().join(',')
+  );
+
+  // Kapatınca orijinal kütüphane sırasına dönülür (karışık sıradan).
+  const shuffledMid = shuffleArray(ctx);
+  const off = computeUpcomingOrder({
+    enabled: false,
+    upNextTracks: [],
+    upcomingContext: shuffledMid,
+    contextIds,
+    fullQueue: ctx,
+  });
+  check(
+    'kapatınca orijinal kütüphane sırasına döner',
+    JSON.stringify(off.upcoming.map(trackKey)) === JSON.stringify(contextIds)
+  );
+
+  // Orijinal sıra yokken kapatmak sırayı BOZMAMALI (çalma bozulmasın).
+  const offNoBaseline = computeUpcomingOrder({
+    enabled: false,
+    upNextTracks: [],
+    upcomingContext: shuffledMid,
+    contextIds: [],
+    fullQueue: shuffledMid,
+  });
+  check(
+    'orijinal sıra yokken kapatmak mevcut sırayı korur',
+    JSON.stringify(offNoBaseline.upcoming) === JSON.stringify(shuffledMid)
+  );
+
+  // Manuel "Sırada" öğeleri shuffle açık/kapalı her durumda ÖNDE kalmalı.
+  const manual = [t('M1'), t('M2')];
+  const onWithManual = computeUpcomingOrder({
+    enabled: true,
+    upNextTracks: manual,
+    upcomingContext: ctx,
+    contextIds,
+    fullQueue: ctx,
+  });
+  check(
+    'shuffle açıkken manuel öğeler bağlamın önünde',
+    JSON.stringify(onWithManual.upcoming.slice(0, 2).map(trackKey)) === JSON.stringify(['M1', 'M2'])
+  );
+  const offWithManual = computeUpcomingOrder({
+    enabled: false,
+    upNextTracks: manual,
+    upcomingContext: shuffleArray(ctx),
+    contextIds,
+    fullQueue: ctx,
+  });
+  check(
+    'shuffle kapatılırken manuel öğeler önde kalır',
+    JSON.stringify(offWithManual.upcoming.slice(0, 2).map(trackKey)) === JSON.stringify(['M1', 'M2'])
+  );
+  check(
+    'manuel + bağlam uzunluğu korunur',
+    offWithManual.upcoming.length === manual.length + ctx.length
+  );
+
+  // Karıştırmanın gerçekten olduğunu olasılıksal doğrula.
+  let shuffledOnce = false;
+  for (let i = 0; i < 20; i++) {
+    const r = computeUpcomingOrder({
+      enabled: true,
+      upNextTracks: [],
+      upcomingContext: ctx,
+      contextIds,
+      fullQueue: ctx,
+    });
+    if (JSON.stringify(r.upcoming) !== JSON.stringify(ctx)) {
+      shuffledOnce = true;
+      break;
+    }
+  }
+  check('shuffle gerçekten sırayı değiştiriyor', shuffledOnce);
+
+  // Boş bağlam güvenli olmalı.
+  const empty = computeUpcomingOrder({
+    enabled: true,
+    upNextTracks: [],
+    upcomingContext: [],
+    contextIds: [],
+    fullQueue: [],
+  });
+  check('boş bağlam güvenli', empty.upcoming.length === 0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

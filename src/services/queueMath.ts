@@ -111,6 +111,45 @@ export function buildPlayOrder(contextIds: string[], startId: string, shuffle: b
 }
 
 /**
+ * Shuffle aç/kapat sırasında "sıradaki" bölümün yeni sırasını hesaplar.
+ *
+ * Kritik nokta: KARIŞTIRMAK için orijinal kütüphane sırasına (`contextIds`)
+ * GEREK YOKTUR — mevcut bağlamı karıştırmak yeterlidir. Orijinal sıra yalnızca
+ * shuffle KAPATILIRKEN, eski düzene dönebilmek için gerekir. Bu ayrım
+ * yapılmadığında (eski davranış) shuffle yalnızca bayrağı değiştiriyor, sıra
+ * liste düzeninde kalıyordu.
+ *
+ * Her durumda manuel "Sırada" öğeleri bağlamın ÖNÜNDE kalır.
+ */
+export function computeUpcomingOrder<T extends QueueTrackLike>(params: {
+  enabled: boolean;
+  upNextTracks: T[];
+  upcomingContext: T[];
+  /** Kaydedilmiş orijinal kütüphane sırası; bilinmiyorsa boş. */
+  contextIds: string[];
+  /** Orijinal sıra yoksa taban kabul edilecek tam kuyruk. */
+  fullQueue: T[];
+}): { upcoming: T[]; baselineIds: string[] | null } {
+  const { enabled, upNextTracks, upcomingContext, contextIds, fullQueue } = params;
+
+  if (enabled) {
+    const baselineIds = contextIds.length === 0 ? fullQueue.map((t) => trackKey(t)) : null;
+    return { upcoming: [...upNextTracks, ...shuffleArray(upcomingContext)], baselineIds };
+  }
+
+  if (contextIds.length > 0) {
+    const contextOrder = new Map(contextIds.map((id, i) => [id, i]));
+    const orderedContext = [...upcomingContext].sort(
+      (a, b) => (contextOrder.get(trackKey(a)) ?? 0) - (contextOrder.get(trackKey(b)) ?? 0)
+    );
+    return { upcoming: [...upNextTracks, ...orderedContext], baselineIds: null };
+  }
+
+  // Orijinal sıra yok: mevcut sırayı koru, çalma bozulmasın.
+  return { upcoming: [...upNextTracks, ...upcomingContext], baselineIds: null };
+}
+
+/**
  * Kuyruk panelindeki tek bir satır.
  *
  * Dört bölüm (geçmiş / şu an / sırada / kütüphaneden) TEK bir düz listeye
