@@ -506,26 +506,44 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   // Metadata check (tek seferlik ref korumalı)
   const updatedMetadataTrackIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (activeTrack && activeIndex >= 0) {
-      const trackId = activeTrack.id || activeTrack.url;
-      if (updatedMetadataTrackIdRef.current === trackId) {
-        return;
-      }
+    if (!activeTrack) return;
 
-      const meta = activeTrack.id ? metadataMap[activeTrack.id] : undefined;
-      const needsArtwork = !activeTrack.artwork && (meta?.artwork || (activeTrack.id && artworkMap[activeTrack.id]));
-      const needsTitle = meta?.title && activeTrack.title !== meta.title;
-      const needsArtist = meta?.artist && meta.artist !== 'Local Audio' && activeTrack.artist !== meta.artist;
+    const trackId = activeTrack.id || activeTrack.url;
+    if (updatedMetadataTrackIdRef.current === trackId) {
+      return;
+    }
 
-      if (needsArtwork || needsTitle || needsArtist) {
-        updatedMetadataTrackIdRef.current = trackId;
-        TrackPlayer.updateMetadataForTrack(activeIndex, {
+    const meta = activeTrack.id ? metadataMap[activeTrack.id] : undefined;
+    const needsArtwork = !activeTrack.artwork && (meta?.artwork || (activeTrack.id && artworkMap[activeTrack.id]));
+    const needsTitle = meta?.title && activeTrack.title !== meta.title;
+    const needsArtist = meta?.artist && meta.artist !== 'Local Audio' && activeTrack.artist !== meta.artist;
+
+    if (!needsArtwork && !needsTitle && !needsArtist) {
+      return;
+    }
+
+    updatedMetadataTrackIdRef.current = trackId;
+
+    // İndeks `refreshQueue`'dan ASENKRON geldiği için şarkı değişimi sırasında
+    // bir an önceki parçayı gösterebilir. Doğrudan `activeIndex`'e yazmak, yeni
+    // parçanın adını/kapağını ÖNCEKİ parçanın kuyruk girdisine (ya da tersi)
+    // yazıp ekranda yanlış şarkı gösterebiliyordu. Bunun yerine parçayı
+    // kimliğinden bulup yalnızca doğru girdiye yazıyoruz.
+    void (async () => {
+      try {
+        const currentQueue = await TrackPlayer.getQueue();
+        const targetIndex = currentQueue.findIndex((t) => (t.id || t.url) === trackId);
+        if (targetIndex < 0) return;
+
+        await TrackPlayer.updateMetadataForTrack(targetIndex, {
           ...(needsArtwork ? { artwork: meta?.artwork || artworkMap[activeTrack.id] } : {}),
           ...(needsTitle ? { title: meta!.title } : {}),
           ...(needsArtist ? { artist: meta!.artist } : {}),
-        }).catch(() => {});
+        });
+      } catch {
+        // Sessizce yoksay: metadata zaten store'dan okunuyor.
       }
-    }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTrack?.id, activeTrack?.url, activeIndex]);
 
@@ -1160,6 +1178,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           style={StyleSheet.absoluteFill}
           blurRadius={70}
           contentFit="cover"
+          // Tüm ekranı kapladığı için, önceki şarkının bulanık görselinin yeni
+          // kapak yüklenene kadar ekranda kalması en çok burada fark ediliyordu.
+          recyclingKey={currentArtworkUri}
         />
       ) : null}
       <View style={[StyleSheet.absoluteFill, styles.backdropOverlay]} />

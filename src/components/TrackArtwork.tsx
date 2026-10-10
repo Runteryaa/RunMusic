@@ -71,6 +71,11 @@ export function TrackArtwork({
           style={{ width: size, height: size, borderRadius }}
           contentFit="cover"
           transition={200}
+          // Bu bileşen şarkı değişince YENİDEN MOUNT EDİLMEZ, aynı instance yeni
+          // bir kaynak alır. Bu durumda expo-image önceki görseli yeni görsel
+          // tamamen yüklenene kadar göstermeye devam eder; yani bir an ÖNCEKİ
+          // şarkının kapağı görünür. recyclingKey bu içeriği sıfırlar.
+          recyclingKey={effectiveUri}
           onError={() => setHasError(true)}
         />
       </Animated.View>
