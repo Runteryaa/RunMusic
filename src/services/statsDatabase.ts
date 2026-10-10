@@ -16,6 +16,12 @@ export async function initStatsDB() {
     );
     CREATE INDEX IF NOT EXISTS idx_track_id ON play_history(track_id);
     CREATE INDEX IF NOT EXISTS idx_played_at ON play_history(played_at);
+    
+    CREATE TABLE IF NOT EXISTS app_stats (
+      key TEXT PRIMARY KEY,
+      value INTEGER NOT NULL
+    );
+    INSERT OR IGNORE INTO app_stats (key, value) VALUES ('total_listening_seconds', 0);
   `);
 }
 
@@ -74,13 +80,30 @@ export async function getMostPlayed(limit: number = 20, timeframe?: 'month'): Pr
   }
 }
 
+export async function addListeningTime(seconds: number) {
+  if (!db) await initStatsDB();
+  try {
+    await db!.runAsync(
+      'UPDATE app_stats SET value = value + ? WHERE key = ?',
+      seconds,
+      'total_listening_seconds'
+    );
+  } catch (error) {
+    console.warn('Failed to add listening time:', error);
+  }
+}
+
 export async function getTotalListeningTime(): Promise<number> {
   if (!db) await initStatsDB();
   try {
-    const result = await db!.getFirstAsync<{ total_duration: number | null }>(
+    const statsResult = await db!.getFirstAsync<{ value: number }>(
+      "SELECT value FROM app_stats WHERE key = 'total_listening_seconds'"
+    );
+    const histResult = await db!.getFirstAsync<{ total_duration: number | null }>(
       'SELECT SUM(duration_listened) as total_duration FROM play_history'
     );
-    return result?.total_duration || 0;
+    
+    return (statsResult?.value || 0) + (histResult?.total_duration || 0);
   } catch (error) {
     console.warn('Failed to get total listening time:', error);
     return 0;
