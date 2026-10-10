@@ -152,6 +152,54 @@ export default function LibraryScreen() {
     hideTrack(asset.id);
   };
 
+  const handleDeleteTrack = async (asset: MediaLibrary.Asset) => {
+    setSelectedTrackForMenu(null);
+    Alert.alert(
+      'Şarkıyı Sil',
+      'Bu şarkıyı cihazınızdan kalıcı olarak silmek istediğinize emin misiniz?',
+      [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const success = await MediaLibrary.deleteAssetsAsync([asset.id]);
+              if (success) {
+                const updatedLibrary = useStore.getState().library.filter(a => a.id !== asset.id);
+                useStore.getState().setLibrary(updatedLibrary);
+                
+                try {
+                  const currentActive = await TrackPlayer.getActiveTrack();
+                  if (currentActive && (currentActive.id === asset.id || currentActive.url === asset.uri)) {
+                    try {
+                      await TrackPlayer.skipToNext();
+                    } catch {
+                      await TrackPlayer.pause();
+                    }
+                  }
+                  const queue = await TrackPlayer.getQueue();
+                  const trackIdx = queue.findIndex((t) => t.id === asset.id || t.url === asset.uri);
+                  if (trackIdx !== -1) {
+                    await TrackPlayer.remove(trackIdx);
+                  }
+                } catch (e) {
+                  console.warn('TrackPlayer update on delete failed', e);
+                }
+                showToast('Şarkı başarıyla silindi');
+              } else {
+                Alert.alert('Hata', 'Şarkı silinemedi. Lütfen izinlerinizi kontrol edin.');
+              }
+            } catch (e) {
+              console.error('Failed to delete asset', e);
+              Alert.alert('Hata', 'Şarkı silinirken bir hata oluştu.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const scanMedia = useCallback(async () => {
     setIsScanning(true);
     setStatusMessage('İzinler denetleniyor...');
@@ -747,6 +795,13 @@ export default function LibraryScreen() {
                   }}>
                   <Ionicons name="eye-off-outline" size={18} color="#ef4444" style={{ marginRight: 12 }} />
                   <Text style={styles.actionMenuTextDestructive}>Şarkıyı Gizle</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.actionMenuItem, styles.actionMenuItemDestructive]}
+                  onPress={() => handleDeleteTrack(selectedTrackForMenu)}>
+                  <Ionicons name="trash-outline" size={18} color="#ef4444" style={{ marginRight: 12 }} />
+                  <Text style={styles.actionMenuTextDestructive}>Şarkıyı Sil</Text>
                 </TouchableOpacity>
               </>
             )}

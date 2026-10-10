@@ -107,6 +107,10 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
   const prevMeta = useMemo(() => getTrackMeta(prevTrack), [prevTrack, getTrackMeta]);
   const nextMeta = useMemo(() => getTrackMeta(nextTrack), [nextTrack, getTrackMeta]);
 
+  const miniPanX = useMemo(() => new Animated.Value(0), []);
+  const isMiniSkippingRef = useRef(false);
+  const currentTrackIdRef = useRef(activeTrack?.id);
+
   // Sıra artık kuyruğa gömülü: native next/prev doğru parçayı çalar
   // (shuffle ve repeat dahil). Bu yüzden ekstra indeks hesabı yapılmaz.
   const skipNext = useCallback(async () => {
@@ -168,10 +172,6 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
       await TrackPlayer.play();
     }
   };
-
-  const miniPanX = useMemo(() => new Animated.Value(0), []);
-  const isMiniSkippingRef = useRef(false);
-  const currentTrackIdRef = useRef(activeTrack?.id);
 
   // When activeTrack changes, snap back to center (seamless page turn)
   useEffect(() => {
