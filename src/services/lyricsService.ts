@@ -1013,12 +1013,32 @@ export async function searchGenius(title: string, artist = ''): Promise<LyricsRe
 }
 
 /**
- * 1. ÖNCELİK KESİNLİKLE LRCLIB:
- * Önce LRCLIB sorgulanır. LRCLIB'de herhangi bir şarkı sözü bulunursa (senkronize veya düz),
- * doğrudan LRCLIB döner.
- * 2. YALNIZCA LRCLIB'de hiçbir sonuç bulunamazsa Genius fallback olarak devreye girer.
+ * Şarkı sözü kaynağı tercihi.
+ *
+ * Burada tanımlıdır (store'da değil) çünkü `lyricsService` hiçbir şey import
+ * etmez ve Node üzerinde test edilebilir kalmalıdır; store ise native modüller
+ * çeker. Store bu tipi buradan import eder.
  */
-export async function fetchLyricsOnline(title: string, artist = ''): Promise<LyricsResult | null> {
+export type LyricsSourcePreference = 'lrclib_first' | 'genius_first' | 'lrclib_only';
+
+/**
+ * Çevrimiçi söz arar. Kaynak sırası tercihe göre değişir.
+ *
+ * - `lrclib_first` (varsayılan): önce LRCLIB, bulunamazsa Genius.
+ * - `genius_first`: önce Genius, bulunamazsa LRCLIB.
+ * - `lrclib_only`: yalnızca LRCLIB; Genius'a hiç sorulmaz.
+ */
+export async function fetchLyricsOnline(
+  title: string,
+  artist = '',
+  preference: LyricsSourcePreference = 'lrclib_first'
+): Promise<LyricsResult | null> {
+  if (preference === 'genius_first') {
+    const geniusRes = await searchGenius(title, artist);
+    if (geniusRes) return geniusRes;
+    return searchLrclib(title, artist);
+  }
+
   // 1. Mutlak öncelik LRCLIB
   const lrclibRes = await searchLrclib(title, artist);
   if (lrclibRes) {
@@ -1026,6 +1046,10 @@ export async function fetchLyricsOnline(title: string, artist = ''): Promise<Lyr
   }
 
   // 2. Yalnızca LRCLIB tamamen boş dönerse Genius'a sor
+  if (preference === 'lrclib_only') {
+    return null;
+  }
+
   const geniusRes = await searchGenius(title, artist);
   if (geniusRes) {
     return geniusRes;

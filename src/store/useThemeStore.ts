@@ -4,6 +4,7 @@ import {
   DEFAULT_THEME,
   extractThemeFromImageUri,
 } from '../services/colorThemeService';
+import { useStore } from './useStore';
 
 interface ThemeState {
   theme: ThemeColors;
@@ -17,8 +18,11 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   currentArtworkUri: null,
 
   updateThemeFromArtwork: async (uri) => {
-    if (!uri) {
-      if (get().currentArtworkUri !== null) {
+    // "Kapaktan renk türet" kapalıysa her zaman sabit tema kullanılır.
+    const dynamic = useStore.getState().preferences.dynamicColorFromArtwork;
+
+    if (!uri || !dynamic) {
+      if (get().currentArtworkUri !== null || get().theme !== DEFAULT_THEME) {
         set({ theme: DEFAULT_THEME, currentArtworkUri: null });
       }
       return;

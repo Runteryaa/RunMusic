@@ -30,6 +30,19 @@ export interface SortableAsset {
 }
 
 /**
+ * Sıralama seçeneklerinin kullanıcıya gösterilen adları.
+ * (Kitaplık ekranı ve Ayarlar aynı metinleri kullanır.)
+ */
+export const SORT_OPTION_LABELS: Record<SortOption, string> = {
+  name_asc: 'İsim (A→Z)',
+  name_desc: 'İsim (Z→A)',
+  duration_asc: 'Süre (kısa→uzun)',
+  duration_desc: 'Süre (uzun→kısa)',
+  date_desc: 'Eklenme (yeni→eski)',
+  date_asc: 'Eklenme (eski→yeni)',
+};
+
+/**
  * Bir parçanın "eklenme" zamanı (ms).
  *
  * Öncelik `modificationTime` (dosyanın yazıldığı = indirildiği an). Yoksa

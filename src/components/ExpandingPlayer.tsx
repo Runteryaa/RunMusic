@@ -9,6 +9,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useActiveTrack } from 'react-native-track-player';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
+import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { MiniPlayer } from './MiniPlayer';
 import { FullscreenPlayerModal } from './FullscreenPlayerModal';
@@ -26,6 +27,17 @@ export function ExpandingPlayer() {
 
   const expandVal = useSharedValue(0);
   const rnExpandAnim = useMemo(() => new RNAnimated.Value(0), []);
+
+  // "Player açılınca sözleri göster" tercihi: yalnızca player AÇILIRKEN uygulanır,
+  // kullanıcı sonradan sözleri kapatırsa tekrar zorlanmaz.
+  useEffect(() => {
+    if (
+      isFullscreenPlayerOpen &&
+      useStore.getState().preferences.openPlayerWithLyrics
+    ) {
+      usePlayerUIStore.getState().setLyricsMode(true);
+    }
+  }, [isFullscreenPlayerOpen]);
 
   useEffect(() => {
     if (isFullscreenPlayerOpen) {

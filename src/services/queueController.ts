@@ -174,8 +174,31 @@ export async function removeQueueItem(index: number): Promise<void> {
   await persistQueue();
 }
 
-/** "Sırada" bölümü içinde yeniden sıralama (indeksler bölüme görelidir). */
-export async function moveUpNext(from: number, to: number): Promise<void> {
+/**
+ * Manuel "Sırada" öğelerinin TAMAMINI kuyruktan çıkarır.
+ *
+ * Yalnızca `upNextIds` listesini temizlemek yetmez: öğeler native kuyrukta
+ * kaldığı sürece çalınmaya devam eder. Bu yüzden önce kuyruktan silinirler
+ * (sondan başa doğru, indeksler kaymasın diye), sonra liste boşaltılır.
+ */
+export async function clearUpNextQueue(): Promise<void> {
+  const { queue, activeIndex } = await readQueueState();
+  const sections = deriveQueueSections(queue, activeIndex, useStore.getState().upNextIds);
+
+  const indices = sections.upNext.map((entry) => entry.index).sort((a, b) => b - a);
+  for (const index of indices) {
+    try {
+      await TrackPlayer.remove(index);
+    } catch (e) {
+      console.warn('Failed to remove up-next item', e);
+    }
+  }
+
+  useStore.getState().clearUpNext();
+  await persistQueue();
+}
+
+/** "Sırada" bölümü içinde yeniden sıralama (indeksler bölüme görelidir). */export async function moveUpNext(from: number, to: number): Promise<void> {
   const { queue, activeIndex } = await readQueueState();
   const sections = deriveQueueSections(queue, activeIndex, useStore.getState().upNextIds);
 

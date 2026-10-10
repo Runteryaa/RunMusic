@@ -60,6 +60,8 @@ export default function LibraryScreen() {
   const metadataMap = useStore((s) => s.metadataMap);
   const setBatchTrackMetadata = useStore((s) => s.setBatchTrackMetadata);
   const isShuffle = useStore((s) => s.isShuffle);
+  const preferences = useStore((s) => s.preferences);
+  const updatePreferences = useStore((s) => s.updatePreferences);
 
   const openFullscreenPlayer = usePlayerUIStore((s) => s.openFullscreenPlayer);
   const activeTrack = useActiveTrack();
@@ -71,7 +73,8 @@ export default function LibraryScreen() {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Sort state (defaults to name_asc)
-  const [sortOption, setSortOption] = useState<SortOption>('name_asc');
+  // Sıralama tercihi kalıcıdır (Ayarlar'da da değiştirilebilir); yerel state yok.
+  const sortOption = preferences.defaultSortOption;
   const [isSortModalOpen, setIsSortModalOpen] = useState(false);
 
   // Track action menu state
@@ -661,7 +664,7 @@ export default function LibraryScreen() {
                     isSelected && [styles.sortOptionRowActive, { borderColor: theme.primary }],
                   ]}
                   onPress={() => {
-                    setSortOption(item.id);
+                    updatePreferences({ defaultSortOption: item.id });
                     setIsSortModalOpen(false);
                   }}>
                   <View style={styles.sortOptionLeft}>

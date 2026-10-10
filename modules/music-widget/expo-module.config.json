@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["MusicWidgetModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.musicwidget.MusicWidgetModule"]
+  }
+}

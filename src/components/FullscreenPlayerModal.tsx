@@ -155,6 +155,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const getLyricsFromCache = useStore((s) => s.getLyricsFromCache);
   const hideTrack = useStore((s) => s.hideTrack);
   const isHydrated = useStore((s) => s.isHydrated);
+  const autoFetchLyrics = useStore((s) => s.preferences.autoFetchLyrics);
+  const reduceMotion = useStore((s) => s.preferences.reduceMotion);
 
   const [barWidth, setBarWidth] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -647,7 +649,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
     setIsLoadingLyrics(true);
     try {
-      const result = await fetchLyricsOnline(title, cleanArtist);
+      const result = await fetchLyricsOnline(
+        title,
+        cleanArtist,
+        useStore.getState().preferences.lyricsSourcePreference
+      );
       if (result) {
         // Asenkron istek dönerken kullanıcı manuel bir seçim yaptıysa veya cache'e lyric kaydedildiyse ezme!
         const existing = getLyricsFromCache({
@@ -704,15 +710,15 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         rawTitle: activeTrack.title,
       });
 
-      if (!cached) {
+      if (!cached && autoFetchLyrics) {
         // Bu parça için henüz kaydedilmiş bir söz yoksa ilk kez internetten ara ve kaydet
         loadLyricsForTrack(displayTitle, searchArtist, false);
-      } else if (cached.candidates && cached.candidates.length > 0) {
+      } else if (cached?.candidates && cached.candidates.length > 0) {
         setCandidatesList(cached.candidates);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTrack?.id, activeTrack?.url, displayTitle, displayArtist, isHydrated]);
+  }, [activeTrack?.id, activeTrack?.url, displayTitle, displayArtist, isHydrated, autoFetchLyrics]);
 
   const activeLineIndex = useMemo(() => {
     if (!parsedLines || parsedLines.length === 0) return -1;
@@ -922,16 +928,22 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const CARD_OFFSET = ARTWORK_SIZE + 24;
 
   useEffect(() => {
+    // "Hareketleri azalt" açıkken duraklatma ölçek animasyonu uygulanmaz.
     Animated.spring(artworkScale, {
-      toValue: playing ? 1 : 0.88,
+      toValue: reduceMotion || playing ? 1 : 0.88,
       damping: 18,
       mass: 0.9,
       stiffness: 140,
       useNativeDriver: true,
     }).start();
-  }, [playing, artworkScale]);
+  }, [playing, artworkScale, reduceMotion]);
 
   useEffect(() => {
+    if (reduceMotion) {
+      // Anında geçiş: yay animasyonu yok.
+      lyricsTransition.setValue(isLyricsMode ? 1 : 0);
+      return;
+    }
     Animated.spring(lyricsTransition, {
       toValue: isLyricsMode ? 1 : 0,
       damping: 20,
@@ -939,7 +951,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       stiffness: 150,
       useNativeDriver: true,
     }).start();
-  }, [isLyricsMode, lyricsTransition]);
+  }, [isLyricsMode, lyricsTransition, reduceMotion]);
 
   const handlePlayPressIn = useCallback(() => {
     Animated.spring(playBtnScale, {

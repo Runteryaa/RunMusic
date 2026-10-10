@@ -4,7 +4,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import TrackPlayer, { Capability, Track, useActiveTrack } from 'react-native-track-player';
+import TrackPlayer, {
+  AppKilledPlaybackBehavior,
+  Capability,
+  Track,
+  useActiveTrack,
+} from 'react-native-track-player';
 
 import playbackService from '../service';
 
@@ -13,6 +18,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { getLastPlayback, getQueueSnapshot } from '../services/playbackStorage';
 import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
+import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -34,9 +40,12 @@ const PLAYBACK_CAPABILITIES = [
 ];
 
 function MainAppLayout() {
+  useWidgetUpdater();
+  
   const activeTrack = useActiveTrack();
   const theme = useThemeStore((s) => s.theme);
   const updateThemeFromArtwork = useThemeStore((s) => s.updateThemeFromArtwork);
+  const dynamicColorFromArtwork = useStore((s) => s.preferences.dynamicColorFromArtwork);
   const setArtwork = useStore((s) => s.setArtwork);
   const activeTrackId = activeTrack?.id;
   const storeArtwork = useStore((s) =>
@@ -62,12 +71,14 @@ function MainAppLayout() {
   }, [artworkUri, activeTrack?.url, activeTrackId, setArtwork]);
 
   useEffect(() => {
-    if (artworkUri) {
+    // Tercih de bağımlılık: kullanıcı "kapaktan renk türet"i açıp kapatınca
+    // tema, şarkı değişmesini beklemeden hemen güncellenir.
+    if (dynamicColorFromArtwork && artworkUri) {
       updateThemeFromArtwork(artworkUri);
-    } else if (!activeTrackId) {
+    } else if (!activeTrackId || !dynamicColorFromArtwork) {
       updateThemeFromArtwork(null);
     }
-  }, [artworkUri, activeTrackId, updateThemeFromArtwork]);
+  }, [artworkUri, activeTrackId, updateThemeFromArtwork, dynamicColorFromArtwork]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#121212' }}>
@@ -161,6 +172,7 @@ export default function TabLayout() {
         }
 
         try {
+          const prefs = useStore.getState().preferences;
           await TrackPlayer.updateOptions({
             capabilities: PLAYBACK_CAPABILITIES,
             // Android'de bildirim düğmeleri yalnızca bu listeden üretilir
@@ -168,6 +180,12 @@ export default function TabLayout() {
             // ileride değişse bile bildirime durdurma düğmesi sızmasın.
             notificationCapabilities: PLAYBACK_CAPABILITIES,
             compactCapabilities: [Capability.Play, Capability.Pause],
+            android: {
+              // Uygulama son kullanılanlardan kaydırılıp kapatıldığında ne olsun.
+              appKilledPlaybackBehavior: prefs.keepPlayingWhenAppKilled
+                ? AppKilledPlaybackBehavior.ContinuePlayback
+                : AppKilledPlaybackBehavior.PausePlayback,
+            },
           });
           const savedRepeatMode = useStore.getState().repeatMode;
           if (savedRepeatMode != null) {
@@ -191,7 +209,9 @@ export default function TabLayout() {
             ]),
           ]);
 
-          if (snapshot && snapshot.queue.length > 0) {
+          const restoreQueue = useStore.getState().preferences.restoreQueueOnLaunch;
+
+          if (restoreQueue && snapshot && snapshot.queue.length > 0) {
             await TrackPlayer.setQueue(snapshot.queue as Track[]);
             if (snapshot.activeIndex > 0) {
               await TrackPlayer.skip(snapshot.activeIndex);
