@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,12 +6,14 @@ import {
   TouchableOpacity,
   PanResponder,
   Animated,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import TrackPlayer, {
   useActiveTrack,
   useIsPlaying,
   useProgress,
+  Track,
 } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
@@ -19,6 +21,8 @@ import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from './TrackArtwork';
 import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
 import { saveLastPlayback } from '../services/playbackStorage';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
 function getRandomIndex(length: number): number {
   return Math.floor(Math.random() * length);
@@ -38,32 +42,72 @@ export function MiniPlayer() {
   const duration = progress.duration > 0 ? progress.duration : 0;
   const progressPercent = duration > 0 ? Math.min(1, Math.max(0, progress.position / duration)) : 0;
 
-  const activeMeta = activeTrack?.id ? metadataMap[activeTrack.id] : undefined;
-  const activeKeywords = getSearchKeywords(activeTrack?.title || '', activeTrack?.artist || '');
-  const rawArtist =
-    (activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
-      ? cleanYouTubeTitle(activeMeta.artist)
-      : '') ||
-    (activeKeywords.expectedArtist && activeKeywords.expectedArtist !== 'Local Audio' && activeKeywords.expectedArtist !== 'Bilinmeyen Sanatçı'
-      ? activeKeywords.expectedArtist
-      : (activeTrack?.artist && activeTrack.artist !== 'Local Audio' && activeTrack.artist !== 'Bilinmeyen Sanatçı'
-          ? cleanYouTubeTitle(activeTrack.artist)
-          : 'Bilinmeyen Sanatçı'));
+  // Local Queue State for Next/Prev Previews
+  const [queue, setQueue] = useState<Track[]>([]);
+  const [activeIndex, setActiveIndex] = useState<number>(0);
 
-  const rawTitle =
-    (activeMeta?.title?.trim() ? cleanYouTubeTitle(activeMeta.title) : '') ||
-    activeKeywords.expectedTrack ||
-    cleanYouTubeTitle(activeTrack?.title || '') ||
-    'Bilinmeyen Parça';
+  useEffect(() => {
+    const fetchQueue = async () => {
+      try {
+        const q = await TrackPlayer.getQueue();
+        const idx = await TrackPlayer.getActiveTrackIndex();
+        setQueue(q || []);
+        setActiveIndex(idx ?? 0);
+      } catch (e) {
+        console.warn('MiniPlayer queue fetch err:', e);
+      }
+    };
+    if (activeTrack) {
+      fetchQueue();
+    }
+  }, [activeTrack]);
 
-  const displayArtist = rawArtist;
-  const displayTitle = rawTitle;
+  const prevTrack = useMemo(() => {
+    if (queue.length <= 1) return null;
+    if (activeIndex > 0) return queue[activeIndex - 1];
+    return queue[queue.length - 1];
+  }, [queue, activeIndex]);
 
-  const artworkUri =
-    (activeTrack?.id ? metadataMap[activeTrack.id]?.artwork || artworkMap[activeTrack.id] : undefined) ||
-    (typeof activeTrack?.artwork === 'string' ? activeTrack.artwork : undefined);
+  const nextTrack = useMemo(() => {
+    if (queue.length <= 1) return null;
+    if (activeIndex < queue.length - 1) return queue[activeIndex + 1];
+    return queue[0];
+  }, [queue, activeIndex]);
 
-  const skipNext = React.useCallback(async () => {
+  // Track Meta Helper
+  const getTrackMeta = useCallback((track: Track | null) => {
+    if (!track) return { title: '', artist: '', artwork: undefined };
+    const meta = track.id ? metadataMap[track.id] : undefined;
+    const keywords = getSearchKeywords(track.title || '', track.artist || '');
+    
+    let rawArtist =
+      (meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
+        ? cleanYouTubeTitle(meta.artist)
+        : '') ||
+      (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
+        ? keywords.expectedArtist
+        : (track.artist && track.artist !== 'Local Audio' && track.artist !== 'Bilinmeyen Sanatçı'
+            ? cleanYouTubeTitle(track.artist)
+            : 'Bilinmeyen Sanatçı'));
+            
+    let rawTitle =
+      (meta?.title?.trim() ? cleanYouTubeTitle(meta.title) : '') ||
+      keywords.expectedTrack ||
+      cleanYouTubeTitle(track.title || '') ||
+      'Bilinmeyen Parça';
+      
+    let artworkUri =
+      (track.id ? meta?.artwork || artworkMap[track.id] : undefined) ||
+      (typeof track.artwork === 'string' ? track.artwork : undefined);
+      
+    return { title: rawTitle, artist: rawArtist, artwork: artworkUri };
+  }, [metadataMap, artworkMap]);
+
+  const activeMeta = useMemo(() => getTrackMeta(activeTrack || null), [activeTrack, getTrackMeta]);
+  const prevMeta = useMemo(() => getTrackMeta(prevTrack), [prevTrack, getTrackMeta]);
+  const nextMeta = useMemo(() => getTrackMeta(nextTrack), [nextTrack, getTrackMeta]);
+
+  const skipNext = useCallback(async () => {
     try {
       if (isShuffle) {
         const q = await TrackPlayer.getQueue();
@@ -85,7 +129,7 @@ export function MiniPlayer() {
     }
   }, [isShuffle]);
 
-  const skipPrev = React.useCallback(async () => {
+  const skipPrev = useCallback(async () => {
     try {
       const { position } = await TrackPlayer.getProgress();
       if (position > 3) {
@@ -126,11 +170,23 @@ export function MiniPlayer() {
     }
   };
 
-  const miniPanX = React.useMemo(() => new Animated.Value(0), []);
-  const isMiniSkippingRef = React.useRef(false);
+  const miniPanX = useMemo(() => new Animated.Value(0), []);
+  const isMiniSkippingRef = useRef(false);
+  const currentTrackIdRef = useRef(activeTrack?.id);
 
-  // PanResponder for gestures (Swipe Left/Right, Swipe Up) with real-time animation
-  const panResponder = React.useMemo(
+  // When activeTrack changes, snap back to center (seamless page turn)
+  useEffect(() => {
+    if (currentTrackIdRef.current !== activeTrack?.id) {
+      currentTrackIdRef.current = activeTrack?.id;
+      if (isMiniSkippingRef.current) {
+        miniPanX.setValue(0);
+        isMiniSkippingRef.current = false;
+      }
+    }
+  }, [activeTrack?.id, miniPanX]);
+
+  // PanResponder for gestures
+  const panResponder = useMemo(
     () => {
       // eslint-disable-next-line react-hooks/refs
       return PanResponder.create({
@@ -143,42 +199,54 @@ export function MiniPlayer() {
         onPanResponderMove: (_, gesture) => {
           if (isMiniSkippingRef.current) return;
           if (gesture.dy < -15 && Math.abs(gesture.dy) > Math.abs(gesture.dx)) return;
-          miniPanX.setValue(gesture.dx * 0.7);
+          miniPanX.setValue(gesture.dx * 0.9); // More responsive tracking
         },
         onPanResponderRelease: (_, gesture) => {
           if (isMiniSkippingRef.current) return;
+          
           if (gesture.dy < -25 && Math.abs(gesture.dy) > Math.abs(gesture.dx)) {
-            // Yukarı kaydırma: Tam ekran çaları aç
             openFullscreenPlayer();
             return;
           }
+          
           if (gesture.dx < -35) {
-            // Sola kaydırma: Sonraki şarkı — hemen geç, animasyon paralel
+            // Sola kaydırma: Sonraki şarkı
             isMiniSkippingRef.current = true;
-            skipNext();
             Animated.spring(miniPanX, {
-              toValue: -90,
-              tension: 70,
-              friction: 9,
+              toValue: -SCREEN_WIDTH, // Animate fully to left
+              tension: 60,
+              friction: 8,
               useNativeDriver: true,
             }).start(() => {
-              miniPanX.setValue(0);
-              isMiniSkippingRef.current = false;
+              skipNext();
+              // Reset will happen in useEffect once activeTrack updates
+              // Fallback reset in case track change fails
+              setTimeout(() => {
+                if (isMiniSkippingRef.current) {
+                  miniPanX.setValue(0);
+                  isMiniSkippingRef.current = false;
+                }
+              }, 600);
             });
           } else if (gesture.dx > 35) {
-            // Sağa kaydırma: Önceki şarkı — hemen geç, animasyon paralel
+            // Sağa kaydırma: Önceki şarkı
             isMiniSkippingRef.current = true;
-            skipPrev();
             Animated.spring(miniPanX, {
-              toValue: 90,
-              tension: 70,
-              friction: 9,
+              toValue: SCREEN_WIDTH, // Animate fully to right
+              tension: 60,
+              friction: 8,
               useNativeDriver: true,
             }).start(() => {
-              miniPanX.setValue(0);
-              isMiniSkippingRef.current = false;
+              skipPrev();
+              setTimeout(() => {
+                if (isMiniSkippingRef.current) {
+                  miniPanX.setValue(0);
+                  isMiniSkippingRef.current = false;
+                }
+              }, 600);
             });
           } else {
+            // Snap back
             Animated.spring(miniPanX, {
               toValue: 0,
               tension: 80,
@@ -200,7 +268,7 @@ export function MiniPlayer() {
     <View
       style={[styles.miniPlayerContainer, { borderColor: theme.border }]}
       {...panResponder.panHandlers}>
-      {/* Top 2px Progress Bar with dynamic theme color */}
+      {/* Top 2px Progress Bar */}
       <View style={styles.progressBarTrack}>
         <View
           style={[
@@ -211,44 +279,82 @@ export function MiniPlayer() {
       </View>
 
       <View style={styles.contentRow}>
-        <Animated.View
-          style={[
-            styles.animatedInfoRow,
-            {
-              transform: [{ translateX: miniPanX }],
-              opacity: miniPanX.interpolate({
-                inputRange: [-80, 0, 80],
-                outputRange: [0.4, 1, 0.4],
-                extrapolate: 'clamp',
-              }),
-            },
-          ]}>
-          {/* Cover + Info: Dokunulduğunda tam ekran çaları açar */}
-          <TouchableOpacity
-            style={styles.mainInfoPressable}
-            activeOpacity={0.8}
-            onPress={openFullscreenPlayer}>
-            <View style={styles.artworkBox}>
-              <TrackArtwork
-                uri={artworkUri}
-                trackId={activeTrack.id}
-                trackUri={activeTrack.url}
-                size={44}
-                borderRadius={8}
-                iconSize={22}
-              />
-            </View>
+        <View style={{ flex: 1, overflow: 'visible' }}>
+          <Animated.View
+            style={[
+              styles.animatedInfoRow,
+              {
+                transform: [{ translateX: miniPanX }],
+              },
+            ]}>
+            
+            {/* PREV TRACK PREVIEW */}
+            {prevTrack && (
+              <View style={[styles.mainInfoPressable, { position: 'absolute', left: -SCREEN_WIDTH, width: SCREEN_WIDTH - 20 }]}>
+                <View style={styles.artworkBox}>
+                  <TrackArtwork
+                    uri={prevMeta.artwork}
+                    trackId={prevTrack.id}
+                    trackUri={prevTrack.url}
+                    size={44}
+                    borderRadius={8}
+                    iconSize={22}
+                  />
+                </View>
+                <View style={styles.textDetailsBox}>
+                  <Text style={styles.titleText} numberOfLines={1}>{prevMeta.title}</Text>
+                  <Text style={styles.artistText} numberOfLines={1}>{prevMeta.artist}</Text>
+                </View>
+              </View>
+            )}
 
-            <View style={styles.textDetailsBox}>
-              <Text style={styles.titleText} numberOfLines={1}>
-                {displayTitle}
-              </Text>
-              <Text style={styles.artistText} numberOfLines={1}>
-                {displayArtist}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        </Animated.View>
+            {/* ACTIVE TRACK */}
+            <TouchableOpacity
+              style={[styles.mainInfoPressable, { width: '100%' }]}
+              activeOpacity={0.8}
+              onPress={openFullscreenPlayer}>
+              <View style={styles.artworkBox}>
+                <TrackArtwork
+                  uri={activeMeta.artwork}
+                  trackId={activeTrack.id}
+                  trackUri={activeTrack.url}
+                  size={44}
+                  borderRadius={8}
+                  iconSize={22}
+                />
+              </View>
+              <View style={styles.textDetailsBox}>
+                <Text style={styles.titleText} numberOfLines={1}>
+                  {activeMeta.title}
+                </Text>
+                <Text style={styles.artistText} numberOfLines={1}>
+                  {activeMeta.artist}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* NEXT TRACK PREVIEW */}
+            {nextTrack && (
+              <View style={[styles.mainInfoPressable, { position: 'absolute', left: SCREEN_WIDTH, width: SCREEN_WIDTH - 20 }]}>
+                <View style={styles.artworkBox}>
+                  <TrackArtwork
+                    uri={nextMeta.artwork}
+                    trackId={nextTrack.id}
+                    trackUri={nextTrack.url}
+                    size={44}
+                    borderRadius={8}
+                    iconSize={22}
+                  />
+                </View>
+                <View style={styles.textDetailsBox}>
+                  <Text style={styles.titleText} numberOfLines={1}>{nextMeta.title}</Text>
+                  <Text style={styles.artistText} numberOfLines={1}>{nextMeta.artist}</Text>
+                </View>
+              </View>
+            )}
+            
+          </Animated.View>
+        </View>
 
         {/* Controls: Play/Pause and Next */}
         <View style={styles.controlsBox}>
@@ -314,7 +420,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   mainInfoPressable: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -341,6 +446,7 @@ const styles = StyleSheet.create({
   controlsBox: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#1f1f23', // Mask text sliding under controls
   },
   controlIconBtn: {
     width: 38,
