@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, StyleProp, TextStyle, ViewStyle } from 'react-native';
+import { View, Text, StyleSheet, StyleProp, TextStyle, ViewStyle, ScrollView } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -35,14 +35,11 @@ export const MarqueeText: React.FC<MarqueeTextProps> = ({
 
   useEffect(() => {
     if (shouldAnimate) {
-      // Calculate total distance to move
       const distance = textWidth + gap;
       const totalDuration = distance * duration;
 
-      // Reset
       translateX.value = 0;
 
-      // Start animation loop
       translateX.value = withRepeat(
         withSequence(
           withDelay(1500, withTiming(-distance, { duration: totalDuration, easing: Easing.linear }))
@@ -67,21 +64,30 @@ export const MarqueeText: React.FC<MarqueeTextProps> = ({
     <View
       style={[styles.container, containerStyle]}
       onLayout={(e) => setContainerWidth(e.nativeEvent.layout.width)}
+      pointerEvents="none"
     >
-      <Animated.View style={animatedStyle}>
-        <Text
-          numberOfLines={1}
-          style={[style, { paddingRight: shouldAnimate ? gap : 0 }]}
-          onLayout={(e) => setTextWidth(e.nativeEvent.layout.width)}
-        >
-          {text}
-        </Text>
-        {shouldAnimate && (
-          <Text numberOfLines={1} style={style}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        scrollEnabled={false}
+        bounces={false}
+        contentContainerStyle={{ flexGrow: 1 }}
+      >
+        <Animated.View style={animatedStyle}>
+          <Text
+            style={[style, { paddingRight: shouldAnimate ? gap : 0 }]}
+            onLayout={(e) => setTextWidth(e.nativeEvent.layout.width)}
+            numberOfLines={1}
+          >
             {text}
           </Text>
-        )}
-      </Animated.View>
+          {shouldAnimate && (
+            <Text numberOfLines={1} style={style}>
+              {text}
+            </Text>
+          )}
+        </Animated.View>
+      </ScrollView>
     </View>
   );
 };
