@@ -637,6 +637,24 @@ export function FullscreenPlayerModal() {
     }
   }, []);
 
+  const handleSeekBackward = useCallback(async () => {
+    try {
+      const { position } = await TrackPlayer.getProgress();
+      await TrackPlayer.seekTo(Math.max(0, position - 5));
+    } catch (e) {
+      console.warn('Seek backward failed', e);
+    }
+  }, []);
+
+  const handleSeekForward = useCallback(async () => {
+    try {
+      const { position, duration } = await TrackPlayer.getProgress();
+      await TrackPlayer.seekTo(Math.min(duration, position + 5));
+    } catch (e) {
+      console.warn('Seek forward failed', e);
+    }
+  }, []);
+
   const togglePlaybackMode = useCallback(async () => {
     if (isShuffle) {
       setIsShuffle(false);
@@ -1159,6 +1177,7 @@ export function FullscreenPlayerModal() {
             <TouchableOpacity
               style={styles.appleNavBtn}
               onPress={skipPrev}
+              onLongPress={handleSeekBackward}
               hitSlop={{ top: 18, bottom: 18, left: 16, right: 16 }}
               activeOpacity={0.65}>
               <Ionicons name="play-skip-back" size={38} color="#ffffff" />
@@ -1184,6 +1203,7 @@ export function FullscreenPlayerModal() {
             <TouchableOpacity
               style={styles.appleNavBtn}
               onPress={skipNext}
+              onLongPress={handleSeekForward}
               hitSlop={{ top: 18, bottom: 18, left: 16, right: 16 }}
               activeOpacity={0.65}>
               <Ionicons name="play-skip-forward" size={38} color="#ffffff" />
