@@ -43,10 +43,16 @@ class MusicWidgetProvider1x4 : AppWidgetProvider() {
 
         private fun getMediaButtonPendingIntent(context: Context, keycode: Int): PendingIntent {
             val intent = Intent(Intent.ACTION_MEDIA_BUTTON)
-            intent.setPackage(context.packageName)
+            intent.component = ComponentName(context, "com.doublesymmetry.trackplayer.service.MusicService")
             val event = KeyEvent(KeyEvent.ACTION_DOWN, keycode)
             intent.putExtra(Intent.EXTRA_KEY_EVENT, event)
-            return PendingIntent.getBroadcast(context, keycode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                PendingIntent.getForegroundService(context, keycode, intent, flags)
+            } else {
+                PendingIntent.getService(context, keycode, intent, flags)
+            }
         }
     }
 }

@@ -13,8 +13,25 @@ import java.io.File
 import java.net.URL
 
 class MusicWidgetModule : Module() {
+  companion object {
+    var instance: MusicWidgetModule? = null
+    fun sendWidgetAction(action: String) {
+      instance?.sendEvent("onWidgetAction", mapOf("action" to action))
+    }
+  }
+
   override fun definition() = ModuleDefinition {
     Name("MusicWidget")
+
+    Events("onWidgetAction")
+
+    OnCreate {
+      instance = this@MusicWidgetModule
+    }
+
+    OnDestroy {
+      instance = null
+    }
 
     AsyncFunction("updateWidget") { title: String, artist: String, artworkUri: String?, isPlaying: Boolean, bgColorHex: String? ->
       val context = appContext.reactContext ?: return@AsyncFunction
@@ -66,11 +83,11 @@ class MusicWidgetModule : Module() {
     // so we set the background color of the container layout (which will lose rounded corners unless we use a colored rounded shape, but this is fine for now).
     // Actually, setting int color is better on a solid view or we just set background color of the container.
     // To keep corners, we can't easily tint a drawable from RemoteViews before API 31.
-    // Let's just set the background color directly.
-    views.setInt(bgShape, "setBackgroundColor", bgColor)
+    // Let's just keep the static @drawable/widget_bg instead of overriding it, so we keep the 16dp rounded corners!
 
     if (bitmap != null) {
-      views.setImageViewBitmap(context.resources.getIdentifier("widget_artwork", "id", context.packageName), bitmap)
+      val roundedBitmap = getRoundedCornerBitmap(bitmap, 32f)
+      views.setImageViewBitmap(context.resources.getIdentifier("widget_artwork", "id", context.packageName), roundedBitmap)
     } else {
       views.setImageViewResource(context.resources.getIdentifier("widget_artwork", "id", context.packageName), android.R.color.transparent)
     }
@@ -81,5 +98,24 @@ class MusicWidgetModule : Module() {
     } else {
       views.setImageViewResource(playPauseBtn, context.resources.getIdentifier("ic_play", "drawable", context.packageName))
     }
+  }
+
+  private fun getRoundedCornerBitmap(bitmap: Bitmap, pixels: Float): Bitmap {
+    val output = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(output)
+
+    val paint = android.graphics.Paint()
+    val rect = android.graphics.Rect(0, 0, bitmap.width, bitmap.height)
+    val rectF = android.graphics.RectF(rect)
+
+    paint.isAntiAlias = true
+    canvas.drawARGB(0, 0, 0, 0)
+    paint.color = -0xbdbdbe
+    canvas.drawRoundRect(rectF, pixels, pixels, paint)
+
+    paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+    canvas.drawBitmap(bitmap, rect, rect, paint)
+
+    return output
   }
 }

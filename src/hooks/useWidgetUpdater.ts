@@ -34,4 +34,26 @@ export function useWidgetUpdater() {
       }
     }
   }, [activeTrack?.title, activeTrack?.artist, playing, artworkUri, theme.primary]);
+
+  useEffect(() => {
+    if (!MusicWidgetModule || !MusicWidgetModule.addListener) return;
+    const subscription = MusicWidgetModule.addListener('onWidgetAction', async (event: { action: string }) => {
+      try {
+        if (event.action === 'shuffle') {
+          // Toggle shuffle
+          const isShuffle = useStore.getState().isShuffle;
+          const { setShuffle } = await import('../services/queueController');
+          setShuffle(!isShuffle);
+        } else if (event.action === 'star') {
+          // You might have a favorite function, but for now we'll do nothing or a simple toast
+          console.log('Star clicked');
+        }
+      } catch (e) {
+        console.error('Widget action error', e);
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 }

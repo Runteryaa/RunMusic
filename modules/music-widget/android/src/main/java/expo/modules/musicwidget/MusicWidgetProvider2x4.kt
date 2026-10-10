@@ -32,6 +32,14 @@ class MusicWidgetProvider2x4 : AppWidgetProvider() {
                 context.resources.getIdentifier("widget_btn_prev", "id", context.packageName),
                 getMediaButtonPendingIntent(context, KeyEvent.KEYCODE_MEDIA_PREVIOUS)
             )
+            views.setOnClickPendingIntent(
+                context.resources.getIdentifier("widget_btn_shuffle", "id", context.packageName),
+                getCustomActionPendingIntent(context, "shuffle")
+            )
+            views.setOnClickPendingIntent(
+                context.resources.getIdentifier("widget_btn_star", "id", context.packageName),
+                getCustomActionPendingIntent(context, "star")
+            )
 
             // Intent to open app
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
@@ -45,10 +53,22 @@ class MusicWidgetProvider2x4 : AppWidgetProvider() {
 
         private fun getMediaButtonPendingIntent(context: Context, keycode: Int): PendingIntent {
             val intent = Intent(Intent.ACTION_MEDIA_BUTTON)
-            intent.setPackage(context.packageName)
+            intent.component = android.content.ComponentName(context, "com.doublesymmetry.trackplayer.service.MusicService")
             val event = KeyEvent(KeyEvent.ACTION_DOWN, keycode)
             intent.putExtra(Intent.EXTRA_KEY_EVENT, event)
-            return PendingIntent.getBroadcast(context, keycode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                PendingIntent.getForegroundService(context, keycode, intent, flags)
+            } else {
+                PendingIntent.getService(context, keycode, intent, flags)
+            }
+        }
+        private fun getCustomActionPendingIntent(context: Context, actionName: String): PendingIntent {
+            val intent = Intent(context, WidgetActionReceiver::class.java)
+            intent.putExtra("action", actionName)
+            val reqCode = actionName.hashCode()
+            return PendingIntent.getBroadcast(context, reqCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
     }
 }
