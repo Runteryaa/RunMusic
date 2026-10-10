@@ -32,14 +32,6 @@ class MusicWidgetProvider2x4 : AppWidgetProvider() {
                 context.resources.getIdentifier("widget_btn_prev", "id", context.packageName),
                 getMediaButtonPendingIntent(context, KeyEvent.KEYCODE_MEDIA_PREVIOUS)
             )
-            views.setOnClickPendingIntent(
-                context.resources.getIdentifier("widget_btn_shuffle", "id", context.packageName),
-                getCustomActionPendingIntent(context, "shuffle")
-            )
-            views.setOnClickPendingIntent(
-                context.resources.getIdentifier("widget_btn_star", "id", context.packageName),
-                getCustomActionPendingIntent(context, "star")
-            )
 
             // Intent to open app
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)

@@ -12,7 +12,6 @@
         android:id="@+id/widget_artwork"
         android:layout_width="48dp"
         android:layout_height="48dp"
-        android:background="#333333"
         android:scaleType="centerCrop" />
 
     <LinearLayout
