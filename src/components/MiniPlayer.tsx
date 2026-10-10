@@ -20,6 +20,7 @@ import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from './TrackArtwork';
+import { MarqueeText } from './ui/MarqueeText';
 import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
 import { saveLastPlayback } from '../services/playbackStorage';
 
@@ -285,8 +286,8 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
                   />
                 </View>
                 <View style={styles.textDetailsBox}>
-                  <Text style={styles.titleText} numberOfLines={1}>{prevMeta.title}</Text>
-                  <Text style={styles.artistText} numberOfLines={1}>{prevMeta.artist}</Text>
+                  <MarqueeText text={prevMeta.title || ''} style={styles.titleText} />
+                  <MarqueeText text={prevMeta.artist || ''} style={styles.artistText} />
                 </View>
               </View>
             )}
@@ -307,12 +308,8 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
                 />
               </View>
               <View style={styles.textDetailsBox}>
-                <Text style={styles.titleText} numberOfLines={1}>
-                  {activeMeta.title}
-                </Text>
-                <Text style={styles.artistText} numberOfLines={1}>
-                  {activeMeta.artist}
-                </Text>
+                <MarqueeText text={activeMeta.title || ''} style={styles.titleText} />
+                <MarqueeText text={activeMeta.artist || ''} style={styles.artistText} />
               </View>
             </TouchableOpacity>
 
@@ -330,8 +327,8 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
                   />
                 </View>
                 <View style={styles.textDetailsBox}>
-                  <Text style={styles.titleText} numberOfLines={1}>{nextMeta.title}</Text>
-                  <Text style={styles.artistText} numberOfLines={1}>{nextMeta.artist}</Text>
+                  <MarqueeText text={nextMeta.title || ''} style={styles.titleText} />
+                  <MarqueeText text={nextMeta.artist || ''} style={styles.artistText} />
                 </View>
               </View>
             )}

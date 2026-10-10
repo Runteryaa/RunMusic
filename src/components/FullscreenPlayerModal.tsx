@@ -31,6 +31,7 @@ import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from './TrackArtwork';
+import { MarqueeText } from './ui/MarqueeText';
 import {
   LyricLine,
   LyricsResult,
@@ -1617,12 +1618,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           {/* Şarkı Başlığı & Sanatçı */}
           <Animated.View style={[styles.metaRow, { transform: [{ translateX: textMorphX }, { translateY: textMorphY }] }]}>
             <View style={{ flex: 1, marginRight: 14 }}>
-              <Text style={styles.trackTitle} numberOfLines={1}>
-                {displayTitle}
-              </Text>
-              <Text style={styles.trackArtist} numberOfLines={1}>
-                {displayArtist}
-              </Text>
+              <MarqueeText text={displayTitle || ''} style={styles.trackTitle} />
+              <MarqueeText text={displayArtist || ''} style={styles.trackArtist} />
             </View>
 
             {/* Şarkı Sözleri Modunda Sağ Tarafa Animasyonla Yerleşen Küçük Kapak */}
