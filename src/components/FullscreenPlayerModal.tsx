@@ -924,21 +924,19 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const globalPanResponder = useMemo(
     () => {
-      // eslint-disable-next-line react-hooks/refs
+
       return PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => {
-          if (isLyricsModeRef.current) return false;
           // Sadece net aşağı kaydırmalarda aktif ol (diğer gesture'larla çakışmamak için)
           return gesture.dy > 20 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.5;
         },
         onMoveShouldSetPanResponderCapture: (_, gesture) => {
-          if (isLyricsModeRef.current) return false;
           return gesture.dy > 20 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.5;
         },
         onPanResponderRelease: (_, gesture) => {
-          if (!isLyricsModeRef.current && gesture.dy > 40) {
+          if (gesture.dy > 40) {
             closeFullscreenPlayer();
           }
         },
