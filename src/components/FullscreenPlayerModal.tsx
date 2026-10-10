@@ -503,26 +503,68 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     );
   }, [nextTrack, metadataMap, artworkMap]);
 
-  // Metadata check (tek seferlik ref korumalı)
-  const updatedMetadataTrackIdRef = useRef<string | null>(null);
+  // Metadata senkronizasyonu.
+  //
+  // ÖNEMLİ: native `TrackMetadata.setMetadata` (TrackMetadata.kt) TÜM alanları
+  // koşulsuz atar — `artwork = BundleUtils.getUri(...)`, `title = getString(...)`.
+  // Yani `updateMetadataForTrack`'e gönderilmeyen her alan NULL'lanır. Yalnızca
+  // `{ title }` göndermek bildirim kapağını siliyordu (kullanıcının gördüğü
+  // "coverlar görünmüyor" hatası). Bu yüzden bilinen TÜM alanlar birlikte
+  // gönderilir.
+  //
+  // Kuyruktaki mevcut değerler yedek olarak kullanılır ki store'da karşılığı
+  // olmayan bir alan null'lanmasın.
+  const activeStoreMeta = activeTrack?.id ? metadataMap[activeTrack.id] : undefined;
+  const activeStoreArtwork = activeTrack?.id ? artworkMap[activeTrack.id] : undefined;
+
+  const lastWrittenMetadataRef = useRef<{
+    trackId: string;
+    title?: string;
+    artist?: string;
+    artwork?: string;
+  } | null>(null);
+
   useEffect(() => {
     if (!activeTrack) return;
 
     const trackId = activeTrack.id || activeTrack.url;
-    if (updatedMetadataTrackIdRef.current === trackId) {
+    const queueTitle = typeof activeTrack.title === 'string' ? activeTrack.title : undefined;
+    const queueArtist = typeof activeTrack.artist === 'string' ? activeTrack.artist : undefined;
+    const queueArtwork = typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined;
+
+    const resolvedTitle = activeStoreMeta?.title?.trim() || queueTitle;
+    const resolvedArtist =
+      activeStoreMeta?.artist &&
+      activeStoreMeta.artist !== 'Local Audio' &&
+      activeStoreMeta.artist !== 'Bilinmeyen Sanatçı'
+        ? activeStoreMeta.artist
+        : queueArtist;
+    const resolvedArtwork = activeStoreArtwork || activeStoreMeta?.artwork || queueArtwork;
+
+    const needsTitle = !!resolvedTitle && resolvedTitle !== queueTitle;
+    const needsArtist = !!resolvedArtist && resolvedArtist !== queueArtist;
+    const needsArtwork = !!resolvedArtwork && resolvedArtwork !== queueArtwork;
+    if (!needsTitle && !needsArtist && !needsArtwork) return;
+
+    // Aynı track için aynı değerler zaten yazıldıysa tekrar yazma. (Kapak sonradan
+    // geldiğinde değerler değişir, dolayısıyla yeniden yazılır ve bildirim
+    // kapağı güncellenir — eski "tek seferlik" koruma bunu engelliyordu.)
+    const previous = lastWrittenMetadataRef.current;
+    if (
+      previous &&
+      previous.trackId === trackId &&
+      previous.title === resolvedTitle &&
+      previous.artist === resolvedArtist &&
+      previous.artwork === resolvedArtwork
+    ) {
       return;
     }
-
-    const meta = activeTrack.id ? metadataMap[activeTrack.id] : undefined;
-    const needsArtwork = !activeTrack.artwork && (meta?.artwork || (activeTrack.id && artworkMap[activeTrack.id]));
-    const needsTitle = meta?.title && activeTrack.title !== meta.title;
-    const needsArtist = meta?.artist && meta.artist !== 'Local Audio' && activeTrack.artist !== meta.artist;
-
-    if (!needsArtwork && !needsTitle && !needsArtist) {
-      return;
-    }
-
-    updatedMetadataTrackIdRef.current = trackId;
+    lastWrittenMetadataRef.current = {
+      trackId,
+      title: resolvedTitle,
+      artist: resolvedArtist,
+      artwork: resolvedArtwork,
+    };
 
     // İndeks `refreshQueue`'dan ASENKRON geldiği için şarkı değişimi sırasında
     // bir an önceki parçayı gösterebilir. Doğrudan `activeIndex`'e yazmak, yeni
@@ -536,16 +578,16 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         if (targetIndex < 0) return;
 
         await TrackPlayer.updateMetadataForTrack(targetIndex, {
-          ...(needsArtwork ? { artwork: meta?.artwork || artworkMap[activeTrack.id] } : {}),
-          ...(needsTitle ? { title: meta!.title } : {}),
-          ...(needsArtist ? { artist: meta!.artist } : {}),
+          ...(resolvedTitle ? { title: resolvedTitle } : {}),
+          ...(resolvedArtist ? { artist: resolvedArtist } : {}),
+          ...(resolvedArtwork ? { artwork: resolvedArtwork } : {}),
         });
       } catch {
         // Sessizce yoksay: metadata zaten store'dan okunuyor.
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTrack?.id, activeTrack?.url, activeIndex]);
+  }, [activeTrack?.id, activeTrack?.url, activeIndex, activeStoreArtwork, activeStoreMeta]);
 
   const currentLyrics: LyricsResult | null = useMemo(() => {
     if (!activeTrack || !lyricsCache) return null;
