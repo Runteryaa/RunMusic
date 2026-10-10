@@ -19,6 +19,7 @@ import { getLastPlayback, getQueueSnapshot } from '../services/playbackStorage';
 import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
+import { initSleepTimerService } from '../store/useSleepTimerStore';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -161,6 +162,7 @@ export default function TabLayout() {
         try {
           const { initStatsDB } = require('../services/statsDatabase');
           await initStatsDB();
+          initSleepTimerService();
         } catch (dbErr) {
           console.warn('Stats DB init error:', dbErr);
         }
