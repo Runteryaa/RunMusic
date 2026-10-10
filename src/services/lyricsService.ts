@@ -576,10 +576,35 @@ export const LRCLIB_HEADERS: HeadersInit = {
   Accept: 'application/json',
 };
 
+/**
+ * LRCLIB serbest metin araması için sorguyu temizler.
+ *
+ * Tire ve benzeri ayırıcılar ("-", "–", "—", "‐", "−") LRCLIB'in metin
+ * aramasında sonuçları belirgin biçimde bozuyor; bunları boşluğa çevirip
+ * kelime eşleşmesine bırakıyoruz. Gerçek adında tire olan parçalar da
+ * ("Love-Hate" -> "Love Hate") sorunsuz eşleşmeye devam eder.
+ *
+ * YALNIZCA `q` parametresine uygulanır: `track_name` / `artist_name` birebir
+ * eşleşme için kullanıldığından onlara dokunulmaz.
+ */
+export function sanitizeLrclibQuery(value: string): string {
+  return (value || '')
+    .replace(/[\u2010-\u2015\u2212-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function buildLrclibSearchUrl(params: Record<string, string>): string {
   const query = Object.entries(params)
-    .filter(([_, v]) => Boolean(v && v.trim()))
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v.trim())}`)
+    .map(([k, v]) => {
+      const trimmed = (v ?? '').trim();
+      // Ayırıcı temizliğinden SONRA boş kalan sorgular tamamen düşürülür
+      // (ör. kullanıcı yalnızca "-" yazdıysa).
+      const value = k === 'q' ? sanitizeLrclibQuery(trimmed) : trimmed;
+      return [k, value] as const;
+    })
+    .filter(([, value]) => Boolean(value))
+    .map(([k, value]) => `${encodeURIComponent(k)}=${encodeURIComponent(value)}`)
     .join('&');
   return `https://lrclib.net/api/search?${query}`;
 }

@@ -1790,7 +1790,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <View style={styles.searchModalInputRow}>
                 <TextInput
                   style={styles.searchModalInput}
-                  placeholder="Sanatçı - Şarkı Adı..."
+                  placeholder="Sanatçı Şarkı Adı..."
                   placeholderTextColor="#71717a"
                   value={manualQuery}
                   onChangeText={setManualQuery}
