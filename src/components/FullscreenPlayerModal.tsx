@@ -77,6 +77,7 @@ export function FullscreenPlayerModal() {
   const [isQueueModalOpen, setIsQueueModalOpen] = useState(false);
   const [queue, setQueue] = useState<Track[]>([]);
   const [activeIndex, setActiveIndex] = useState<number>(0);
+  const [shuffleNextIndex, setShuffleNextIndex] = useState<number | null>(null);
 
   // Manual Lyrics Search state
   const [isLoadingLyrics, setIsLoadingLyrics] = useState(false);
@@ -124,6 +125,18 @@ export function FullscreenPlayerModal() {
     }
   }, [activeTrack]);
 
+  useEffect(() => {
+    if (isShuffle && queue.length > 1) {
+      let nextIndex = getRandomIndex(queue.length);
+      if (nextIndex === activeIndex) {
+        nextIndex = (nextIndex + 1) % queue.length;
+      }
+      setShuffleNextIndex(nextIndex);
+    } else {
+      setShuffleNextIndex(null);
+    }
+  }, [activeIndex, queue.length, isShuffle]);
+
   const activeMeta = activeTrack?.id ? metadataMap[activeTrack.id] : undefined;
   const activeKeywords = getSearchKeywords(activeTrack?.title || '', activeTrack?.artist || '');
   const rawArtist =
@@ -159,10 +172,11 @@ export function FullscreenPlayerModal() {
 
   const nextTrack = useMemo(() => {
     if (queue.length <= 1) return null;
+    if (isShuffle && shuffleNextIndex !== null) return queue[shuffleNextIndex];
     if (activeIndex < queue.length - 1) return queue[activeIndex + 1];
     if (repeatMode === RepeatMode.Queue) return queue[0];
     return null;
-  }, [queue, activeIndex, repeatMode]);
+  }, [queue, activeIndex, repeatMode, isShuffle, shuffleNextIndex]);
 
   const prevArtworkUri = useMemo(() => {
     if (!prevTrack) return undefined;
@@ -317,7 +331,7 @@ export function FullscreenPlayerModal() {
       const artistLower = searchArtist.toLowerCase();
       let initialQuery = displayTitle;
       if (searchArtist && !titleLower.includes(artistLower)) {
-        initialQuery = `${searchArtist} - ${displayTitle}`;
+        initialQuery = `${searchArtist} ${displayTitle}`;
       }
       setManualQuery(initialQuery);
 
@@ -565,25 +579,17 @@ export function FullscreenPlayerModal() {
 
   const skipNext = useCallback(async () => {
     try {
-      if (isShuffle) {
-        const q = await TrackPlayer.getQueue();
-        if (q.length > 1) {
-          const currentIndex = await TrackPlayer.getActiveTrackIndex();
-          let nextIndex = getRandomIndex(q.length);
-          if (nextIndex === currentIndex) {
-            nextIndex = (nextIndex + 1) % q.length;
-          }
-          await TrackPlayer.skip(nextIndex);
-          await TrackPlayer.play();
-          return;
-        }
+      if (isShuffle && shuffleNextIndex !== null) {
+        await TrackPlayer.skip(shuffleNextIndex);
+        await TrackPlayer.play();
+        return;
       }
       await TrackPlayer.skipToNext();
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Skip next failed', e);
     }
-  }, [isShuffle]);
+  }, [isShuffle, shuffleNextIndex]);
 
   const skipPrev = useCallback(async () => {
     try {
@@ -596,6 +602,15 @@ export function FullscreenPlayerModal() {
       }
     } catch (e) {
       console.warn('Skip prev failed', e);
+    }
+  }, []);
+
+  const gestureSkipPrev = useCallback(async () => {
+    try {
+      await TrackPlayer.skipToPrevious();
+      await TrackPlayer.play();
+    } catch (e) {
+      console.warn('Gesture skip prev failed', e);
     }
   }, []);
 
@@ -687,7 +702,7 @@ export function FullscreenPlayerModal() {
               friction: 9,
               useNativeDriver: true,
             }).start(() => {
-              skipPrev();
+              gestureSkipPrev();
               panX.setValue(0);
               setIsSkipping(false);
             });
@@ -713,7 +728,7 @@ export function FullscreenPlayerModal() {
       toggleLyricsMode,
       closeFullscreenPlayer,
       skipNext,
-      skipPrev,
+      gestureSkipPrev,
     ]
   );
 

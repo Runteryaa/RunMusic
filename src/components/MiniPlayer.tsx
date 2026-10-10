@@ -45,6 +45,7 @@ export function MiniPlayer() {
   // Local Queue State for Next/Prev Previews
   const [queue, setQueue] = useState<Track[]>([]);
   const [activeIndex, setActiveIndex] = useState<number>(0);
+  const [shuffleNextIndex, setShuffleNextIndex] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchQueue = async () => {
@@ -62,6 +63,18 @@ export function MiniPlayer() {
     }
   }, [activeTrack]);
 
+  useEffect(() => {
+    if (isShuffle && queue.length > 1) {
+      let nextIndex = getRandomIndex(queue.length);
+      if (nextIndex === activeIndex) {
+        nextIndex = (nextIndex + 1) % queue.length;
+      }
+      setShuffleNextIndex(nextIndex);
+    } else {
+      setShuffleNextIndex(null);
+    }
+  }, [activeIndex, queue.length, isShuffle]);
+
   const prevTrack = useMemo(() => {
     if (queue.length <= 1) return null;
     if (activeIndex > 0) return queue[activeIndex - 1];
@@ -70,9 +83,10 @@ export function MiniPlayer() {
 
   const nextTrack = useMemo(() => {
     if (queue.length <= 1) return null;
+    if (isShuffle && shuffleNextIndex !== null) return queue[shuffleNextIndex];
     if (activeIndex < queue.length - 1) return queue[activeIndex + 1];
     return queue[0];
-  }, [queue, activeIndex]);
+  }, [queue, activeIndex, isShuffle, shuffleNextIndex]);
 
   // Track Meta Helper
   const getTrackMeta = useCallback((track: Track | null) => {
@@ -109,37 +123,26 @@ export function MiniPlayer() {
 
   const skipNext = useCallback(async () => {
     try {
-      if (isShuffle) {
-        const q = await TrackPlayer.getQueue();
-        if (q.length > 1) {
-          const currentIndex = await TrackPlayer.getActiveTrackIndex();
-          let nextIndex = getRandomIndex(q.length);
-          if (nextIndex === currentIndex) {
-            nextIndex = (nextIndex + 1) % q.length;
-          }
-          await TrackPlayer.skip(nextIndex);
-          await TrackPlayer.play();
-          return;
-        }
+      if (isShuffle && shuffleNextIndex !== null) {
+        await TrackPlayer.skip(shuffleNextIndex);
+        await TrackPlayer.play();
+        return;
       }
       await TrackPlayer.skipToNext();
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Skip next failed', e);
     }
-  }, [isShuffle]);
+  }, [isShuffle, shuffleNextIndex]);
 
-  const skipPrev = useCallback(async () => {
+
+
+  const gestureSkipPrev = useCallback(async () => {
     try {
-      const { position } = await TrackPlayer.getProgress();
-      if (position > 3) {
-        await TrackPlayer.seekTo(0);
-      } else {
-        await TrackPlayer.skipToPrevious();
-        await TrackPlayer.play();
-      }
+      await TrackPlayer.skipToPrevious();
+      await TrackPlayer.play();
     } catch (e) {
-      console.warn('Skip prev failed', e);
+      console.warn('Gesture skip prev failed', e);
     }
   }, []);
 
@@ -237,7 +240,7 @@ export function MiniPlayer() {
               friction: 8,
               useNativeDriver: true,
             }).start(() => {
-              skipPrev();
+              gestureSkipPrev();
               setTimeout(() => {
                 if (isMiniSkippingRef.current) {
                   miniPanX.setValue(0);
@@ -257,7 +260,7 @@ export function MiniPlayer() {
         },
       });
     },
-    [openFullscreenPlayer, skipNext, skipPrev, miniPanX]
+    [openFullscreenPlayer, skipNext, gestureSkipPrev, miniPanX]
   );
 
   if (!activeTrack) {
