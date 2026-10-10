@@ -413,6 +413,37 @@ section('12) Shuffle aç/kapat sıralaması (computeUpcomingOrder)');
   check('boş bağlam güvenli', empty.upcoming.length === 0);
 }
 
+section('13) "Karışık çal" — rastgele başlangıç her zaman geçerli');
+
+{
+  // Kütüphane ekranındaki shuffle butonu rastgele bir parçadan başlar ve
+  // `buildPlayOrder(..., shuffle: true)` ile kuyruğu kurar. Hangi parça
+  // seçilirse seçilsin: o parça ilk sırada olmalı ve geri kalanı tam bir
+  // permütasyon olmalı (kayıp/tekrar yok).
+  const lib = ['t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9'];
+  const expected = [...lib].sort().join(',');
+
+  const allStartsValid = lib.every((start) => {
+    const order = buildPlayOrder(lib, start, true);
+    return order[0] === start && [...order].sort().join(',') === expected;
+  });
+  check('her olası başlangıç: seçilen ilk sırada + tam permütasyon', allStartsValid);
+
+  // Tek parçalı kütüphane çökme yaratmamalı.
+  const single = buildPlayOrder(['only'], 'only', true);
+  check('tek parçalı kütüphane güvenli', single.length === 1 && single[0] === 'only');
+
+  // Boş kütüphane güvenli (buton zaten devre dışı ama yine de).
+  check('boş kütüphane güvenli', buildPlayOrder([], '', true).length === 0);
+
+  // Başlangıç kimliği listede yoksa hiçbir parça kaybolmamalı.
+  const unknownStart = buildPlayOrder(lib, 'yok', true);
+  check(
+    'listede olmayan başlangıç parça kaybettirmez',
+    [...unknownStart].sort().join(',') === expected
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 section('Sonuç');

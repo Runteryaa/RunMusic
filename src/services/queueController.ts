@@ -100,7 +100,9 @@ export async function startPlaybackFromLibrary(params: {
 
   // TEK `set`: zustand persist her set çağrısında TÜM store'u serileştirip
   // diske yazdığı için iki ayrı action çağırmak gereksiz iki yazım demekti.
-  useStore.setState({ contextIds, upNextIds: [] });
+  // `isShuffle` da kurulan sırayla eşitlenir; aksi halde kuyruk karışık olduğu
+  // halde player'daki shuffle göstergesi kapalı görünürdü.
+  useStore.setState({ contextIds, upNextIds: [], isShuffle: shuffle });
   await persistQueue();
 }
 

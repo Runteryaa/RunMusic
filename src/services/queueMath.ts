@@ -105,7 +105,14 @@ export function deriveQueueSections<T extends QueueTrackLike>(
  * (her "sonraki"de yeniden rastgele seçim yapılmaz).
  */
 export function buildPlayOrder(contextIds: string[], startId: string, shuffle: boolean): string[] {
+  // Başlangıç parçası bağlamda yoksa (ya da bağlam boşsa) UYDURMA GİRDİ
+  // eklemeyiz; yalnızca bağlamın kendisini döndürürüz. Aksi halde kuyruğa
+  // var olmayan bir kimlik (ör. boş string) sızıyordu.
+  if (!startId || !contextIds.includes(startId)) {
+    return shuffle ? shuffleArray(contextIds) : contextIds;
+  }
   if (!shuffle) return contextIds;
+
   const rest = contextIds.filter((id) => id !== startId);
   return [startId, ...shuffleArray(rest)];
 }

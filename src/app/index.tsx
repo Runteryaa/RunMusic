@@ -408,6 +408,30 @@ export default function LibraryScreen() {
     }
   };
 
+  /**
+   * "Karışık çal": rastgele bir şarkıdan başlayıp tüm kütüphaneyi karıştırarak
+   * çalar. `startPlaybackFromLibrary(shuffle: true)` seçilen parçayı ilk sıraya
+   * alır ve kalanı bir kez karıştırır.
+   */
+  const handleShuffleAll = async () => {
+    if (fullSortedList.length === 0) return;
+    try {
+      const startIndex = Math.floor(Math.random() * fullSortedList.length);
+      const startTrack = buildQueueTrack(fullSortedList[startIndex]);
+      const tracks = fullSortedList.map((asset) => buildQueueTrack(asset));
+
+      await startPlaybackFromLibrary({
+        tracks,
+        startId: startTrack.id,
+        shuffle: true,
+      });
+      openFullscreenPlayer();
+      showToast('Karışık çalma başladı');
+    } catch (e) {
+      console.warn('Shuffle all failed', e);
+    }
+  };
+
   const closeSearch = () => {
     setSearchQuery('');
     setIsSearchOpen(false);
@@ -544,6 +568,15 @@ export default function LibraryScreen() {
               onPress={() => setIsSortModalOpen(true)}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Ionicons name="swap-vertical" size={20} color="#ffffff" />
+            </TouchableOpacity>
+
+            {/* Karışık çal: rastgele bir şarkıdan başlayan karışık kuyruk */}
+            <TouchableOpacity
+              style={[styles.headerActionBtn, { backgroundColor: theme.primary, borderColor: theme.primary }]}
+              onPress={handleShuffleAll}
+              disabled={library.length === 0}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="shuffle" size={20} color="#ffffff" />
             </TouchableOpacity>
           </View>
         </View>
