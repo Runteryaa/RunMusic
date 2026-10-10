@@ -44,13 +44,19 @@ import {
   getSearchKeywords,
 } from '../services/lyricsService';
 import { saveLastPlayback } from '../services/playbackStorage';
+import {
+  getQueueSections,
+  markUpNextConsumed,
+  moveUpNext,
+  removeQueueItem,
+  setShuffle,
+  type QueueSections,
+} from '../services/queueController';
+import { QueueUpNextList, type UpNextItem } from './QueueUpNextList';
+import { Swipeable } from 'react-native-gesture-handler';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
-
-function getRandomIndex(length: number): number {
-  return Math.floor(Math.random() * length);
-}
 
 export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
   const insets = useSafeAreaInsets();
@@ -137,7 +143,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, [expandAnim]);
 
   const isShuffle = useStore((s) => s.isShuffle);
-  const setIsShuffle = useStore((s) => s.setIsShuffle);
   const repeatMode = useStore((s) => s.repeatMode);
   const setRepeatMode = useStore((s) => s.setRepeatMode);
   const artworkMap = useStore((s) => s.artworkMap);
@@ -157,7 +162,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
   const [queue, setQueue] = useState<Track[]>([]);
   const [activeIndex, setActiveIndex] = useState<number>(0);
-  const [shuffleNextIndex, setShuffleNextIndex] = useState<number | null>(null);
+  /** Kuyruk bölümleri (şu an / sırada / kütüphaneden) — modal açıkken hesaplanır. */
+  const [queueSections, setQueueSections] = useState<QueueSections<Track> | null>(null);
 
   const createModalPanResponder = useCallback((closeFn: () => void) => {
     return PanResponder.create({
@@ -208,7 +214,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  const refreshQueue = async () => {
+  const refreshQueue = useCallback(async () => {
     try {
       const q = await TrackPlayer.getQueue();
       const idx = await TrackPlayer.getActiveTrackIndex();
@@ -217,25 +223,89 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     } catch (e) {
       console.warn('Failed to load queue', e);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (activeTrack) {
       refreshQueue();
     }
+  }, [activeTrack, refreshQueue]);
+
+  /** Kuyruk bölümlerini native kuyruktan yeniden türetir. */
+  const refreshQueueSections = useCallback(async () => {
+    try {
+      setQueueSections(await getQueueSections());
+    } catch (e) {
+      console.warn('Failed to derive queue sections', e);
+    }
+  }, []);
+
+  // Modal açıldığında ve aktif parça değiştiğinde bölümleri tazele.
+  useEffect(() => {
+    if (isQueueModalOpen) {
+      refreshQueueSections();
+    }
+  }, [isQueueModalOpen, activeTrack?.id, refreshQueueSections]);
+
+  // Çalınan parça manuel kuyruktan geldiyse listeden düşür.
+  useEffect(() => {
+    markUpNextConsumed(activeTrack);
   }, [activeTrack]);
 
-  useEffect(() => {
-    if (isShuffle && queue.length > 1) {
-      let nextIndex = getRandomIndex(queue.length);
-      if (nextIndex === activeIndex) {
-        nextIndex = (nextIndex + 1) % queue.length;
+  /** Manuel "Sırada" listesi (görsel model). */
+  const upNextItems: UpNextItem[] = useMemo(() => {
+    if (!queueSections) return [];
+    return queueSections.upNext.map((entry, i) => ({
+      key: `${entry.track.id ?? entry.track.url}-${i}`,
+      title: entry.track.title ?? 'Bilinmeyen Parça',
+      artist: entry.track.artist ?? undefined,
+      artwork: typeof entry.track.artwork === 'string' ? entry.track.artwork : undefined,
+      trackId: entry.track.id ?? null,
+      trackUri: entry.track.url ?? null,
+    }));
+  }, [queueSections]);
+
+  const handleMoveUpNext = useCallback(
+    async (from: number, to: number) => {
+      await moveUpNext(from, to);
+      await refreshQueueSections();
+      await refreshQueue();
+    },
+    [refreshQueueSections, refreshQueue]
+  );
+
+  const handleRemoveUpNext = useCallback(
+    async (sectionIndex: number) => {
+      const target = queueSections?.upNext[sectionIndex];
+      if (!target) return;
+      await removeQueueItem(target.index);
+      await refreshQueueSections();
+      await refreshQueue();
+    },
+    [queueSections, refreshQueueSections, refreshQueue]
+  );
+
+  const handleRemoveFromContext = useCallback(
+    async (queueIndex: number) => {
+      await removeQueueItem(queueIndex);
+      await refreshQueueSections();
+      await refreshQueue();
+    },
+    [refreshQueueSections, refreshQueue]
+  );
+
+  const handleQueueItemPress = useCallback(
+    async (queueIndex: number) => {
+      try {
+        await TrackPlayer.skip(queueIndex);
+        await TrackPlayer.play();
+        setIsQueueModalOpen(false);
+      } catch (e) {
+        console.warn('Queue skip failed', e);
       }
-      setShuffleNextIndex(nextIndex);
-    } else {
-      setShuffleNextIndex(null);
-    }
-  }, [activeIndex, queue.length, isShuffle]);
+    },
+    []
+  );
 
   const activeMeta = activeTrack?.id ? metadataMap[activeTrack.id] : undefined;
   const activeKeywords = getSearchKeywords(activeTrack?.title || '', activeTrack?.artist || '');
@@ -272,11 +342,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const nextTrack = useMemo(() => {
     if (queue.length <= 1) return null;
-    if (isShuffle && shuffleNextIndex !== null) return queue[shuffleNextIndex];
     if (activeIndex < queue.length - 1) return queue[activeIndex + 1];
     if (repeatMode === RepeatMode.Queue) return queue[0];
     return null;
-  }, [queue, activeIndex, repeatMode, isShuffle, shuffleNextIndex]);
+  }, [queue, activeIndex, repeatMode]);
 
   const prevArtworkUri = useMemo(() => {
     if (!prevTrack) return undefined;
@@ -694,41 +763,31 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     }).start();
   }, [playBtnScale]);
 
+  // Sıra (shuffle/repeat dahil) doğrudan kuyruğa gömülü olduğu için native
+  // next/prev her zaman doğru parçayı çalar; ekstra indeks hesabı gerekmez.
   const skipNext = useCallback(async () => {
     try {
-      if (isShuffle && shuffleNextIndex !== null) {
-        await TrackPlayer.skip(shuffleNextIndex);
-        await TrackPlayer.play();
-        return;
-      }
-      if (activeIndex === queue.length - 1 && queue.length > 0) {
-        await TrackPlayer.skip(0);
-      } else {
-        await TrackPlayer.skipToNext();
-      }
+      await TrackPlayer.skipToNext();
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Skip next failed', e);
     }
-  }, [isShuffle, shuffleNextIndex, activeIndex, queue.length]);
+  }, []);
 
   const skipPrev = useCallback(async () => {
     try {
       const { position } = await TrackPlayer.getProgress();
       if (position > 3) {
+        // Spotify davranışı: 3 sn'den sonra "geri" başa sarar.
         await TrackPlayer.seekTo(0);
       } else {
-        if (activeIndex === 0 && queue.length > 0) {
-          await TrackPlayer.skip(queue.length - 1);
-        } else {
-          await TrackPlayer.skipToPrevious();
-        }
+        await TrackPlayer.skipToPrevious();
         await TrackPlayer.play();
       }
     } catch (e) {
       console.warn('Skip prev failed', e);
     }
-  }, [activeIndex, queue.length]);
+  }, []);
 
   const handleHideTrack = useCallback(() => {
     if (activeTrack?.id) {
@@ -752,16 +811,12 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const gestureSkipPrev = useCallback(async () => {
     try {
-      if (activeIndex === 0 && queue.length > 0) {
-        await TrackPlayer.skip(queue.length - 1);
-      } else {
-        await TrackPlayer.skipToPrevious();
-      }
+      await TrackPlayer.skipToPrevious();
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Gesture skip prev failed', e);
     }
-  }, [activeIndex, queue.length]);
+  }, []);
 
   const handleSeekBackward = useCallback(async () => {
     try {
@@ -783,18 +838,21 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const togglePlaybackMode = useCallback(async () => {
     if (isShuffle) {
-      setIsShuffle(false);
+      // Shuffle -> Tümünü Tekrarla (sıra orijinal kütüphane düzenine döner)
+      await setShuffle(false);
       setRepeatMode(RepeatMode.Queue);
       await TrackPlayer.setRepeatMode(RepeatMode.Queue);
     } else if (repeatMode === RepeatMode.Queue) {
+      // Tümünü Tekrarla -> Tek Şarkı
       setRepeatMode(RepeatMode.Track);
       await TrackPlayer.setRepeatMode(RepeatMode.Track);
     } else {
+      // Kapalı / Tek Şarkı -> Shuffle (sıra bir kez karıştırılır ve sabit kalır)
       setRepeatMode(RepeatMode.Off);
       await TrackPlayer.setRepeatMode(RepeatMode.Off);
-      setIsShuffle(true);
+      await setShuffle(true);
     }
-  }, [isShuffle, repeatMode, setRepeatMode, setIsShuffle]);
+  }, [isShuffle, repeatMode, setRepeatMode]);
 
   // Gestures: Middle container (Interactive Carousel Artwork / Lyrics)
   const artworkPanResponder = useMemo(
@@ -1688,7 +1746,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <View style={styles.queueHeader}>
                 <View style={styles.queueHeaderHandle} />
                 <View style={styles.queueHeaderRow}>
-                  <Text style={styles.queueTitle}>Çalma Sırası ({queue.length})</Text>
+                  <Text style={styles.queueTitle}>Çalma Sırası</Text>
                   <TouchableOpacity
                     style={styles.queueCloseBtn}
                     onPress={() => setIsQueueModalOpen(false)}>
@@ -1696,49 +1754,101 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   </TouchableOpacity>
                 </View>
               </View>
-              <FlatList
-                data={queue}
-                keyExtractor={(item, idx) => `${item.id || item.url}-${idx}`}
-                renderItem={({ item, index }) => {
-                  const isCurrent = index === activeIndex;
-                  return (
-                    <TouchableOpacity
-                      style={[
-                        styles.queueItem,
-                        isCurrent && [styles.queueItemActive, { backgroundColor: theme.surface }],
-                      ]}
-                      onPress={async () => {
-                        await TrackPlayer.skip(index);
-                        await TrackPlayer.play();
-                        setIsQueueModalOpen(false);
-                      }}>
-                      <Text
-                        style={[
-                          styles.queueIndex,
-                          isCurrent && [styles.queueIndexActive, { color: theme.primary }],
-                        ]}>
-                        {index + 1}
-                      </Text>
-                      <View style={{ flex: 1 }}>
+              <ScrollView
+                style={styles.queueScroll}
+                contentContainerStyle={styles.queueScrollContent}
+                showsVerticalScrollIndicator={false}>
+                {/* 1. ŞU AN ÇALIYOR */}
+                {queueSections?.current ? (
+                  <>
+                    <Text style={styles.queueSectionTitle}>ŞU AN ÇALIYOR</Text>
+                    <View style={[styles.queueItem, { backgroundColor: theme.surface }]}>
+                      <TrackArtwork
+                        uri={
+                          typeof queueSections.current.track.artwork === 'string'
+                            ? queueSections.current.track.artwork
+                            : undefined
+                        }
+                        trackId={queueSections.current.track.id ?? null}
+                        trackUri={queueSections.current.track.url ?? null}
+                        size={40}
+                        borderRadius={6}
+                        iconSize={18}
+                      />
+                      <View style={{ flex: 1, marginLeft: 12 }}>
                         <Text
-                          style={[
-                            styles.queueTrackTitle,
-                            isCurrent && [styles.queueTrackTitleActive, { color: theme.primary }],
-                          ]}
+                          style={[styles.queueTrackTitle, { color: theme.primary }]}
                           numberOfLines={1}>
-                          {item.title}
+                          {queueSections.current.track.title}
                         </Text>
                         <Text style={styles.queueTrackArtist} numberOfLines={1}>
-                          {item.artist}
+                          {queueSections.current.track.artist}
                         </Text>
                       </View>
-                      {isCurrent ? (
-                        <Ionicons name="volume-high" size={20} color={theme.primary} />
-                      ) : null}
-                    </TouchableOpacity>
-                  );
-                }}
-              />
+                      <Ionicons name="volume-high" size={20} color={theme.primary} />
+                    </View>
+                  </>
+                ) : null}
+
+                {/* 2. SIRADA — kullanıcının öne aldığı parçalar (sürükleyerek sırala) */}
+                {upNextItems.length > 0 ? (
+                  <>
+                    <Text style={styles.queueSectionTitle}>
+                      SIRADA · {upNextItems.length}
+                    </Text>
+                    <QueueUpNextList
+                      items={upNextItems}
+                      accentColor={theme.primary}
+                      onMove={handleMoveUpNext}
+                      onRemove={handleRemoveUpNext}
+                    />
+                  </>
+                ) : null}
+
+                {/* 3. KÜTÜPHANEDEN SIRADAKİ — bağlam (sola kaydırarak kaldır) */}
+                {queueSections && queueSections.context.length > 0 ? (
+                  <>
+                    <Text style={styles.queueSectionTitle}>
+                      {isShuffle ? 'KÜTÜPHANEDEN · KARIŞIK' : 'KÜTÜPHANEDEN SIRADAKİ'} ·{' '}
+                      {queueSections.context.length}
+                    </Text>
+                    {queueSections.context.map((entry) => (
+                      <Swipeable
+                        key={`ctx-${entry.index}-${entry.track.id ?? entry.track.url}`}
+                        overshootRight={false}
+                        renderRightActions={() => (
+                          <TouchableOpacity
+                            style={[styles.queueRemoveAction, { backgroundColor: '#ef4444' }]}
+                            activeOpacity={0.8}
+                            onPress={() => handleRemoveFromContext(entry.index)}>
+                            <Ionicons name="trash-outline" size={20} color="#ffffff" />
+                          </TouchableOpacity>
+                        )}>
+                        <TouchableOpacity
+                          style={styles.queueItem}
+                          activeOpacity={0.7}
+                          onPress={() => handleQueueItemPress(entry.index)}>
+                          <Text style={styles.queueIndex}>{entry.index + 1}</Text>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.queueTrackTitle} numberOfLines={1}>
+                              {entry.track.title}
+                            </Text>
+                            <Text style={styles.queueTrackArtist} numberOfLines={1}>
+                              {entry.track.artist}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      </Swipeable>
+                    ))}
+                  </>
+                ) : null}
+
+                {(!queueSections || (!queueSections.current && upNextItems.length === 0)) && (
+                  <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+                    <Text style={{ color: '#71717a', fontSize: 14 }}>Kuyruk boş.</Text>
+                  </View>
+                )}
+              </ScrollView>
             </View>
           </View>
         </Modal>
@@ -2270,6 +2380,27 @@ const styles = StyleSheet.create({
   },
   queueCloseBtn: {
     padding: 4,
+  },
+  queueScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
+  },
+  queueScrollContent: {
+    paddingBottom: 24,
+  },
+  queueSectionTitle: {
+    color: '#71717a',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  queueRemoveAction: {
+    width: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   queueItem: {
     flexDirection: 'row',

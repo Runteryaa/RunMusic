@@ -24,6 +24,12 @@ import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { getBatchMetadataAsync, getArtworkAsync } from '../../modules/audio-artwork/src';
 import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
+import {
+  addToQueue,
+  playNext,
+  startPlaybackFromLibrary,
+  type QueueTrack,
+} from '../services/queueController';
 
 type SortOption =
   | 'name_asc'
@@ -60,6 +66,7 @@ export default function LibraryScreen() {
   const artworkMap = useStore((s) => s.artworkMap);
   const metadataMap = useStore((s) => s.metadataMap);
   const setBatchTrackMetadata = useStore((s) => s.setBatchTrackMetadata);
+  const isShuffle = useStore((s) => s.isShuffle);
 
   const openFullscreenPlayer = usePlayerUIStore((s) => s.openFullscreenPlayer);
   const activeTrack = useActiveTrack();
@@ -110,6 +117,21 @@ export default function LibraryScreen() {
       return { title, artist };
     },
     [metadataMap]
+  );
+
+  /** Bir medya öğesini kuyruk parçasına dönüştürür (kuyruk işlemleri için ortak). */
+  const buildQueueTrack = useCallback(
+    (asset: MediaLibrary.Asset): QueueTrack => {
+      const info = getTrackDisplayInfo(asset);
+      return {
+        id: asset.id,
+        url: asset.uri,
+        title: info.title,
+        artist: info.artist,
+        artwork: metadataMap[asset.id]?.artwork || artworkMap[asset.id] || undefined,
+      };
+    },
+    [getTrackDisplayInfo, metadataMap, artworkMap]
   );
 
   const handleHideTrack = async (asset: MediaLibrary.Asset) => {
@@ -342,25 +364,15 @@ export default function LibraryScreen() {
         return;
       }
 
-      // 3. Kuyruk henüz oluşturulmamışsa veya boşsa:
-      const targetIndex = fullSortedList.findIndex((item) => item.id === selectedAsset.id);
-      const tracks = fullSortedList.map((asset) => {
-        const info = getTrackDisplayInfo(asset);
-        return {
-          id: asset.id,
-          url: asset.uri,
-          title: info.title,
-          artist: info.artist,
-          artwork: metadataMap[asset.id]?.artwork || artworkMap[asset.id] || undefined,
-        };
-      });
+      // 3. Kuyruk yoksa: tüm kütüphaneyi bağlam olarak kur ve seçilen parçayı çal.
+      //    Shuffle açıkken sıra bir kez karıştırılır ve seçilen parça başa alınır.
+      const tracks = fullSortedList.map((asset) => buildQueueTrack(asset));
 
-      // Kuyruğu ayarla ve hedef şarkıya atla
-      await TrackPlayer.setQueue(tracks);
-      if (targetIndex >= 0) {
-        await TrackPlayer.skip(targetIndex);
-      }
-      await TrackPlayer.play();
+      await startPlaybackFromLibrary({
+        tracks,
+        startId: selectedAsset.id,
+        shuffle: isShuffle,
+      });
       openFullscreenPlayer();
 
       if (!targetArtwork) {
@@ -378,17 +390,21 @@ export default function LibraryScreen() {
 
   const handleAddToQueue = async (asset: MediaLibrary.Asset) => {
     try {
-      const info = getTrackDisplayInfo(asset);
-      await TrackPlayer.add({
-        id: asset.id,
-        url: asset.uri,
-        title: info.title,
-        artist: info.artist,
-        artwork: metadataMap[asset.id]?.artwork || artworkMap[asset.id] || undefined,
-      });
-      showToast(`"${info.title}" sıraya eklendi`);
+      const track = buildQueueTrack(asset);
+      await addToQueue(track);
+      showToast(`"${track.title}" sıraya eklendi`);
     } catch (e) {
       console.warn('Failed to add track to queue', e);
+    }
+  };
+
+  const handlePlayNext = async (asset: MediaLibrary.Asset) => {
+    try {
+      const track = buildQueueTrack(asset);
+      await playNext(track);
+      showToast(`"${track.title}" sıradaki olarak eklendi`);
+    } catch (e) {
+      console.warn('Failed to play next', e);
     }
   };
 
@@ -656,6 +672,16 @@ export default function LibraryScreen() {
                     {getTrackDisplayInfo(selectedTrackForMenu).artist || 'Bilinmeyen Sanatçı'}
                   </Text>
                 </View>
+
+                <TouchableOpacity
+                  style={styles.actionMenuItem}
+                  onPress={() => {
+                    handlePlayNext(selectedTrackForMenu);
+                    setSelectedTrackForMenu(null);
+                  }}>
+                  <Ionicons name="play-skip-forward" size={18} color={theme.primary} style={{ marginRight: 12 }} />
+                  <Text style={styles.actionMenuText}>Sıradaki Olarak Çal</Text>
+                </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.actionMenuItem}

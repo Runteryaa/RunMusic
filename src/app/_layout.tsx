@@ -4,13 +4,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import TrackPlayer, { Capability, useActiveTrack } from 'react-native-track-player';
+import TrackPlayer, { Capability, Track, useActiveTrack } from 'react-native-track-player';
 
 import playbackService from '../service';
 
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
-import { getLastPlayback } from '../services/playbackStorage';
+import { getLastPlayback, getQueueSnapshot } from '../services/playbackStorage';
 import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 
@@ -177,20 +177,45 @@ export default function TabLayout() {
           console.warn('TrackPlayer options notice:', optionsErr);
         }
 
-        // Uygulama açılışında en son dinlenen şarkıyı bağımsız depolamadan yükle (hızlı ve hafif)
+        // Açılışta tam kuyruğu, çalma konumunu ve kuyruk modelini geri yükle.
+        // (Apple Music / Spotify davranışı: uygulama kapansa da sıra korunur.)
         try {
-          const lastPlayback = await Promise.race([
-            getLastPlayback(),
-            new Promise<null>((res) => setTimeout(() => res(null), 1000)),
+          const [snapshot, lastPlayback] = await Promise.all([
+            Promise.race([
+              getQueueSnapshot(),
+              new Promise<null>((res) => setTimeout(() => res(null), 1500)),
+            ]),
+            Promise.race([
+              getLastPlayback(),
+              new Promise<null>((res) => setTimeout(() => res(null), 1000)),
+            ]),
           ]);
-          if (lastPlayback && lastPlayback.track) {
+
+          if (snapshot && snapshot.queue.length > 0) {
+            await TrackPlayer.setQueue(snapshot.queue as Track[]);
+            if (snapshot.activeIndex > 0) {
+              await TrackPlayer.skip(snapshot.activeIndex);
+            }
+            // Konum ayrı ve daha sık yazıldığı için önce o tercih edilir.
+            const resumeAt = lastPlayback?.position ?? snapshot.position;
+            if (resumeAt && resumeAt > 0) {
+              await TrackPlayer.seekTo(resumeAt);
+            }
+            const store = useStore.getState();
+            store.setUpNextIds(snapshot.upNextIds ?? []);
+            store.setContextIds(snapshot.contextIds ?? []);
+            if (snapshot.isShuffle) {
+              store.setIsShuffle(true);
+            }
+          } else if (lastPlayback && lastPlayback.track) {
+            // Tam kuyruk saklanmamışsa (ör. çok büyük kütüphane) eski davranış.
             await TrackPlayer.add([lastPlayback.track]);
             if (lastPlayback.position && lastPlayback.position > 0) {
               await TrackPlayer.seekTo(lastPlayback.position);
             }
           }
         } catch (restoreErr) {
-          console.warn('Failed to restore last playback state', restoreErr);
+          console.warn('Failed to restore playback state', restoreErr);
         }
       } catch (e) {
         console.warn('Startup setup error', e);

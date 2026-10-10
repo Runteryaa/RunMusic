@@ -55,6 +55,23 @@ interface AppState {
   }) => LyricsResult | null;
   clearLyricsCache: () => void;
 
+  /**
+   * Manuel "Sırada" (Up Next) kuyruğu: parça kimlikleri, çalınma sırasına göre.
+   *
+   * Bu öğeler kütüphane bağlamından AYRI tutulur; bağlam devam etmeden önce
+   * bunlar çalınır (Apple Music / Spotify "Next in queue" davranışı).
+   */
+  upNextIds: string[];
+  /**
+   * Kütüphane bağlamının KARIŞTIRILMAMIŞ kimlik sırası. Shuffle kapatıldığında
+   * orijinal sıraya dönebilmek için saklanır.
+   */
+  contextIds: string[];
+
+  setUpNextIds: (ids: string[]) => void;
+  setContextIds: (ids: string[]) => void;
+  clearUpNext: () => void;
+
   library: MediaLibrary.Asset[];
   setLibrary: (assets: MediaLibrary.Asset[]) => void;
   isScanning: boolean;
@@ -125,6 +142,12 @@ export const useStore = create<AppState>()(
       // `findLyricsInCache` içinde yapılır (paylaşılan, test edilebilir mantık).
       getLyricsFromCache: (params) => findLyricsInCache(get().lyricsCache, getLyricsCacheKeys(params)),
       clearLyricsCache: () => set({ lyricsCache: {} }),
+
+      upNextIds: [],
+      contextIds: [],
+      setUpNextIds: (upNextIds) => set({ upNextIds }),
+      setContextIds: (contextIds) => set({ contextIds }),
+      clearUpNext: () => set({ upNextIds: [] }),
 
       settings: {
         minLengthSec: null,
@@ -220,6 +243,9 @@ export const useStore = create<AppState>()(
         metadataMap: state.metadataMap,
         // Söz önbelleği tekilleştirilmiş + hafifletilmiş olarak yazılır.
         lyricsCache: normalizeLyricsCache(state.lyricsCache),
+        // Kuyruk modeli: bağlam sırası + manuel "Sırada" listesi (yalnızca kimlikler).
+        contextIds: state.contextIds,
+        upNextIds: state.upNextIds,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {

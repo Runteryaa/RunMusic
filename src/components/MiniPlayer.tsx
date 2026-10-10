@@ -13,6 +13,7 @@ import TrackPlayer, {
   useActiveTrack,
   useIsPlaying,
   useProgress,
+  RepeatMode,
   Track,
 } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
@@ -24,10 +25,6 @@ import { saveLastPlayback } from '../services/playbackStorage';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
-function getRandomIndex(length: number): number {
-  return Math.floor(Math.random() * length);
-}
-
 export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
   const activeTrack = useActiveTrack();
   const { playing } = useIsPlaying();
@@ -37,7 +34,7 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
   const openFullscreenPlayer = usePlayerUIStore((s) => s.openFullscreenPlayer);
   const metadataMap = useStore((s) => s.metadataMap);
   const artworkMap = useStore((s) => s.artworkMap);
-  const isShuffle = useStore((s) => s.isShuffle);
+  const repeatMode = useStore((s) => s.repeatMode);
 
   const duration = progress.duration > 0 ? progress.duration : 0;
   const progressPercent = duration > 0 ? Math.min(1, Math.max(0, progress.position / duration)) : 0;
@@ -45,7 +42,6 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
   // Local Queue State for Next/Prev Previews
   const [queue, setQueue] = useState<Track[]>([]);
   const [activeIndex, setActiveIndex] = useState<number>(0);
-  const [shuffleNextIndex, setShuffleNextIndex] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchQueue = async () => {
@@ -63,30 +59,19 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
     }
   }, [activeTrack]);
 
-  useEffect(() => {
-    if (isShuffle && queue.length > 1) {
-      let nextIndex = getRandomIndex(queue.length);
-      if (nextIndex === activeIndex) {
-        nextIndex = (nextIndex + 1) % queue.length;
-      }
-      setShuffleNextIndex(nextIndex);
-    } else {
-      setShuffleNextIndex(null);
-    }
-  }, [activeIndex, queue.length, isShuffle]);
-
+  // Shuffle artık kuyruk SIRASINA gömülü olduğu için önizlemeler doğrudan kuyruk
+  // sırasından okunur; rastgele "sonraki indeks" hesabı gerekmez.
   const prevTrack = useMemo(() => {
     if (queue.length <= 1) return null;
     if (activeIndex > 0) return queue[activeIndex - 1];
-    return queue[queue.length - 1];
-  }, [queue, activeIndex]);
+    return repeatMode === RepeatMode.Queue ? queue[queue.length - 1] : null;
+  }, [queue, activeIndex, repeatMode]);
 
   const nextTrack = useMemo(() => {
     if (queue.length <= 1) return null;
-    if (isShuffle && shuffleNextIndex !== null) return queue[shuffleNextIndex];
     if (activeIndex < queue.length - 1) return queue[activeIndex + 1];
-    return queue[0];
-  }, [queue, activeIndex, isShuffle, shuffleNextIndex]);
+    return repeatMode === RepeatMode.Queue ? queue[0] : null;
+  }, [queue, activeIndex, repeatMode]);
 
   // Track Meta Helper
   const getTrackMeta = useCallback((track: Track | null) => {
@@ -121,38 +106,25 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
   const prevMeta = useMemo(() => getTrackMeta(prevTrack), [prevTrack, getTrackMeta]);
   const nextMeta = useMemo(() => getTrackMeta(nextTrack), [nextTrack, getTrackMeta]);
 
+  // Sıra artık kuyruğa gömülü: native next/prev doğru parçayı çalar
+  // (shuffle ve repeat dahil). Bu yüzden ekstra indeks hesabı yapılmaz.
   const skipNext = useCallback(async () => {
     try {
-      if (isShuffle && shuffleNextIndex !== null) {
-        await TrackPlayer.skip(shuffleNextIndex);
-        await TrackPlayer.play();
-        return;
-      }
-      if (activeIndex === queue.length - 1 && queue.length > 0) {
-        await TrackPlayer.skip(0);
-      } else {
-        await TrackPlayer.skipToNext();
-      }
+      await TrackPlayer.skipToNext();
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Skip next failed', e);
     }
-  }, [isShuffle, shuffleNextIndex, activeIndex, queue.length]);
-
-
+  }, []);
 
   const gestureSkipPrev = useCallback(async () => {
     try {
-      if (activeIndex === 0 && queue.length > 0) {
-        await TrackPlayer.skip(queue.length - 1);
-      } else {
-        await TrackPlayer.skipToPrevious();
-      }
+      await TrackPlayer.skipToPrevious();
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Gesture skip prev failed', e);
     }
-  }, [activeIndex, queue.length]);
+  }, []);
 
   const togglePlayback = async () => {
     if (playing) {
