@@ -275,7 +275,7 @@ export function MiniPlayer() {
     <View
       style={[
         styles.miniPlayerContainer,
-        { borderTopColor: theme.border || 'rgba(255, 255, 255, 0.1)' },
+        { borderColor: theme.border || 'rgba(255, 255, 255, 0.12)' },
       ]}
       {...panResponder.panHandlers}>
       {/* Top 2px Progress Bar */}
@@ -397,19 +397,22 @@ export function MiniPlayer() {
 const styles = StyleSheet.create({
   miniPlayerContainer: {
     backgroundColor: '#18181b',
-    borderRadius: 0,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
     borderBottomWidth: 0,
-    borderLeftWidth: 0,
-    borderRightWidth: 0,
-    marginHorizontal: 0,
+    marginHorizontal: 10,
     marginBottom: 0,
     overflow: 'hidden',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 10,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 12,
   },
   progressBarTrack: {
     height: 2,
