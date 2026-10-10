@@ -115,8 +115,16 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Skip next failed', e);
+    } finally {
+      // Ensure we reset gesture state if track doesn't change (e.g. end of queue)
+      setTimeout(() => {
+        if (isMiniSkippingRef.current) {
+          isMiniSkippingRef.current = false;
+          Animated.spring(miniPanX, { toValue: 0, useNativeDriver: true }).start();
+        }
+      }, 500);
     }
-  }, []);
+  }, [miniPanX]);
 
   const gestureSkipPrev = useCallback(async () => {
     try {
@@ -124,8 +132,15 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Gesture skip prev failed', e);
+    } finally {
+      setTimeout(() => {
+        if (isMiniSkippingRef.current) {
+          isMiniSkippingRef.current = false;
+          Animated.spring(miniPanX, { toValue: 0, useNativeDriver: true }).start();
+        }
+      }, 500);
     }
-  }, []);
+  }, [miniPanX]);
 
   const togglePlayback = async () => {
     if (playing) {
