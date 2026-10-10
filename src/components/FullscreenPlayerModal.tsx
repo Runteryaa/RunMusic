@@ -37,7 +37,7 @@ import {
   searchLrclib,
   searchAllCandidates,
   resolveCandidateToLyricsResult,
-  parseLRC,
+  parseAnySyncedLyrics,
   getLyricsCacheKeys,
   cleanYouTubeTitle,
   getSearchKeywords,
@@ -58,7 +58,7 @@ export function FullscreenPlayerModal() {
   const theme = useThemeStore((s) => s.theme);
   const activeTrack = useActiveTrack();
   const { playing } = useIsPlaying();
-  const progress = useProgress(250);
+  const progress = useProgress(120);
 
   const isShuffle = useStore((s) => s.isShuffle);
   const setIsShuffle = useStore((s) => s.setIsShuffle);
@@ -237,10 +237,10 @@ export function FullscreenPlayerModal() {
       rawTitle: activeTrack.title,
     });
     if (!item) return null;
-    if (item.syncedLyrics && (!item.parsedLines || item.parsedLines.length === 0)) {
+    if ((item.syncedLyrics || item.lyricsfile) && (!item.parsedLines || item.parsedLines.length === 0)) {
       return {
         ...item,
-        parsedLines: parseLRC(item.syncedLyrics),
+        parsedLines: parseAnySyncedLyrics(item.lyricsfile, item.syncedLyrics),
       };
     }
     return item;
@@ -251,11 +251,14 @@ export function FullscreenPlayerModal() {
     if (currentLyrics.parsedLines && currentLyrics.parsedLines.length > 0) {
       return currentLyrics.parsedLines;
     }
-    if (currentLyrics.syncedLyrics) {
-      return parseLRC(currentLyrics.syncedLyrics);
-    }
-    return [];
+    return parseAnySyncedLyrics(currentLyrics.lyricsfile, currentLyrics.syncedLyrics);
   }, [currentLyrics]);
+
+  const hasWordSync = useMemo(() => {
+    if (!currentLyrics) return false;
+    if (currentLyrics.hasWordSync) return true;
+    return parsedLines.some((l) => !!l.words && l.words.length > 0);
+  }, [currentLyrics, parsedLines]);
 
   const loadLyricsForTrack = async (title: string, artist?: string, force = false) => {
     if (!activeTrack) return;
@@ -270,20 +273,23 @@ export function FullscreenPlayerModal() {
         rawTitle: activeTrack.title,
       });
 
-      if (cached && cached.syncedLyrics) {
+      if (cached && (cached.syncedLyrics || cached.lyricsfile)) {
         if (cached.candidates && cached.candidates.length > 0) {
           setCandidatesList(cached.candidates);
         }
         return;
       }
 
-      if (cached && (!cached.syncedLyrics || cached.source === 'genius')) {
+      if (cached && ((!cached.syncedLyrics && !cached.lyricsfile) || cached.source === 'genius')) {
         if (cached.candidates && cached.candidates.length > 0) {
           setCandidatesList(cached.candidates);
         }
         searchLrclib(title, cleanArtist)
           .then((lrclibResult) => {
-            if (lrclibResult && (lrclibResult.syncedLyrics || cached.source === 'genius')) {
+            if (
+              lrclibResult &&
+              (lrclibResult.syncedLyrics || lrclibResult.lyricsfile || cached.source === 'genius')
+            ) {
               if (lrclibResult.candidates && lrclibResult.candidates.length > 0) {
                 setCandidatesList(lrclibResult.candidates);
               }
@@ -346,7 +352,7 @@ export function FullscreenPlayerModal() {
         rawTitle: activeTrack.title,
       });
 
-      if (!cached || !cached.syncedLyrics) {
+      if (!cached || (!cached.syncedLyrics && !cached.lyricsfile)) {
         loadLyricsForTrack(displayTitle, searchArtist, false);
       }
     }
@@ -1031,13 +1037,15 @@ export function FullscreenPlayerModal() {
             <View style={styles.lyricsCardHeader}>
               <View style={[styles.lyricsSourceBadge, { backgroundColor: theme.surface }]}>
                 <Ionicons
-                  name={currentLyrics?.source === 'lrclib' ? 'sparkles' : 'document-text-outline'}
+                  name={hasWordSync ? 'sparkles' : currentLyrics?.source === 'lrclib' ? 'musical-notes' : 'document-text-outline'}
                   size={12}
-                  color={theme.primary}
+                  color={hasWordSync ? '#10b981' : theme.primary}
                   style={{ marginRight: 4 }}
                 />
-                <Text style={[styles.lyricsSourceText, { color: theme.textAccent }]}>
-                  {currentLyrics?.syncedLyrics
+                <Text style={[styles.lyricsSourceText, { color: hasWordSync ? '#10b981' : theme.textAccent }]}>
+                  {hasWordSync
+                    ? 'LRCLIB (Kelime Senkronizasyonu ✨)'
+                    : currentLyrics?.syncedLyrics || parsedLines.length > 0
                     ? 'LRCLIB (Senkronize)'
                     : currentLyrics?.source === 'genius'
                     ? 'Genius (Düz Metin)'
@@ -1058,8 +1066,8 @@ export function FullscreenPlayerModal() {
                 <ActivityIndicator size="large" color={theme.primary} />
                 <Text style={styles.lyricsLoadingText}>Sözler aranıyor...</Text>
               </View>
-            ) : currentLyrics?.syncedLyrics && parsedLines.length > 0 ? (
-              /* Senkronize Söz Akışı (Apple Music Tipografisi) */
+            ) : parsedLines.length > 0 ? (
+              /* Senkronize Söz Akışı (Apple Music Tipografisi & Kelime Senkronizasyonu) */
               <FlatList
                 ref={lyricsFlatListRef}
                 data={parsedLines}
@@ -1083,16 +1091,49 @@ export function FullscreenPlayerModal() {
                       activeOpacity={0.7}
                       onPress={() => TrackPlayer.seekTo(item.time)}
                       style={[styles.lyricRow, isActive && styles.lyricRowActive]}>
-                      <Text
-                        style={[
-                          styles.lyricText,
-                          isActive && [
+                      {isActive && item.words && item.words.length > 0 ? (
+                        <Text
+                          style={[
+                            styles.lyricText,
                             styles.lyricTextActive,
                             { textShadowColor: theme.glowColor },
-                          ],
-                        ]}>
-                        {item.text}
-                      </Text>
+                          ]}>
+                          {item.words.map((word, wIdx) => {
+                            const isSung = progress.position >= word.time;
+                            const displayWord =
+                              wIdx < item.words!.length - 1 &&
+                              !word.text.endsWith(' ') &&
+                              !item.words![wIdx + 1].text.startsWith(' ')
+                                ? word.text + ' '
+                                : word.text;
+                            return (
+                              <Text
+                                key={`word-${wIdx}`}
+                                style={
+                                  isSung
+                                    ? [
+                                        styles.lyricWordSung,
+                                        { textShadowColor: theme.glowColor },
+                                      ]
+                                    : styles.lyricWordUpcoming
+                                }>
+                                {displayWord}
+                              </Text>
+                            );
+                          })}
+                        </Text>
+                      ) : (
+                        <Text
+                          style={[
+                            styles.lyricText,
+                            isActive && [
+                              styles.lyricTextActive,
+                              { textShadowColor: theme.glowColor },
+                            ],
+                          ]}>
+                          {item.text}
+                        </Text>
+                      )}
                     </TouchableOpacity>
                   );
                 }}
@@ -1372,7 +1413,11 @@ export function FullscreenPlayerModal() {
                         </Text>
                       </View>
                       <View style={styles.candidateBadgeBox}>
-                        {item.hasSynced ? (
+                        {item.hasWordSync ? (
+                          <View style={[styles.candidateSyncedBadge, { backgroundColor: '#10b981' }]}>
+                            <Text style={styles.candidateSyncedBadgeText}>WORD SYNC ✨</Text>
+                          </View>
+                        ) : item.hasSynced ? (
                           <View style={styles.candidateSyncedBadge}>
                             <Text style={styles.candidateSyncedBadgeText}>SYNC</Text>
                           </View>
@@ -1668,6 +1713,17 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(255, 255, 255, 0.3)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 8,
+  },
+  lyricWordSung: {
+    color: '#ffffff',
+    fontWeight: '800',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 10,
+  },
+  lyricWordUpcoming: {
+    color: 'rgba(255, 255, 255, 0.38)',
+    fontWeight: '600',
+    textShadowRadius: 0,
   },
   plainLyricsScroll: {
     flex: 1,

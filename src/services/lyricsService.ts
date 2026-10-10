@@ -1,6 +1,14 @@
+export interface LyricWord {
+  time: number;
+  endTime?: number;
+  text: string;
+}
+
 export interface LyricLine {
   time: number;
+  endTime?: number;
   text: string;
+  words?: LyricWord[];
 }
 
 export interface LyricsCandidate {
@@ -10,8 +18,10 @@ export interface LyricsCandidate {
   albumName?: string;
   duration?: number;
   hasSynced: boolean;
+  hasWordSync?: boolean;
   syncedLyrics?: string | null;
   plainLyrics?: string | null;
+  lyricsfile?: string | null;
   source: 'lrclib' | 'genius';
   geniusUrl?: string;
 }
@@ -22,40 +32,213 @@ export interface LyricsResult {
   artistName: string;
   syncedLyrics: string | null;
   plainLyrics: string | null;
+  lyricsfile?: string | null;
+  hasWordSync?: boolean;
   parsedLines: LyricLine[];
   source: 'lrclib' | 'genius' | 'custom';
   candidates?: LyricsCandidate[];
 }
 
 /**
- * Parse an LRC string into an array of { time: number, text: string } objects.
- * Supports mm:ss.xx, mm:ss.xxx, mm:ss:xx, mm:ss, etc.
+ * Parse an LRC string into an array of { time: number, text: string, words?: LyricWord[] } objects.
+ * Supports mm:ss.xx, mm:ss.xxx, mm:ss:xx, mm:ss, and enhanced LRC with <mm:ss.xx> word tags.
  */
 export function parseLRC(lrc: string): LyricLine[] {
   if (!lrc) return [];
   const lines = lrc.split('\n');
   const result: LyricLine[] = [];
-  const timeRegex = /\[(\d{1,3}):(\d{2})(?:[\.:](\d{1,3}))?\]/g;
+  const lineTimeRegex = /\[(\d{1,3}):(\d{2})(?:[\.:](\d{1,3}))?\]/g;
 
   for (const line of lines) {
     const times: number[] = [];
     let match: RegExpExecArray | null;
-    timeRegex.lastIndex = 0;
+    lineTimeRegex.lastIndex = 0;
 
-    while ((match = timeRegex.exec(line)) !== null) {
+    while ((match = lineTimeRegex.exec(line)) !== null) {
       const minutes = parseInt(match[1], 10);
       const seconds = parseInt(match[2], 10);
       const centiseconds = match[3] ? parseInt(match[3].padEnd(3, '0').slice(0, 3), 10) : 0;
       times.push(minutes * 60 + seconds + centiseconds / 1000);
     }
 
-    const text = line.replace(/\[\d{1,3}:\d{2}(?:[\.:]\d{1,3})?\]/g, '').trim();
+    if (times.length === 0) continue;
+
+    const content = line.replace(/\[\d{1,3}:\d{2}(?:[\.:]\d{1,3})?\]/g, '').trim();
+    if (!content) continue;
+
+    // Check for Enhanced LRC format (<mm:ss.xx> word timestamps)
+    let words: LyricWord[] = [];
+    if (/<\d{1,3}:\d{2}/.test(content)) {
+      const tokens = content.split(/(<\d{1,3}:\d{2}(?:[\.:]\d{1,3})?>)/g).filter(Boolean);
+      let currentWordTime = times[0];
+      for (const token of tokens) {
+        const timeMatch = token.match(/<(\d{1,3}):(\d{2})(?:[\.:](\d{1,3}))?>/);
+        if (timeMatch) {
+          const m = parseInt(timeMatch[1], 10);
+          const s = parseInt(timeMatch[2], 10);
+          const cs = timeMatch[3] ? parseInt(timeMatch[3].padEnd(3, '0').slice(0, 3), 10) : 0;
+          currentWordTime = m * 60 + s + cs / 1000;
+        } else if (token.length > 0) {
+          words.push({
+            time: currentWordTime,
+            text: token,
+          });
+        }
+      }
+
+      for (let i = 0; i < words.length - 1; i++) {
+        words[i].endTime = words[i + 1].time;
+      }
+    }
+
+    const cleanText = content
+      .replace(/<\d{1,3}:\d{2}(?:[\.:]\d{1,3})?>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
     for (const t of times) {
-      result.push({ time: t, text });
+      result.push({
+        time: t,
+        text: cleanText,
+        words: words.length > 0 ? words : undefined,
+      });
     }
   }
 
   return result.filter((l) => l.text.length > 0).sort((a, b) => a.time - b.time);
+}
+
+/**
+ * Parses LRCLIB's YAML lyricsfile format into LyricLine[] with word-by-word timestamps.
+ */
+export function parseLyricsFile(yaml: string): LyricLine[] {
+  if (!yaml) return [];
+  const rawLines = yaml.split('\n');
+  const result: LyricLine[] = [];
+  let currentLine: LyricLine | null = null;
+  let currentWords: LyricWord[] = [];
+  let lineIndent = -1;
+  let inWords = false;
+
+  for (const raw of rawLines) {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    // Detect indentation
+    const listItemMatch = raw.match(/^(\s*)-\s+(.*)$/);
+    if (listItemMatch) {
+      const itemIndent = listItemMatch[1].length;
+      const rest = listItemMatch[2].trim();
+
+      // If we were inside words, check if indent dropped back to line-level
+      if (inWords && lineIndent >= 0 && itemIndent <= lineIndent) {
+        inWords = false;
+      }
+
+      if (inWords) {
+        let wordText = '';
+        const wordTextMatch = rest.match(/^text:\s*(.*)$/);
+        if (wordTextMatch) {
+          wordText = wordTextMatch[1].trim().replace(/^['"]|['"]$/g, '');
+        }
+        currentWords.push({ text: wordText, time: 0 });
+      } else {
+        if (currentLine) {
+          if (currentWords.length > 0) currentLine.words = currentWords;
+          result.push(currentLine);
+        }
+        lineIndent = itemIndent;
+        inWords = false;
+        currentWords = [];
+
+        let lineText = '';
+        const lineTextMatch = rest.match(/^text:\s*(.*)$/);
+        if (lineTextMatch) {
+          lineText = lineTextMatch[1].trim().replace(/^['"]|['"]$/g, '');
+        }
+        currentLine = { text: lineText, time: 0 };
+      }
+      continue;
+    }
+
+    if (trimmed.startsWith('words:')) {
+      inWords = true;
+      continue;
+    }
+
+    if (trimmed.startsWith('text:')) {
+      const val = trimmed.replace(/^text:\s*/, '').replace(/^['"]|['"]$/g, '');
+      if (inWords && currentWords.length > 0) {
+        currentWords[currentWords.length - 1].text = val;
+      } else if (currentLine) {
+        currentLine.text = val;
+      }
+      continue;
+    }
+
+    if (trimmed.startsWith('start_ms:')) {
+      const ms = parseInt(trimmed.replace(/^start_ms:\s*/, ''), 10);
+      const timeSec = isNaN(ms) ? 0 : ms / 1000;
+      if (inWords && currentWords.length > 0) {
+        currentWords[currentWords.length - 1].time = timeSec;
+      } else if (currentLine) {
+        currentLine.time = timeSec;
+      }
+      continue;
+    }
+
+    if (trimmed.startsWith('end_ms:')) {
+      const ms = parseInt(trimmed.replace(/^end_ms:\s*/, ''), 10);
+      const timeSec = isNaN(ms) ? 0 : ms / 1000;
+      if (inWords && currentWords.length > 0) {
+        currentWords[currentWords.length - 1].endTime = timeSec;
+      } else if (currentLine) {
+        currentLine.endTime = timeSec;
+      }
+      continue;
+    }
+
+    if (trimmed.startsWith('plain:') || trimmed.startsWith('metadata:') || trimmed.startsWith('lines:')) {
+      inWords = false;
+    }
+  }
+
+  if (currentLine) {
+    if (currentWords.length > 0) currentLine.words = currentWords;
+    result.push(currentLine);
+  }
+
+  return result.filter((l) => l.text && l.text.length > 0).sort((a, b) => a.time - b.time);
+}
+
+/**
+ * Parses either LRCLIB YAML lyricsfile or LRC string, prioritizing whichever has word-level sync.
+ */
+export function parseAnySyncedLyrics(
+  lyricsfile?: string | null,
+  syncedLyrics?: string | null
+): LyricLine[] {
+  let fromYaml: LyricLine[] = [];
+  if (lyricsfile && lyricsfile.trim()) {
+    fromYaml = parseLyricsFile(lyricsfile);
+    const yamlHasWords = fromYaml.some((l) => l.words && l.words.length > 0);
+    if (yamlHasWords) {
+      return fromYaml;
+    }
+  }
+
+  let fromLrc: LyricLine[] = [];
+  if (syncedLyrics && syncedLyrics.trim()) {
+    fromLrc = parseLRC(syncedLyrics);
+    const lrcHasWords = fromLrc.some((l) => l.words && l.words.length > 0);
+    if (lrcHasWords) {
+      return fromLrc;
+    }
+  }
+
+  if (fromYaml.length > 0) return fromYaml;
+  if (fromLrc.length > 0) return fromLrc;
+  return [];
 }
 
 /**
@@ -361,12 +544,18 @@ function scoreResult(result: any, expectedArtist: string, expectedTrack: string)
   const artistSim = expectedArtist ? similarity(result.artistName, expectedArtist) : 0.8;
   const trackSim = expectedTrack ? similarity(result.trackName, expectedTrack) : 0.8;
   const score = expectedArtist ? artistSim * 0.65 + trackSim * 0.35 : trackSim;
-  return score + (result.syncedLyrics ? 0.001 : 0);
+  const hasWord = !!result.hasWordSync || (typeof result.lyricsfile === 'string' && result.lyricsfile.includes('words:'));
+  const wordBonus = hasWord ? 0.003 : 0;
+  const syncBonus = result.syncedLyrics ? 0.001 : 0;
+  return score + wordBonus + syncBonus;
 }
 
 function pickBest(results: any[], expectedArtist: string, expectedTrack: string): any | null {
+  const isWordSync = (r: any) =>
+    !!r.hasWordSync || (typeof r.lyricsfile === 'string' && r.lyricsfile.includes('words:'));
+
   if (!expectedArtist && !expectedTrack) {
-    return results.find((r) => r.syncedLyrics) || results[0] || null;
+    return results.find(isWordSync) || results.find((r) => r.syncedLyrics) || results[0] || null;
   }
   const scored = results
     .map((r) => ({ r, score: scoreResult(r, expectedArtist, expectedTrack) }))
@@ -375,7 +564,7 @@ function pickBest(results: any[], expectedArtist: string, expectedTrack: string)
   if (scored.length === 0 || scored[0].score < 0.1) return null;
   const threshold = scored[0].score - 0.15;
   const topTier = scored.filter((s) => s.score >= threshold).map((s) => s.r);
-  return topTier.find((r) => r.syncedLyrics) || topTier[0] || null;
+  return topTier.find(isWordSync) || topTier.find((r) => r.syncedLyrics) || topTier[0] || null;
 }
 
 export const LRCLIB_HEADERS: HeadersInit = {
@@ -415,26 +604,36 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
         if (getRes.ok) {
           const directData = await getRes.json();
           if (directData) {
+            const hasWord =
+              !!directData.hasWordSync ||
+              (typeof directData.lyricsfile === 'string' && directData.lyricsfile.includes('words:'));
+            const parsed = parseAnySyncedLyrics(directData.lyricsfile, directData.syncedLyrics);
+            const actuallyHasWords = hasWord || parsed.some((l) => !!l.words && l.words.length > 0);
+
             directCandidate = {
               id: `lrclib-${directData.id}`,
               trackName: directData.trackName,
               artistName: directData.artistName,
               albumName: directData.albumName || '',
               duration: directData.duration || 0,
-              hasSynced: !!directData.syncedLyrics,
+              hasSynced: !!directData.syncedLyrics || parsed.length > 0,
+              hasWordSync: actuallyHasWords,
               syncedLyrics: directData.syncedLyrics || null,
               plainLyrics: directData.plainLyrics || null,
+              lyricsfile: directData.lyricsfile || null,
               source: 'lrclib',
             };
 
-            if (directData.syncedLyrics) {
+            if (directData.syncedLyrics || parsed.length > 0) {
               return {
                 id: `lrclib-${directData.id}`,
                 trackName: directData.trackName,
                 artistName: directData.artistName,
-                syncedLyrics: directData.syncedLyrics,
+                syncedLyrics: directData.syncedLyrics || null,
                 plainLyrics: directData.plainLyrics || null,
-                parsedLines: parseLRC(directData.syncedLyrics),
+                lyricsfile: directData.lyricsfile || null,
+                hasWordSync: actuallyHasWords,
+                parsedLines: parsed,
                 source: 'lrclib',
                 candidates: [directCandidate],
               };
@@ -445,6 +644,8 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
                 artistName: directData.artistName,
                 syncedLyrics: null,
                 plainLyrics: directData.plainLyrics,
+                lyricsfile: null,
+                hasWordSync: false,
                 parsedLines: [],
                 source: 'lrclib',
                 candidates: [directCandidate],
@@ -516,33 +717,55 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
       }
 
       const bestLocal = pickBest(data, expectedArtist, expectedTrack);
-      if (bestLocal && bestLocal.syncedLyrics) {
+      if (bestLocal && (bestLocal.syncedLyrics || bestLocal.lyricsfile)) {
         const sortedCandidates: LyricsCandidate[] = Array.from(allCandidatesMap.values())
           .sort((a, b) => {
-            const aSynced = a.r.syncedLyrics ? 1 : 0;
-            const bSynced = b.r.syncedLyrics ? 1 : 0;
-            if (aSynced !== bSynced) return bSynced - aSynced;
+            const aWord =
+              a.r.hasWordSync || (typeof a.r.lyricsfile === 'string' && a.r.lyricsfile.includes('words:'))
+                ? 2
+                : a.r.syncedLyrics
+                ? 1
+                : 0;
+            const bWord =
+              b.r.hasWordSync || (typeof b.r.lyricsfile === 'string' && b.r.lyricsfile.includes('words:'))
+                ? 2
+                : b.r.syncedLyrics
+                ? 1
+                : 0;
+            if (aWord !== bWord) return bWord - aWord;
             return b.score - a.score;
           })
-          .map(({ r }) => ({
-            id: `lrclib-${r.id}`,
-            trackName: r.trackName,
-            artistName: r.artistName,
-            albumName: r.albumName || '',
-            duration: r.duration || 0,
-            hasSynced: !!r.syncedLyrics,
-            syncedLyrics: r.syncedLyrics || null,
-            plainLyrics: r.plainLyrics || null,
-            source: 'lrclib' as const,
-          }));
+          .map(({ r }) => {
+            const hasWord =
+              !!r.hasWordSync || (typeof r.lyricsfile === 'string' && r.lyricsfile.includes('words:'));
+            return {
+              id: `lrclib-${r.id}`,
+              trackName: r.trackName,
+              artistName: r.artistName,
+              albumName: r.albumName || '',
+              duration: r.duration || 0,
+              hasSynced: !!r.syncedLyrics || hasWord,
+              hasWordSync: hasWord,
+              syncedLyrics: r.syncedLyrics || null,
+              plainLyrics: r.plainLyrics || null,
+              lyricsfile: r.lyricsfile || null,
+              source: 'lrclib' as const,
+            };
+          });
+
+        const parsed = parseAnySyncedLyrics(bestLocal.lyricsfile, bestLocal.syncedLyrics);
+        const actuallyHasWords =
+          !!bestLocal.hasWordSync || parsed.some((l) => !!l.words && l.words.length > 0);
 
         return {
           id: `lrclib-${bestLocal.id}`,
           trackName: bestLocal.trackName,
           artistName: bestLocal.artistName,
-          syncedLyrics: bestLocal.syncedLyrics,
+          syncedLyrics: bestLocal.syncedLyrics || null,
           plainLyrics: bestLocal.plainLyrics || null,
-          parsedLines: parseLRC(bestLocal.syncedLyrics),
+          lyricsfile: bestLocal.lyricsfile || null,
+          hasWordSync: actuallyHasWords,
+          parsedLines: parsed,
           source: 'lrclib',
           candidates: sortedCandidates,
         };
@@ -552,22 +775,38 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
     const allResults = Array.from(allCandidatesMap.values()).map((x) => x.r);
     const lrclibCandidates: LyricsCandidate[] = Array.from(allCandidatesMap.values())
       .sort((a, b) => {
-        const aSynced = a.r.syncedLyrics ? 1 : 0;
-        const bSynced = b.r.syncedLyrics ? 1 : 0;
-        if (aSynced !== bSynced) return bSynced - aSynced;
+        const aWord =
+          a.r.hasWordSync || (typeof a.r.lyricsfile === 'string' && a.r.lyricsfile.includes('words:'))
+            ? 2
+            : a.r.syncedLyrics
+            ? 1
+            : 0;
+        const bWord =
+          b.r.hasWordSync || (typeof b.r.lyricsfile === 'string' && b.r.lyricsfile.includes('words:'))
+            ? 2
+            : b.r.syncedLyrics
+            ? 1
+            : 0;
+        if (aWord !== bWord) return bWord - aWord;
         return b.score - a.score;
       })
-      .map(({ r }) => ({
-        id: `lrclib-${r.id}`,
-        trackName: r.trackName,
-        artistName: r.artistName,
-        albumName: r.albumName || '',
-        duration: r.duration || 0,
-        hasSynced: !!r.syncedLyrics,
-        syncedLyrics: r.syncedLyrics || null,
-        plainLyrics: r.plainLyrics || null,
-        source: 'lrclib' as const,
-      }));
+      .map(({ r }) => {
+        const hasWord =
+          !!r.hasWordSync || (typeof r.lyricsfile === 'string' && r.lyricsfile.includes('words:'));
+        return {
+          id: `lrclib-${r.id}`,
+          trackName: r.trackName,
+          artistName: r.artistName,
+          albumName: r.albumName || '',
+          duration: r.duration || 0,
+          hasSynced: !!r.syncedLyrics || hasWord,
+          hasWordSync: hasWord,
+          syncedLyrics: r.syncedLyrics || null,
+          plainLyrics: r.plainLyrics || null,
+          lyricsfile: r.lyricsfile || null,
+          source: 'lrclib' as const,
+        };
+      });
 
     if (allResults.length === 0) {
       if (directFallbackResult) {
@@ -577,14 +816,19 @@ export async function searchLrclib(title: string, artist = ''): Promise<LyricsRe
     }
 
     const best = pickBest(allResults, expectedArtist, expectedTrack);
-    if (best && (best.syncedLyrics || best.plainLyrics)) {
+    if (best && (best.syncedLyrics || best.lyricsfile || best.plainLyrics)) {
+      const parsed = parseAnySyncedLyrics(best.lyricsfile, best.syncedLyrics);
+      const actuallyHasWords = !!best.hasWordSync || parsed.some((l) => !!l.words && l.words.length > 0);
+
       return {
         id: `lrclib-${best.id}`,
         trackName: best.trackName,
         artistName: best.artistName,
         syncedLyrics: best.syncedLyrics || null,
         plainLyrics: best.plainLyrics || null,
-        parsedLines: best.syncedLyrics ? parseLRC(best.syncedLyrics) : [],
+        lyricsfile: best.lyricsfile || null,
+        hasWordSync: actuallyHasWords,
+        parsedLines: parsed,
         source: 'lrclib',
         candidates: lrclibCandidates,
       };
@@ -828,15 +1072,19 @@ export async function searchAllCandidates(query: string, artist = ''): Promise<L
           const cid = `lrclib-${r.id}`;
           if (!seenIds.has(cid)) {
             seenIds.add(cid);
+            const hasWord =
+              !!r.hasWordSync || (typeof r.lyricsfile === 'string' && r.lyricsfile.includes('words:'));
             candidates.push({
               id: cid,
               trackName: r.trackName,
               artistName: r.artistName,
               albumName: r.albumName || '',
               duration: r.duration || 0,
-              hasSynced: !!r.syncedLyrics,
+              hasSynced: !!r.syncedLyrics || hasWord,
+              hasWordSync: hasWord,
               syncedLyrics: r.syncedLyrics || null,
               plainLyrics: r.plainLyrics || null,
+              lyricsfile: r.lyricsfile || null,
               source: 'lrclib',
             });
           }
@@ -882,10 +1130,12 @@ export async function searchAllCandidates(query: string, artist = ''): Promise<L
     console.warn('Genius candidate search error:', e);
   }
 
-  // LRCLIB adaylarını senkronize olanlar üstte olacak şekilde sırala, Genius sonuçları altta kalsın
+  // LRCLIB adaylarını kelime senkronizasyonlu ve senkronize olanlar üstte olacak şekilde sırala, Genius altta
   candidates.sort((a, b) => {
-    if (a.hasSynced !== b.hasSynced) {
-      return a.hasSynced ? -1 : 1;
+    const aWord = a.hasWordSync ? 3 : a.hasSynced ? 2 : 1;
+    const bWord = b.hasWordSync ? 3 : b.hasSynced ? 2 : 1;
+    if (aWord !== bWord) {
+      return bWord - aWord;
     }
     if (a.source !== b.source) {
       return a.source === 'lrclib' ? -1 : 1;
@@ -906,8 +1156,10 @@ export async function resolveCandidateToLyricsResult(
   if (candidate.source === 'lrclib') {
     let synced = candidate.syncedLyrics || null;
     let plain = candidate.plainLyrics || null;
+    let lyricsfile = candidate.lyricsfile || null;
+    let hasWordSync = !!candidate.hasWordSync;
 
-    if (!synced && !plain) {
+    if (!synced && !plain && !lyricsfile) {
       const rawId = candidate.id.replace('lrclib-', '');
       try {
         const res = await fetch(`https://lrclib.net/api/get/${rawId}`, {
@@ -917,9 +1169,15 @@ export async function resolveCandidateToLyricsResult(
           const d = await res.json();
           synced = d.syncedLyrics || null;
           plain = d.plainLyrics || null;
+          lyricsfile = d.lyricsfile || null;
+          hasWordSync =
+            !!d.hasWordSync || (typeof d.lyricsfile === 'string' && d.lyricsfile.includes('words:'));
         }
       } catch {}
     }
+
+    const parsedLines = parseAnySyncedLyrics(lyricsfile, synced);
+    const actuallyHasWords = hasWordSync || parsedLines.some((l) => !!l.words && l.words.length > 0);
 
     return {
       id: candidate.id,
@@ -927,7 +1185,9 @@ export async function resolveCandidateToLyricsResult(
       artistName: candidate.artistName,
       syncedLyrics: synced,
       plainLyrics: plain,
-      parsedLines: synced ? parseLRC(synced) : [],
+      lyricsfile,
+      hasWordSync: actuallyHasWords,
+      parsedLines,
       source: 'lrclib',
       candidates: allCandidates,
     };
