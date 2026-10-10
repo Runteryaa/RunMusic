@@ -61,6 +61,9 @@ interface AppState {
   setIsShuffle: (isShuffle: boolean) => void;
   repeatMode: RepeatMode;
   setRepeatMode: (mode: RepeatMode) => void;
+
+  isHydrated: boolean;
+  setIsHydrated: (isHydrated: boolean) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -176,6 +179,9 @@ export const useStore = create<AppState>()(
       setIsShuffle: (isShuffle) => set({ isShuffle }),
       repeatMode: RepeatMode.Off,
       setRepeatMode: (repeatMode) => set({ repeatMode }),
+
+      isHydrated: false,
+      setIsHydrated: (isHydrated) => set({ isHydrated }),
     }),
     {
       name: 'runmusic-storage',
@@ -191,6 +197,7 @@ export const useStore = create<AppState>()(
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
+          state.setIsHydrated(true);
           if ((state as any).lastPlaybackState) {
             delete (state as any).lastPlaybackState;
           }
@@ -199,3 +206,13 @@ export const useStore = create<AppState>()(
     }
   )
 );
+
+if (typeof useStore.persist?.onFinishHydration === 'function') {
+  useStore.persist.onFinishHydration(() => {
+    useStore.getState().setIsHydrated(true);
+  });
+}
+if (useStore.persist?.hasHydrated?.()) {
+  useStore.getState().setIsHydrated(true);
+}
+

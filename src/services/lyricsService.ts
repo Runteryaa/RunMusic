@@ -37,6 +37,8 @@ export interface LyricsResult {
   parsedLines: LyricLine[];
   source: 'lrclib' | 'genius' | 'custom';
   candidates?: LyricsCandidate[];
+  isUserSelected?: boolean;
+  selectedCandidateId?: string;
 }
 
 /**

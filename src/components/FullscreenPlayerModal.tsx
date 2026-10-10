@@ -36,7 +36,6 @@ import {
   LyricsResult,
   LyricsCandidate,
   fetchLyricsOnline,
-  searchLrclib,
   searchAllCandidates,
   resolveCandidateToLyricsResult,
   parseAnySyncedLyrics,
@@ -120,6 +119,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const setLyrics = useStore((s) => s.setLyrics);
   const getLyricsFromCache = useStore((s) => s.getLyricsFromCache);
   const hideTrack = useStore((s) => s.hideTrack);
+  const isHydrated = useStore((s) => s.isHydrated);
 
   const [barWidth, setBarWidth] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -323,38 +323,12 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         rawTitle: activeTrack.title,
       });
 
-      if (cached && (cached.syncedLyrics || cached.lyricsfile)) {
+      // Kaydedilmiş/seçilmiş herhangi bir lyric varsa (senkronize, word sync veya düz metin),
+      // varsayılan olarak kesinlikle o kullanılır. Arka planda asla ezilmez.
+      if (cached) {
         if (cached.candidates && cached.candidates.length > 0) {
           setCandidatesList(cached.candidates);
         }
-        return;
-      }
-
-      if (cached && ((!cached.syncedLyrics && !cached.lyricsfile) || cached.source === 'genius')) {
-        if (cached.candidates && cached.candidates.length > 0) {
-          setCandidatesList(cached.candidates);
-        }
-        searchLrclib(title, cleanArtist)
-          .then((lrclibResult) => {
-            if (
-              lrclibResult &&
-              (lrclibResult.syncedLyrics || lrclibResult.lyricsfile || cached.source === 'genius')
-            ) {
-              if (lrclibResult.candidates && lrclibResult.candidates.length > 0) {
-                setCandidatesList(lrclibResult.candidates);
-              }
-              const altKeys = getLyricsCacheKeys({
-                id: activeTrack.id,
-                url: activeTrack.url,
-                title,
-                artist: cleanArtist,
-                rawTitle: activeTrack.title,
-              });
-              const saveId = activeTrack.id || activeTrack.url || title;
-              setLyrics(saveId, lrclibResult, altKeys);
-            }
-          })
-          .catch(() => {});
         return;
       }
     }
@@ -363,6 +337,18 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     try {
       const result = await fetchLyricsOnline(title, cleanArtist);
       if (result) {
+        // Asenkron istek dönerken kullanıcı manuel bir seçim yaptıysa veya cache'e lyric kaydedildiyse ezme!
+        const existing = getLyricsFromCache({
+          id: activeTrack.id,
+          url: activeTrack.url,
+          title,
+          artist: cleanArtist,
+          rawTitle: activeTrack.title,
+        });
+        if (existing && !force) {
+          return;
+        }
+
         if (result.candidates && result.candidates.length > 0) {
           setCandidatesList(result.candidates);
         }
@@ -374,7 +360,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           rawTitle: activeTrack.title,
         });
         const saveId = activeTrack.id || activeTrack.url || title;
-        setLyrics(saveId, result, altKeys);
+        const initialSaved: LyricsResult = {
+          ...result,
+          selectedCandidateId: result.id,
+        };
+        setLyrics(saveId, initialSaved, altKeys);
       }
     } catch (e) {
       console.warn('Failed to load lyrics', e);
@@ -384,7 +374,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   };
 
   useEffect(() => {
-    if (activeTrack) {
+    if (activeTrack && isHydrated) {
       const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
       const titleLower = displayTitle.toLowerCase();
       const artistLower = searchArtist.toLowerCase();
@@ -402,12 +392,15 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         rawTitle: activeTrack.title,
       });
 
-      if (!cached || (!cached.syncedLyrics && !cached.lyricsfile)) {
+      if (!cached) {
+        // Bu parça için henüz kaydedilmiş bir söz yoksa ilk kez internetten ara ve kaydet
         loadLyricsForTrack(displayTitle, searchArtist, false);
+      } else if (cached.candidates && cached.candidates.length > 0) {
+        setCandidatesList(cached.candidates);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTrack?.id, activeTrack?.url, displayTitle, displayArtist]);
+  }, [activeTrack?.id, activeTrack?.url, displayTitle, displayArtist, isHydrated]);
 
   const activeLineIndex = useMemo(() => {
     if (!parsedLines || parsedLines.length === 0) return -1;
@@ -509,7 +502,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           rawTitle: activeTrack.title,
         });
         const saveId = activeTrack.id || activeTrack.url || displayTitle;
-        setLyrics(saveId, resolved, altKeys);
+        const selectedResult: LyricsResult = {
+          ...resolved,
+          isUserSelected: true,
+          selectedCandidateId: candidate.id,
+          candidates: candidatesList.length > 0 ? candidatesList : resolved.candidates,
+        };
+        setLyrics(saveId, selectedResult, altKeys);
         setIsManualSearchOpen(false);
       }
     } catch (e) {
@@ -524,14 +523,26 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     setIsManualSearchOpen(nextState);
     if (nextState) {
       const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
-      const hasLrclibCandidates = currentLyrics?.candidates?.some((c) => c.source === 'lrclib');
-      if (hasLrclibCandidates && currentLyrics?.candidates && currentLyrics.candidates.length > 0) {
+      if (currentLyrics?.candidates && currentLyrics.candidates.length > 0) {
         setCandidatesList(currentLyrics.candidates);
       } else if (activeTrack) {
         const queryToSearch = manualQuery.trim() || displayTitle;
         setIsSearchingCandidates(true);
         searchAllCandidates(queryToSearch, searchArtist)
-          .then((results) => setCandidatesList(results))
+          .then((results) => {
+            setCandidatesList(results);
+            if (currentLyrics) {
+              const altKeys = getLyricsCacheKeys({
+                id: activeTrack.id,
+                url: activeTrack.url,
+                title: displayTitle,
+                artist: searchArtist,
+                rawTitle: activeTrack.title,
+              });
+              const saveId = activeTrack.id || activeTrack.url || displayTitle;
+              setLyrics(saveId, { ...currentLyrics, candidates: results }, altKeys);
+            }
+          })
           .catch(() => {})
           .finally(() => setIsSearchingCandidates(false));
       }
@@ -1115,13 +1126,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 />
                 <Text style={[styles.lyricsSourceText, { color: hasWordSync ? '#10b981' : theme.textAccent }]}>
                   {hasWordSync
-                    ? 'LRCLIB (Kelime Senkronizasyonu ✨)'
+                    ? 'LRCLIB (Word Sync)'
                     : currentLyrics?.syncedLyrics || parsedLines.length > 0
-                    ? 'LRCLIB (Senkronize)'
+                    ? 'LRCLIB (Sync)'
                     : currentLyrics?.source === 'lrclib'
-                    ? 'LRCLIB (Düz Metin)'
+                    ? 'LRCLIB (Plain Text)'
                     : currentLyrics?.source === 'genius'
-                    ? 'Genius (Düz Metin)'
+                    ? 'Genius (Plain Text)'
                     : 'Şarkı Sözleri'}
                 </Text>
               </View>
@@ -1472,42 +1483,75 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   data={candidatesList}
                   keyExtractor={(item) => item.id}
                   style={{ maxHeight: 280 }}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={styles.candidateRow}
-                      activeOpacity={0.7}
-                      onPress={() => handleSelectCandidate(item)}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.candidateTrack} numberOfLines={1}>
-                          {item.trackName}
-                        </Text>
-                        <Text style={styles.candidateArtist} numberOfLines={1}>
-                          {item.artistName}
-                        </Text>
-                      </View>
-                      <View style={styles.candidateBadgeBox}>
-                        {item.hasWordSync ? (
-                          <View style={[styles.candidateSyncedBadge, { backgroundColor: '#10b981' }]}>
-                            <Text style={styles.candidateSyncedBadgeText}>WORD SYNC ✨</Text>
+                  renderItem={({ item }) => {
+                    const isSelected =
+                      (currentLyrics?.selectedCandidateId && currentLyrics.selectedCandidateId === item.id) ||
+                      (currentLyrics?.id && currentLyrics.id === item.id) ||
+                      (currentLyrics?.source === item.source &&
+                        currentLyrics?.trackName?.trim().toLowerCase() === item.trackName?.trim().toLowerCase() &&
+                        currentLyrics?.artistName?.trim().toLowerCase() === item.artistName?.trim().toLowerCase() &&
+                        Boolean(currentLyrics?.syncedLyrics || currentLyrics?.lyricsfile) === Boolean(item.syncedLyrics || item.lyricsfile));
+
+                    return (
+                      <TouchableOpacity
+                        style={[
+                          styles.candidateRow,
+                          isSelected && [
+                            styles.candidateRowSelected,
+                            { borderColor: theme.primary, backgroundColor: `${theme.primary}20` },
+                          ],
+                        ]}
+                        activeOpacity={0.7}
+                        onPress={() => handleSelectCandidate(item)}>
+                        <View style={{ flex: 1, marginRight: 8 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                            <Text
+                              style={[
+                                styles.candidateTrack,
+                                isSelected && { color: theme.primary, fontWeight: '700' },
+                              ]}
+                              numberOfLines={1}>
+                              {item.trackName}
+                            </Text>
+                            {isSelected ? (
+                              <View style={[styles.candidateSelectedBadge, { backgroundColor: theme.primary }]}>
+                                <Ionicons name="checkmark-sharp" size={10} color="#ffffff" style={{ marginRight: 2 }} />
+                                <Text style={styles.candidateSelectedBadgeText}>SEÇİLİ</Text>
+                              </View>
+                            ) : null}
                           </View>
-                        ) : item.hasSynced ? (
-                          <View style={styles.candidateSyncedBadge}>
-                            <Text style={styles.candidateSyncedBadgeText}>SYNC</Text>
-                          </View>
+                          <Text style={styles.candidateArtist} numberOfLines={1}>
+                            {item.artistName}
+                          </Text>
+                        </View>
+                        <View style={styles.candidateBadgeBox}>
+                          {item.hasWordSync ? (
+                            <View style={[styles.candidateSyncedBadge, { backgroundColor: '#10b981' }]}>
+                              <Text style={styles.candidateSyncedBadgeText}>WORD SYNC ✨</Text>
+                            </View>
+                          ) : item.hasSynced ? (
+                            <View style={[styles.candidateSyncedBadge, { backgroundColor: theme.primary }]}>
+                              <Text style={styles.candidateSyncedBadgeText}>SYNC</Text>
+                            </View>
+                          ) : (
+                            <View style={[styles.candidateSyncedBadge, { backgroundColor: 'rgba(255, 255, 255, 0.12)' }]}>
+                              <Text style={[styles.candidateSyncedBadgeText, { color: '#a1a1aa' }]}>DÜZ METİN</Text>
+                            </View>
+                          )}
+                          <Text style={styles.candidateSourceText}>
+                            {item.source.toUpperCase()}
+                          </Text>
+                        </View>
+                        {resolvingCandidateId === item.id ? (
+                          <ActivityIndicator
+                            size="small"
+                            color={theme.primary}
+                            style={{ marginLeft: 8 }}
+                          />
                         ) : null}
-                        <Text style={styles.candidateSourceText}>
-                          {item.source.toUpperCase()}
-                        </Text>
-                      </View>
-                      {resolvingCandidateId === item.id ? (
-                        <ActivityIndicator
-                          size="small"
-                          color={theme.primary}
-                          style={{ marginLeft: 8 }}
-                        />
-                      ) : null}
-                    </TouchableOpacity>
-                  )}
+                      </TouchableOpacity>
+                    );
+                  }}
                 />
               ) : (
                 <View style={{ paddingVertical: 24, alignItems: 'center' }}>
@@ -1530,6 +1574,15 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             style={styles.modalBackdrop}
             onPress={() => setIsOptionsModalOpen(false)}>
             <Pressable style={styles.optionsModalBox} onPress={(e) => e.stopPropagation()}>
+              <TouchableOpacity
+                style={styles.optionsModalRow}
+                onPress={() => {
+                  setIsOptionsModalOpen(false);
+                  loadLyricsForTrack(displayTitle, displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '', true);
+                }}>
+                <Ionicons name="refresh-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
+                <Text style={styles.optionsModalText}>Şarkı Sözlerini Yeniden Ara</Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={styles.optionsModalRow}
                 onPress={handleHideTrack}>
@@ -2043,9 +2096,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#27272a',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginVertical: 3,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    backgroundColor: '#18181b',
+  },
+  candidateRowSelected: {
+    borderWidth: 1.5,
+  },
+  candidateSelectedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 6,
+  },
+  candidateSelectedBadgeText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   candidateTrack: {
     color: '#ffffff',
