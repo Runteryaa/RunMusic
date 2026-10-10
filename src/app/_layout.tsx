@@ -61,7 +61,7 @@ function MainAppLayout() {
       <View style={{ flex: 1, backgroundColor: '#121212' }}>
         <Tabs
           screenOptions={{
-            headerShown: true,
+            headerShown: false,
             headerStyle: {
               backgroundColor: '#121212',
               elevation: 0,

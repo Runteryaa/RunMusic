@@ -185,7 +185,6 @@ export const useStore = create<AppState>()(
         isShuffle: state.isShuffle,
         repeatMode: state.repeatMode,
         hiddenTrackIds: state.hiddenTrackIds,
-        allAssets: state.allAssets,
         artworkMap: state.artworkMap,
         metadataMap: state.metadataMap,
         lyricsCache: state.lyricsCache,
@@ -194,9 +193,6 @@ export const useStore = create<AppState>()(
         if (state) {
           if ((state as any).lastPlaybackState) {
             delete (state as any).lastPlaybackState;
-          }
-          if (state.allAssets) {
-            state.library = state.allAssets.filter((a) => !(state.hiddenTrackIds || []).includes(a.id));
           }
         }
       },

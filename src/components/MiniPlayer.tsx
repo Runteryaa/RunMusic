@@ -128,23 +128,31 @@ export function MiniPlayer() {
         await TrackPlayer.play();
         return;
       }
-      await TrackPlayer.skipToNext();
+      if (activeIndex === queue.length - 1 && queue.length > 0) {
+        await TrackPlayer.skip(0);
+      } else {
+        await TrackPlayer.skipToNext();
+      }
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Skip next failed', e);
     }
-  }, [isShuffle, shuffleNextIndex]);
+  }, [isShuffle, shuffleNextIndex, activeIndex, queue.length]);
 
 
 
   const gestureSkipPrev = useCallback(async () => {
     try {
-      await TrackPlayer.skipToPrevious();
+      if (activeIndex === 0 && queue.length > 0) {
+        await TrackPlayer.skip(queue.length - 1);
+      } else {
+        await TrackPlayer.skipToPrevious();
+      }
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Gesture skip prev failed', e);
     }
-  }, []);
+  }, [activeIndex, queue.length]);
 
   const togglePlayback = async () => {
     if (playing) {
@@ -202,7 +210,7 @@ export function MiniPlayer() {
         onPanResponderMove: (_, gesture) => {
           if (isMiniSkippingRef.current) return;
           if (gesture.dy < -15 && Math.abs(gesture.dy) > Math.abs(gesture.dx)) return;
-          miniPanX.setValue(gesture.dx * 0.9); // More responsive tracking
+          miniPanX.setValue(gesture.dx * 0.9); 
         },
         onPanResponderRelease: (_, gesture) => {
           if (isMiniSkippingRef.current) return;
@@ -215,29 +223,25 @@ export function MiniPlayer() {
           if (gesture.dx < -35) {
             // Sola kaydırma: Sonraki şarkı
             isMiniSkippingRef.current = true;
-            Animated.spring(miniPanX, {
-              toValue: -SCREEN_WIDTH, // Animate fully to left
-              tension: 60,
-              friction: 8,
+            Animated.timing(miniPanX, {
+              toValue: -SCREEN_WIDTH * 0.8,
+              duration: 250,
               useNativeDriver: true,
             }).start(() => {
               skipNext();
-              // Reset will happen in useEffect once activeTrack updates
-              // Fallback reset in case track change fails
               setTimeout(() => {
                 if (isMiniSkippingRef.current) {
                   miniPanX.setValue(0);
                   isMiniSkippingRef.current = false;
                 }
-              }, 600);
+              }, 800);
             });
           } else if (gesture.dx > 35) {
             // Sağa kaydırma: Önceki şarkı
             isMiniSkippingRef.current = true;
-            Animated.spring(miniPanX, {
-              toValue: SCREEN_WIDTH, // Animate fully to right
-              tension: 60,
-              friction: 8,
+            Animated.timing(miniPanX, {
+              toValue: SCREEN_WIDTH * 0.8,
+              duration: 250,
               useNativeDriver: true,
             }).start(() => {
               gestureSkipPrev();
@@ -246,14 +250,14 @@ export function MiniPlayer() {
                   miniPanX.setValue(0);
                   isMiniSkippingRef.current = false;
                 }
-              }, 600);
+              }, 800);
             });
           } else {
             // Snap back
             Animated.spring(miniPanX, {
               toValue: 0,
-              tension: 80,
-              friction: 8,
+              tension: 100,
+              friction: 10,
               useNativeDriver: true,
             }).start();
           }
@@ -293,7 +297,7 @@ export function MiniPlayer() {
             
             {/* PREV TRACK PREVIEW */}
             {prevTrack && (
-              <View style={[styles.mainInfoPressable, { position: 'absolute', left: -SCREEN_WIDTH, width: SCREEN_WIDTH - 20 }]}>
+              <View style={[styles.mainInfoPressable, { position: 'absolute', right: '100%', width: '100%', paddingRight: 24 }]}>
                 <View style={styles.artworkBox}>
                   <TrackArtwork
                     uri={prevMeta.artwork}
@@ -338,7 +342,7 @@ export function MiniPlayer() {
 
             {/* NEXT TRACK PREVIEW */}
             {nextTrack && (
-              <View style={[styles.mainInfoPressable, { position: 'absolute', left: SCREEN_WIDTH, width: SCREEN_WIDTH - 20 }]}>
+              <View style={[styles.mainInfoPressable, { position: 'absolute', left: '100%', width: '100%', paddingLeft: 24 }]}>
                 <View style={styles.artworkBox}>
                   <TrackArtwork
                     uri={nextMeta.artwork}

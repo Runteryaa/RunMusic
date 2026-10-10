@@ -587,12 +587,16 @@ export function FullscreenPlayerModal() {
         await TrackPlayer.play();
         return;
       }
-      await TrackPlayer.skipToNext();
+      if (activeIndex === queue.length - 1 && queue.length > 0) {
+        await TrackPlayer.skip(0);
+      } else {
+        await TrackPlayer.skipToNext();
+      }
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Skip next failed', e);
     }
-  }, [isShuffle, shuffleNextIndex]);
+  }, [isShuffle, shuffleNextIndex, activeIndex, queue.length]);
 
   const skipPrev = useCallback(async () => {
     try {
@@ -600,13 +604,17 @@ export function FullscreenPlayerModal() {
       if (position > 3) {
         await TrackPlayer.seekTo(0);
       } else {
-        await TrackPlayer.skipToPrevious();
+        if (activeIndex === 0 && queue.length > 0) {
+          await TrackPlayer.skip(queue.length - 1);
+        } else {
+          await TrackPlayer.skipToPrevious();
+        }
         await TrackPlayer.play();
       }
     } catch (e) {
       console.warn('Skip prev failed', e);
     }
-  }, []);
+  }, [activeIndex, queue.length]);
 
   const handleHideTrack = useCallback(() => {
     if (activeTrack?.id) {
@@ -630,12 +638,16 @@ export function FullscreenPlayerModal() {
 
   const gestureSkipPrev = useCallback(async () => {
     try {
-      await TrackPlayer.skipToPrevious();
+      if (activeIndex === 0 && queue.length > 0) {
+        await TrackPlayer.skip(queue.length - 1);
+      } else {
+        await TrackPlayer.skipToPrevious();
+      }
       await TrackPlayer.play();
     } catch (e) {
       console.warn('Gesture skip prev failed', e);
     }
-  }, []);
+  }, [activeIndex, queue.length]);
 
   const handleSeekBackward = useCallback(async () => {
     try {
