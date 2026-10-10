@@ -55,7 +55,13 @@ export default function SettingsScreen() {
   }, [allAssets, hiddenTrackIds, metadataMap]);
 
   const cachedLyricsCount = useMemo(() => {
-    return Object.keys(lyricsCache || {}).length;
+    // Alternatif anahtarlar kanonik kayda işaretçidir ({ ref }). Gerçek kayıtlı
+    // parça sayısını göstermek için yalnızca tam içerikli kayıtları say.
+    let count = 0;
+    for (const entry of Object.values(lyricsCache ?? {})) {
+      if (!(entry && typeof entry === 'object' && 'ref' in entry)) count++;
+    }
+    return count;
   }, [lyricsCache]);
 
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);

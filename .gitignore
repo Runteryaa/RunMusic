@@ -36,6 +36,9 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# doğrulama script'i derleme çıktısı (scripts/verify-persist-migration.ts)
+.tmp-verify/
+
 example
 
 # generated native folders

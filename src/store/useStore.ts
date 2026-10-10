@@ -1,9 +1,14 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { RepeatMode } from 'react-native-track-player';
 import { LyricsResult, getLyricsCacheKeys } from '../services/lyricsService';
+import { STORE_STORAGE_KEY, resilientStorage } from '../services/persistStorage';
+import {
+  findLyricsInCache,
+  normalizeLyricsCache,
+  type LyricsCacheEntry,
+} from '../services/persistSanitize';
 
 export interface FilterSettings {
   minLengthSec: number | null;
@@ -18,8 +23,6 @@ export interface TrackMetadata {
   album?: string;
   artwork?: string;
 }
-
-
 
 interface AppState {
   settings: FilterSettings;
@@ -41,7 +44,7 @@ interface AppState {
   setTrackMetadata: (id: string, metadata: TrackMetadata) => void;
   setBatchTrackMetadata: (batch: Record<string, TrackMetadata>) => void;
 
-  lyricsCache: Record<string, LyricsResult>;
+  lyricsCache: Record<string, LyricsCacheEntry>;
   setLyrics: (id: string, lyrics: LyricsResult, alternateKeys?: string[]) => void;
   getLyricsFromCache: (params: {
     id?: string;
@@ -65,6 +68,9 @@ interface AppState {
   isHydrated: boolean;
   setIsHydrated: (isHydrated: boolean) => void;
 }
+
+/** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
+const PERSIST_VERSION = 1;
 
 export const useStore = create<AppState>()(
   persist(
@@ -105,24 +111,19 @@ export const useStore = create<AppState>()(
       lyricsCache: {},
       setLyrics: (id, lyrics, alternateKeys) =>
         set((state) => {
-          const updated = { ...state.lyricsCache, [id]: lyrics };
+          // Kanonik kayıt tam içerikle, alternatif anahtarlar yalnızca işaretçi
+          // olarak yazılır; aynı içerik diskte tekrar tekrar tutulmaz.
+          const updated: Record<string, LyricsCacheEntry> = { ...state.lyricsCache, [id]: lyrics };
           if (alternateKeys && alternateKeys.length > 0) {
             for (const key of alternateKeys) {
-              if (key) updated[key] = lyrics;
+              if (key && key !== id) updated[key] = { ref: id };
             }
           }
           return { lyricsCache: updated };
         }),
-      getLyricsFromCache: (params) => {
-        const state = get();
-        const cache = state.lyricsCache;
-        if (!cache) return null;
-        const keys = getLyricsCacheKeys(params);
-        for (const k of keys) {
-          if (cache[k]) return cache[k];
-        }
-        return null;
-      },
+      // Alternatif anahtarlar `{ ref }` işaretçisi olabileceği için çözümleme
+      // `findLyricsInCache` içinde yapılır (paylaşılan, test edilebilir mantık).
+      getLyricsFromCache: (params) => findLyricsInCache(get().lyricsCache, getLyricsCacheKeys(params)),
       clearLyricsCache: () => set({ lyricsCache: {} }),
 
       settings: {
@@ -184,8 +185,32 @@ export const useStore = create<AppState>()(
       setIsHydrated: (isHydrated) => set({ isHydrated }),
     }),
     {
-      name: 'runmusic-storage',
-      storage: createJSONStorage(() => AsyncStorage),
+      name: STORE_STORAGE_KEY,
+      storage: createJSONStorage(() => resilientStorage),
+      version: PERSIST_VERSION,
+      /**
+       * Şema migrasyonu. `version` alanı olmayan eski kayıtlar sürüm 0 kabul
+       * edilir ve buraya düşer. Yapılan iş: şişmiş söz önbelleğini (her parça
+       * ~8 anahtara tam kopya + aday listeleri) tekilleştirip hafifletmek.
+       * Bu, AsyncStorage'ın tek-kayıt boyut sınırının aşılıp yazmaların
+       * sessizce durmasını engeller; kullanıcı verisi korunur.
+       */
+      migrate: (persistedState: unknown, fromVersion: number) => {
+        const incoming = (persistedState && typeof persistedState === 'object'
+          ? persistedState
+          : {}) as Record<string, any>;
+
+        const migrated = {
+          ...incoming,
+          lyricsCache: normalizeLyricsCache(incoming.lyricsCache),
+        };
+
+        console.log(
+          `[persist] şema migrasyonu: v${fromVersion} -> v${PERSIST_VERSION} ` +
+            `(${Object.keys(migrated.lyricsCache).length} söz anahtarı normalize edildi)`
+        );
+        return migrated;
+      },
       partialize: (state) => ({
         settings: state.settings,
         isShuffle: state.isShuffle,
@@ -193,7 +218,8 @@ export const useStore = create<AppState>()(
         hiddenTrackIds: state.hiddenTrackIds,
         artworkMap: state.artworkMap,
         metadataMap: state.metadataMap,
-        lyricsCache: state.lyricsCache,
+        // Söz önbelleği tekilleştirilmiş + hafifletilmiş olarak yazılır.
+        lyricsCache: normalizeLyricsCache(state.lyricsCache),
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
