@@ -11,8 +11,7 @@ import playbackService from '../service';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { getLastPlayback } from '../services/playbackStorage';
-import { MiniPlayer } from '../components/MiniPlayer';
-import { FullscreenPlayerModal } from '../components/FullscreenPlayerModal';
+import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -109,15 +108,8 @@ function MainAppLayout() {
           />
         </Tabs>
 
-        {/* Kalıcı Alt Mini Çalar (Tab Bar üzerinde yüzer) */}
-        <View
-          style={{ position: 'absolute', bottom: 55, left: 0, right: 0 }}
-          pointerEvents="box-none">
-          <MiniPlayer />
-        </View>
-
-        {/* Tam Ekran Çalar (Mini Çalara dokunulunca açılan Modal) */}
-        <FullscreenPlayerModal />
+        {/* Genişleyen ve Dönüşen Müzik Çalar (MiniPlayer <---> FullscreenPlayer) */}
+        <ExpandingPlayer />
       </View>
     </GestureHandlerRootView>
   );

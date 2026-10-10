@@ -28,7 +28,7 @@ function getRandomIndex(length: number): number {
   return Math.floor(Math.random() * length);
 }
 
-export function MiniPlayer() {
+export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
   const activeTrack = useActiveTrack();
   const { playing } = useIsPlaying();
   const progress = useProgress(500);
@@ -275,6 +275,7 @@ export function MiniPlayer() {
     <View
       style={[
         styles.miniPlayerContainer,
+        isEmbedded && styles.miniPlayerContainerEmbedded,
         { borderColor: theme.border || 'rgba(255, 255, 255, 0.12)' },
       ]}
       {...panResponder.panHandlers}>
@@ -413,6 +414,17 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 12,
+  },
+  miniPlayerContainerEmbedded: {
+    marginHorizontal: 0,
+    borderTopWidth: 0,
+    borderLeftWidth: 0,
+    borderRightWidth: 0,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    backgroundColor: 'transparent',
+    elevation: 0,
+    shadowOpacity: 0,
   },
   progressBarTrack: {
     height: 2,

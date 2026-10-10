@@ -14,7 +14,9 @@ import {
   Dimensions,
   Animated,
   PanResponder,
+  BackHandler,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { Ionicons } from '@expo/vector-icons';
@@ -51,7 +53,8 @@ function getRandomIndex(length: number): number {
   return Math.floor(Math.random() * length);
 }
 
-export function FullscreenPlayerModal() {
+export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
+  const insets = useSafeAreaInsets();
   const { isFullscreenPlayerOpen, closeFullscreenPlayer, isLyricsMode, toggleLyricsMode } =
     usePlayerUIStore();
 
@@ -59,6 +62,53 @@ export function FullscreenPlayerModal() {
   const activeTrack = useActiveTrack();
   const { playing } = useIsPlaying();
   const progress = useProgress(120);
+
+  // Android hardware back button listener
+  useEffect(() => {
+    if (!isFullscreenPlayerOpen) return;
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeFullscreenPlayer();
+      return true;
+    });
+    return () => backSub.remove();
+  }, [isFullscreenPlayerOpen, closeFullscreenPlayer]);
+
+  // Morph transforms synchronized with expanding card
+  const headerMorphY = useMemo(() => {
+    if (!expandAnim) return 0;
+    return expandAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [-45, 0],
+      extrapolate: 'clamp',
+    });
+  }, [expandAnim]);
+
+  const middleMorphScale = useMemo(() => {
+    if (!expandAnim) return 1;
+    return expandAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.4, 1],
+      extrapolate: 'clamp',
+    });
+  }, [expandAnim]);
+
+  const middleMorphY = useMemo(() => {
+    if (!expandAnim) return 0;
+    return expandAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [100, 0],
+      extrapolate: 'clamp',
+    });
+  }, [expandAnim]);
+
+  const bottomMorphY = useMemo(() => {
+    if (!expandAnim) return 0;
+    return expandAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [70, 0],
+      extrapolate: 'clamp',
+    });
+  }, [expandAnim]);
 
   const isShuffle = useStore((s) => s.isShuffle);
   const setIsShuffle = useStore((s) => s.setIsShuffle);
@@ -816,25 +866,29 @@ export function FullscreenPlayerModal() {
 
 
   return (
-    <Modal
-      visible={isFullscreenPlayerOpen}
-      animationType="slide"
-      presentationStyle="fullScreen"
-      onRequestClose={closeFullscreenPlayer}>
-      <View style={styles.fullscreenContainer}>
-        {/* Dynamic Blurred Background based on Cover Art */}
-        {currentArtworkUri ? (
-          <Image
-            source={{ uri: currentArtworkUri }}
-            style={StyleSheet.absoluteFill}
-            blurRadius={70}
-            contentFit="cover"
-          />
-        ) : null}
-        <View style={[StyleSheet.absoluteFill, styles.backdropOverlay]} />
-        {/* Subtle Ambient Color Glow from Cover Art */}
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.glowColor, opacity: 0.14 }]} />
+    <View
+      style={[
+        styles.fullscreenContainer,
+        {
+          paddingTop: Math.max(insets.top, 16),
+          paddingBottom: Math.max(insets.bottom, 16),
+        },
+      ]}>
+      {/* Dynamic Blurred Background based on Cover Art */}
+      {currentArtworkUri ? (
+        <Image
+          source={{ uri: currentArtworkUri }}
+          style={StyleSheet.absoluteFill}
+          blurRadius={70}
+          contentFit="cover"
+        />
+      ) : null}
+      <View style={[StyleSheet.absoluteFill, styles.backdropOverlay]} />
+      {/* Subtle Ambient Color Glow from Cover Art */}
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.glowColor, opacity: 0.14 }]} />
 
+      {/* TOP HEADER & GRABBER (Morph animasyonu ile yukarıdan süzülür) */}
+      <Animated.View style={{ transform: [{ translateY: headerMorphY }] }}>
         {/* Apple Music Style Top Grabber Bar */}
         <View style={styles.topGrabberContainer} {...headerPanResponder.panHandlers}>
           <View style={styles.topGrabberBar} />
@@ -861,9 +915,20 @@ export function FullscreenPlayerModal() {
             <Ionicons name="ellipsis-horizontal-circle" size={24} color="rgba(255, 255, 255, 0.75)" />
           </TouchableOpacity>
         </View>
+      </Animated.View>
 
-        {/* ORTA BÖLÜM: Kapak Fotoğrafı Carousel <---> Senkronize Şarkı Sözleri Değişimi */}
-        <View style={styles.middleContainer} {...artworkPanResponder.panHandlers}>
+      {/* ORTA BÖLÜM: Kapak Fotoğrafı Carousel <---> Senkronize Şarkı Sözleri Değişimi */}
+      <Animated.View
+        style={[
+          styles.middleContainer,
+          {
+            transform: [
+              { scale: middleMorphScale },
+              { translateY: middleMorphY },
+            ],
+          },
+        ]}
+        {...artworkPanResponder.panHandlers}>
           {/* 1. Kapak Carousel Görünümü (Apple Music etkileşimli kenar önizlemeli geçiş) */}
           <Animated.View
             style={[
@@ -1181,10 +1246,10 @@ export function FullscreenPlayerModal() {
               </View>
             )}
           </Animated.View>
-        </View>
+        </Animated.View>
 
         {/* ALT BÖLÜM: Apple Music Şarkı Bilgileri, Scrubber ve Kontroller */}
-        <View style={styles.bottomSection}>
+        <Animated.View style={[styles.bottomSection, { transform: [{ translateY: bottomMorphY }] }]}>
           {/* Şarkı Başlığı & Sanatçı */}
           <View style={styles.metaRow}>
             <View style={{ flex: 1, marginRight: 14 }}>
@@ -1350,7 +1415,7 @@ export function FullscreenPlayerModal() {
               />
             </TouchableOpacity>
           </View>
-        </View>
+        </Animated.View>
 
         {/* Manuel Söz Arama Modalı */}
         <Modal
@@ -1539,16 +1604,13 @@ export function FullscreenPlayerModal() {
           </View>
         </Modal>
       </View>
-    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   fullscreenContainer: {
     flex: 1,
-    backgroundColor: '#0c0c0e',
-    paddingTop: 36,
-    paddingBottom: 28,
+    backgroundColor: 'transparent',
     justifyContent: 'space-between',
   },
   backdropOverlay: {
