@@ -45,12 +45,14 @@ import {
 } from '../services/lyricsService';
 import { saveLastPlayback } from '../services/playbackStorage';
 import {
+  buildQueueRows,
   getQueueSections,
   markUpNextConsumed,
   moveUpNext,
   removeQueueItem,
   setShuffle,
   type QueueEntry,
+  type QueueRow,
   type QueueSections,
 } from '../services/queueController';
 import { QueueUpNextList, type UpNextItem } from './QueueUpNextList';
@@ -308,122 +310,138 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     []
   );
 
-  /**
-   * Kütüphane bağlamı satırı.
-   *
-   * DİKKAT (performans): Bu satırlar sanallaştırılmış bir FlatList içinde
-   * render edilir. Daha önce tüm kütüphane tek bir ScrollView içinde `.map()`
-   * ile çiziliyordu; binlerce parçalık arşivlerde yüzlerce Swipeable aynı anda
-   * oluşturulduğu için arayüz kilitleniyordu.
-   */
-  const renderContextItem = useCallback(
-    ({ item: entry }: { item: QueueEntry<Track> }) => (
-      <Swipeable
-        overshootRight={false}
-        renderRightActions={() => (
-          <TouchableOpacity
-            style={[styles.queueRemoveAction, { backgroundColor: '#ef4444' }]}
-            activeOpacity={0.8}
-            onPress={() => handleRemoveFromContext(entry.index)}>
-            <Ionicons name="trash-outline" size={20} color="#ffffff" />
-          </TouchableOpacity>
-        )}>
-        <TouchableOpacity
-          style={styles.queueItem}
-          activeOpacity={0.7}
-          onPress={() => handleQueueItemPress(entry.index)}>
-          <Text style={styles.queueIndex}>{entry.index + 1}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.queueTrackTitle} numberOfLines={1}>
-              {entry.track.title}
-            </Text>
-            <Text style={styles.queueTrackArtist} numberOfLines={1}>
-              {entry.track.artist}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      </Swipeable>
-    ),
-    [handleRemoveFromContext, handleQueueItemPress]
+  // Saf fonksiyonla üretilir; React Compiler kendi memoizasyonunu uygular.
+  const queueRows = buildQueueRows(queueSections, upNextItems.length, isShuffle);
+
+  const currentRowIndex = useMemo(
+    () => queueRows.findIndex((row) => row.kind === 'current'),
+    [queueRows]
   );
 
-  /** Listenin başlığı: şu an çalıyor + manuel "Sırada" bölümü. */
-  const queueListHeader = useMemo(
-    () => (
-      <>
-        {/* 1. ŞU AN ÇALIYOR */}
-        {queueSections?.current ? (
+  const queueListRef = useRef<FlatList<QueueRow<Track>>>(null);
+
+  // Kuyruk açılınca mevcut parçaya konumlan: geçmiş yukarıda (yukarı kaydırınca
+  // görünür), sıradakiler aşağıda kalır.
+  useEffect(() => {
+    if (!isQueueModalOpen || currentRowIndex < 0) return;
+    const timer = setTimeout(() => {
+      queueListRef.current?.scrollToIndex({
+        index: currentRowIndex,
+        animated: false,
+        viewPosition: 0,
+      });
+    }, 90);
+    return () => clearTimeout(timer);
+  }, [isQueueModalOpen, currentRowIndex]);
+
+  const handleScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      // Satır yükseklikleri değişken olduğu için (bölüm başlığı / parça / kapaklı
+      // satır) ilk deneme başarısız olabilir: ortalamayla konumlan, sonra tekrar dene.
+      queueListRef.current?.scrollToOffset({
+        offset: info.averageItemLength * info.index,
+        animated: false,
+      });
+      setTimeout(() => {
+        queueListRef.current?.scrollToIndex({
+          index: info.index,
+          animated: false,
+          viewPosition: 0,
+        });
+      }, 120);
+    },
+    []
+  );
+
+  /** Sıradaki/geçmiş bir parça satırı (dokununca o parçaya atlar). */
+  const renderQueueTrackRow = (entry: QueueEntry<Track>, isCurrent = false) => (
+    <TouchableOpacity
+      style={[styles.queueItem, isCurrent && { backgroundColor: theme.surface }]}
+      activeOpacity={0.7}
+      onPress={() => handleQueueItemPress(entry.index)}>
+      <Text style={[styles.queueIndex, isCurrent && { color: theme.primary }]}>
+        {entry.index + 1}
+      </Text>
+      <View style={{ flex: 1 }}>
+        <Text
+          style={[styles.queueTrackTitle, isCurrent && { color: theme.primary }]}
+          numberOfLines={1}>
+          {entry.track.title}
+        </Text>
+        <Text style={styles.queueTrackArtist} numberOfLines={1}>
+          {entry.track.artist}
+        </Text>
+      </View>
+      {isCurrent ? <Ionicons name="volume-high" size={20} color={theme.primary} /> : null}
+    </TouchableOpacity>
+  );
+
+  const renderQueueRow = ({ item }: { item: QueueRow<Track> }) => {
+    switch (item.kind) {
+      case 'section':
+        return <Text style={styles.queueSectionTitle}>{item.title}</Text>;
+
+      case 'history':
+        // Geçmiş salt görüntülenir; dokununca o parçaya geri döner.
+        // (Çalınmış bir satırı silmek aktif indeksi kaydıracağı için kapalı.)
+        return renderQueueTrackRow(item.entry);
+
+      case 'current':
+        return (
           <>
             <Text style={styles.queueSectionTitle}>ŞU AN ÇALIYOR</Text>
             <View style={[styles.queueItem, { backgroundColor: theme.surface }]}>
               <TrackArtwork
-                uri={
-                  typeof queueSections.current.track.artwork === 'string'
-                    ? queueSections.current.track.artwork
-                    : undefined
-                }
-                trackId={queueSections.current.track.id ?? null}
-                trackUri={queueSections.current.track.url ?? null}
+                uri={typeof item.entry.track.artwork === 'string' ? item.entry.track.artwork : undefined}
+                trackId={item.entry.track.id ?? null}
+                trackUri={item.entry.track.url ?? null}
                 size={40}
                 borderRadius={6}
                 iconSize={18}
               />
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text
-                  style={[styles.queueTrackTitle, { color: theme.primary }]}
-                  numberOfLines={1}>
-                  {queueSections.current.track.title}
+                <Text style={[styles.queueTrackTitle, { color: theme.primary }]} numberOfLines={1}>
+                  {item.entry.track.title}
                 </Text>
                 <Text style={styles.queueTrackArtist} numberOfLines={1}>
-                  {queueSections.current.track.artist}
+                  {item.entry.track.artist}
                 </Text>
               </View>
               <Ionicons name="volume-high" size={20} color={theme.primary} />
             </View>
           </>
-        ) : null}
+        );
 
-        {/* 2. SIRADA — kullanıcının öne aldığı parçalar (sürükleyerek sırala) */}
-        {upNextItems.length > 0 ? (
-          <>
-            <Text style={styles.queueSectionTitle}>SIRADA · {upNextItems.length}</Text>
-            <QueueUpNextList
-              items={upNextItems}
-              accentColor={theme.primary}
-              onMove={handleMoveUpNext}
-              onRemove={handleRemoveUpNext}
-            />
-          </>
-        ) : null}
+      case 'upnext':
+        return (
+          <QueueUpNextList
+            items={upNextItems}
+            accentColor={theme.primary}
+            onMove={handleMoveUpNext}
+            onRemove={handleRemoveUpNext}
+          />
+        );
 
-        {/* 3. Bağlam başlığı */}
-        {queueSections && queueSections.context.length > 0 ? (
-          <Text style={styles.queueSectionTitle}>
-            {isShuffle ? 'KÜTÜPHANEDEN · KARIŞIK' : 'KÜTÜPHANEDEN SIRADAKİ'} ·{' '}
-            {queueSections.context.length}
-          </Text>
-        ) : null}
+      case 'context':
+        return (
+          <Swipeable
+            overshootRight={false}
+            renderRightActions={() => (
+              <TouchableOpacity
+                style={[styles.queueRemoveAction, { backgroundColor: '#ef4444' }]}
+                activeOpacity={0.8}
+                onPress={() => handleRemoveFromContext(item.entry.index)}>
+                <Ionicons name="trash-outline" size={20} color="#ffffff" />
+              </TouchableOpacity>
+            )}>
+            {renderQueueTrackRow(item.entry)}
+          </Swipeable>
+        );
 
-        {queueSections &&
-        !queueSections.current &&
-        upNextItems.length === 0 &&
-        queueSections.context.length === 0 ? (
-          <View style={{ paddingVertical: 32, alignItems: 'center' }}>
-            <Text style={{ color: '#71717a', fontSize: 14 }}>Kuyruk boş.</Text>
-          </View>
-        ) : null}
-      </>
-    ),
-    [
-      queueSections,
-      upNextItems,
-      theme.surface,
-      theme.primary,
-      isShuffle,
-      handleMoveUpNext,
-      handleRemoveUpNext,
-    ]
-  );
+      default:
+        return null;
+    }
+  };
 
   const activeMeta = activeTrack?.id ? metadataMap[activeTrack.id] : undefined;
   const activeKeywords = getSearchKeywords(activeTrack?.title || '', activeTrack?.artist || '');
@@ -1876,16 +1894,24 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   parça olabildiği için tüm satırları tek seferde çizmek arayüzü
                   kilitler; FlatList yalnızca görünen penceredekileri oluşturur. */}
               <FlatList
-                data={queueSections?.context ?? []}
-                keyExtractor={(entry) => `ctx-${entry.index}-${entry.track.id ?? entry.track.url}`}
-                renderItem={renderContextItem}
-                ListHeaderComponent={queueListHeader}
+                ref={queueListRef}
+                data={queueRows}
+                keyExtractor={(row) => row.key}
+                renderItem={renderQueueRow}
                 contentContainerStyle={styles.queueScrollContent}
                 showsVerticalScrollIndicator={false}
-                initialNumToRender={10}
-                maxToRenderPerBatch={10}
+                initialNumToRender={12}
+                maxToRenderPerBatch={12}
                 updateCellsBatchingPeriod={50}
                 windowSize={7}
+                onScrollToIndexFailed={handleScrollToIndexFailed}
+                ListEmptyComponent={
+                  queueSections ? (
+                    <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+                      <Text style={{ color: '#71717a', fontSize: 14 }}>Kuyruk boş.</Text>
+                    </View>
+                  ) : null
+                }
               />
             </View>
           </View>

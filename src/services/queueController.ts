@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore';
 import { saveQueueSnapshot } from './playbackStorage';
 import {
   buildPlayOrder,
+  buildQueueRows,
   deriveQueueSections,
   shuffleArray,
   trackKey,
@@ -11,8 +12,8 @@ import {
 
 // Saf kuyruk matematiği ayrı modülde yaşar (native'siz, test edilebilir);
 // buradan yeniden dışa aktarılır ki çağıranlar tek yerden import etsin.
-export { buildPlayOrder, deriveQueueSections, shuffleArray, trackKey };
-export type { QueueEntry, QueueSections, QueueTrackLike } from './queueMath';
+export { buildPlayOrder, buildQueueRows, deriveQueueSections, shuffleArray, trackKey };
+export type { QueueEntry, QueueRow, QueueSections, QueueTrackLike } from './queueMath';
 
 /**
  * Kuyruk yönetimi — Apple Music / Spotify semantiği.

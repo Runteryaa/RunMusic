@@ -12,6 +12,7 @@
 
 import {
   buildPlayOrder,
+  buildQueueRows,
   deriveQueueSections,
   shuffleArray,
   trackKey,
@@ -112,7 +113,37 @@ const q1 = [t('C1'), t('C2'), t('C3'), t('C4')];
   check('manuel yoksa upNext boş', s.upNext.length === 0);
   check('context kalan parçalar', JSON.stringify(ids(s.context)) === JSON.stringify(['C3', 'C4']));
   check('context indeksleri mutlak ve doğru', indicesMatch(q1, s.context));
-  check('geçmiş listelenmez', !ids(s.context).includes('C2'));
+  check('geçmiş context içinde yer almaz', !ids(s.context).includes('C2'));
+  check('geçmiş ayrı bölümde döner', JSON.stringify(ids(s.history)) === JSON.stringify(['C1']));
+  check('geçmiş indeksleri kuyruğa denk', indicesMatch(q1, s.history));
+}
+
+section('4b) Geçmiş (çalınmış parçalar) bölümü');
+
+{
+  // 4 parça çalınmış, 5. çalıyor.
+  const s = deriveQueueSections(q1, 3, []);
+  check('geçmiş eskiden yeniye sıralı', JSON.stringify(ids(s.history)) === JSON.stringify(['C1', 'C2', 'C3']));
+  check(
+    'geçmiş indeksleri 0..activeIndex-1',
+    JSON.stringify(s.history.map((e) => e.index)) === JSON.stringify([0, 1, 2])
+  );
+  check('geçmiş indeksleri kuyruğa denk', indicesMatch(q1, s.history));
+  check('mevcut parça geçmişte YOK', !ids(s.history).includes('C4'));
+  check('mevcut parça current', s.current?.track === q1[3]);
+
+  // İlk parça çalınıyorsa geçmiş boş olmalı.
+  const first = deriveQueueSections(q1, 0, []);
+  check('ilk parçada geçmiş boş', first.history.length === 0);
+
+  // Son parça çalınıyorsa geçmiş tüm önceki parçaları içerir.
+  const last = deriveQueueSections(q1, q1.length - 1, []);
+  check('son parçada geçmiş tüm öncekiler', last.history.length === q1.length - 1);
+
+  // Geçmiş + current + context = tüm kuyruk (hiçbir parça kaybolmaz/tekrarlanmaz).
+  const mid = deriveQueueSections(q1, 2, []);
+  const all = [...ids(mid.history), ...ids(mid.current ? [mid.current] : []), ...ids(mid.context)];
+  check('bölümler kuyruğu tam böler', JSON.stringify(all) === JSON.stringify(['C1', 'C2', 'C3', 'C4']));
 }
 
 section('5) deriveQueueSections — manuel öğeler araya girince');
@@ -197,6 +228,67 @@ section('10) Sıralama sonrası tutarlılık (move senaryosu)');
   check('yeni sıra kuyruktan okunur', JSON.stringify(ids(s.upNext)) === JSON.stringify(['M2', 'M1']));
   check('yeni indeksler doğru', JSON.stringify(s.upNext.map((e) => e.index)) === JSON.stringify([2, 4]));
   check('indeksler kuyruğa denk', indicesMatch(moved, s.upNext) && indicesMatch(moved, s.context));
+}
+
+section('11) Panel satır sırası (buildQueueRows)');
+
+{
+  // q1 = [C1, C2, C3, C4], C3 çalıyor, C4 sırada, manuel yok.
+  const s = deriveQueueSections(q1, 2, []);
+  const rows = buildQueueRows(s, 0, false);
+
+  check(
+    'sıra: geçmiş başlığı → geçmiş → şu an → bağlam başlığı → bağlam',
+    rows.map((r) => r.kind).join(',') ===
+      'section,history,history,current,section,context'
+  );
+  check(
+    'geçmiş satırları eskiden yeniye',
+    JSON.stringify(
+      rows.filter((r) => r.kind === 'history').map((r) => trackKey((r as any).entry.track))
+    ) === JSON.stringify(['C1', 'C2'])
+  );
+  check(
+    'şu an satırı doğru parça',
+    rows.find((r) => r.kind === 'current') !== undefined &&
+      trackKey((rows.find((r) => r.kind === 'current') as any).entry.track) === 'C3'
+  );
+  check(
+    'bağlam satırı C4',
+    JSON.stringify(
+      rows.filter((r) => r.kind === 'context').map((r) => trackKey((r as any).entry.track))
+    ) === JSON.stringify(['C4'])
+  );
+  check('geçmiş başlığı sayı gösterir', (rows[0] as any).title.includes('2'));
+
+  // İlk parça çalınıyorsa geçmiş başlığı hiç olmamalı.
+  const firstRows = buildQueueRows(deriveQueueSections(q1, 0, []), 0, false);
+  check(
+    'geçmiş yoksa başlık da yok',
+    firstRows[0].kind === 'current' && !firstRows.some((r) => r.kind === 'history')
+  );
+
+  // Manuel öğe varsa "upnext" satırı şu an ile bağlam arasında olmalı.
+  const withManual = buildQueueRows(deriveQueueSections(q2, 1, ['M1', 'M2']), 2, false);
+  const kinds = withManual.map((r) => r.kind);
+  const upnextPos = kinds.indexOf('upnext');
+  const currentPos = kinds.indexOf('current');
+  const contextPos = kinds.indexOf('context');
+  check('upnext satırı var', upnextPos !== -1);
+  check('upnext, current ile bağlam arasında', currentPos < upnextPos && upnextPos < contextPos);
+
+  // Boş/kirli girdi güvenli olmalı.
+  check('sections null ise boş dizi', buildQueueRows(null, 0, false).length === 0);
+
+  // Tüm satır anahtarları benzersiz olmalı (React key çakışması olmasın).
+  const allRows = buildQueueRows(deriveQueueSections(q2, 1, ['M1', 'M2']), 2, true);
+  const keys = allRows.map((r) => r.key);
+  check('satır anahtarları benzersiz', new Set(keys).size === keys.length);
+
+  // Shuffle başlığı farklı olmalı.
+  const shuffledRows = buildQueueRows(deriveQueueSections(q1, 1, []), 0, true);
+  const ctxTitle = (shuffledRows.find((r) => r.kind === 'section' && r.key === 'sec-context') as any)?.title ?? '';
+  check('shuffle açıkken bağlam başlığı "KARIŞIK" der', ctxTitle.includes('KARIŞIK'));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
