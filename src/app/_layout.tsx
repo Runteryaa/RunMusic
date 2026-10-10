@@ -19,6 +19,20 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 // Register background service
 TrackPlayer.registerPlaybackService(() => playbackService);
 
+/**
+ * Bildirimde (ve medya oturumunda) gösterilecek kontroller.
+ *
+ * `Capability.Stop` KASITLI OLARAK yok: durdurma düğmesi `TrackPlayer.reset()`
+ * çağrısına yol açıp çalma sırasını tamamen siliyordu, yani müziği "öldürüyordu".
+ * Duraklatma (`Pause`) zaten var ve konumu korur.
+ */
+const PLAYBACK_CAPABILITIES = [
+  Capability.Play,
+  Capability.Pause,
+  Capability.SkipToNext,
+  Capability.SkipToPrevious,
+];
+
 function MainAppLayout() {
   const activeTrack = useActiveTrack();
   const theme = useThemeStore((s) => s.theme);
@@ -148,13 +162,11 @@ export default function TabLayout() {
 
         try {
           await TrackPlayer.updateOptions({
-            capabilities: [
-              Capability.Play,
-              Capability.Pause,
-              Capability.SkipToNext,
-              Capability.SkipToPrevious,
-              Capability.Stop,
-            ],
+            capabilities: PLAYBACK_CAPABILITIES,
+            // Android'de bildirim düğmeleri yalnızca bu listeden üretilir
+            // (bkz. MusicService.kt). Açıkça veriyoruz ki `capabilities`
+            // ileride değişse bile bildirime durdurma düğmesi sızmasın.
+            notificationCapabilities: PLAYBACK_CAPABILITIES,
             compactCapabilities: [Capability.Play, Capability.Pause],
           });
           const savedRepeatMode = useStore.getState().repeatMode;
