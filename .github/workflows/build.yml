@@ -42,6 +42,12 @@ jobs:
       - name: 📦 Install Dependencies
         run: npm install --legacy-peer-deps
 
+      - name: 🚀 Publish EAS Update (OTA)
+        run: npx eas-cli update --branch production --platform android --environment production --non-interactive -m "Automated OTA update from CI"
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_SKIP_AUTO_FINGERPRINT: 1
+
       - name: 🛠 Prebuild Android
         run: npx expo prebuild --platform android
 

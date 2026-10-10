@@ -2,7 +2,12 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { RepeatMode } from 'react-native-track-player';
-import { LyricsResult, getLyricsCacheKeys } from '../services/lyricsService';
+import {
+  LyricsResult,
+  getLyricsCacheKeys,
+  type LyricsSourcePreference,
+} from '../services/lyricsService';
+import type { SortOption } from '../services/librarySort';
 import { STORE_STORAGE_KEY, resilientStorage } from '../services/persistStorage';
 import {
   findLyricsInCache,
@@ -17,6 +22,51 @@ export interface FilterSettings {
   maxSizeMB: number | null;
 }
 
+/** Şarkı sözü kaynağı tercihi, tanımı lyricsService'te (native'siz modül). */
+export type { LyricsSourcePreference };
+
+/**
+ * Kullanıcı tercihleri (Ayarlar ekranı).
+ *
+ * `settings`'ten ayrı tutulur: `settings` kitaplık TARAMASINI filtreler,
+ * `preferences` ise uygulamanın davranışını/görünümünü yönetir.
+ */
+export interface AppPreferences {
+  /** Kitaplık açılışındaki sıralama. */
+  defaultSortOption: SortOption;
+  /**
+   * Açılışta son kuyruk ve konum geri yüklensin mi. Kapatılırsa yalnızca son
+   * parça yüklenir (daha hafif).
+   */
+  restoreQueueOnLaunch: boolean;
+  /**
+   * Uygulama son kullanılanlardan kaydırılıp kapatıldığında müzik çalmaya
+   * devam etsin mi (native `appKilledPlaybackBehavior`).
+   */
+  keepPlayingWhenAppKilled: boolean;
+  /** Parça çalınca sözler otomatik aransın mı. Kapalıysa yalnızca kayıtlı sözler kullanılır. */
+  autoFetchLyrics: boolean;
+  /** Çevrimiçi söz ararken kaynak sırası. */
+  lyricsSourcePreference: LyricsSourcePreference;
+  /** Player açıldığında doğrudan sözler görünümüyle başlasın mı. */
+  openPlayerWithLyrics: boolean;
+  /** Tema renkleri albüm kapağından türetilsin mi (kapalıysa sabit tema). */
+  dynamicColorFromArtwork: boolean;
+  /** Bazı animasyonları (duraklatma ölçeği, söz geçişi) kapatır. */
+  reduceMotion: boolean;
+}
+
+export const DEFAULT_PREFERENCES: AppPreferences = {
+  defaultSortOption: 'date_desc',
+  restoreQueueOnLaunch: true,
+  keepPlayingWhenAppKilled: true,
+  autoFetchLyrics: true,
+  lyricsSourcePreference: 'lrclib_first',
+  openPlayerWithLyrics: false,
+  dynamicColorFromArtwork: true,
+  reduceMotion: false,
+};
+
 export interface TrackMetadata {
   title?: string;
   artist?: string;
@@ -27,6 +77,13 @@ export interface TrackMetadata {
 interface AppState {
   settings: FilterSettings;
   updateSettings: (settings: Partial<FilterSettings>) => void;
+
+  preferences: AppPreferences;
+  updatePreferences: (patch: Partial<AppPreferences>) => void;
+  resetPreferences: () => void;
+
+  /** Kapak önbelleğini (dosyalar + harita) temizler. */
+  clearArtworkCache: () => void;
 
   allAssets: MediaLibrary.Asset[];
   setAllAssets: (assets: MediaLibrary.Asset[]) => void;
@@ -87,7 +144,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 1;
+const PERSIST_VERSION = 2;
 
 export const useStore = create<AppState>()(
   persist(
@@ -158,6 +215,13 @@ export const useStore = create<AppState>()(
       updateSettings: (newSettings) =>
         set((state) => ({ settings: { ...state.settings, ...newSettings } })),
 
+      preferences: { ...DEFAULT_PREFERENCES },
+      updatePreferences: (patch) =>
+        set((state) => ({ preferences: { ...state.preferences, ...patch } })),
+      resetPreferences: () => set({ preferences: { ...DEFAULT_PREFERENCES } }),
+
+      clearArtworkCache: () => set({ artworkMap: {} }),
+
       allAssets: [],
       setAllAssets: (assets) =>
         set((state) => ({
@@ -225,6 +289,9 @@ export const useStore = create<AppState>()(
 
         const migrated = {
           ...incoming,
+          // Tercihler eksik/yarım olabilir (v1 kayıtlarında hiç yoktu). Varsayılanlarla
+          // birleştirilir ki ileride eklenecek yeni anahtarlar da güvenle dolsun.
+          preferences: { ...DEFAULT_PREFERENCES, ...(incoming.preferences ?? {}) },
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),
         };
 
@@ -236,6 +303,7 @@ export const useStore = create<AppState>()(
       },
       partialize: (state) => ({
         settings: state.settings,
+        preferences: state.preferences,
         isShuffle: state.isShuffle,
         repeatMode: state.repeatMode,
         hiddenTrackIds: state.hiddenTrackIds,
