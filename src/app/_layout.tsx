@@ -131,6 +131,12 @@ function MainAppLayout() {
               href: null,
             }}
           />
+          <Tabs.Screen
+            name="statistics"
+            options={{
+              href: null,
+            }}
+          />
         </Tabs>
 
         {/* Genişleyen ve Dönüşen Müzik Çalar (MiniPlayer <---> FullscreenPlayer) */}

@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getRecentHistory, getMostPlayed, getTotalListeningTime, PlayHistoryItem, MostPlayedItem } from '../services/statsDatabase';
@@ -25,28 +25,39 @@ export default function StatisticsScreen() {
   const [mostPlayedMonth, setMostPlayedMonth] = useState<MostPlayedItem[]>([]);
   const [activeTab, setActiveTab] = useState<'overview' | 'history'>('overview');
 
-  useEffect(() => {
-    async function loadStats() {
-      setLoading(true);
-      try {
-        const [time, history, mostAll, mostMonth] = await Promise.all([
-          getTotalListeningTime(),
-          getRecentHistory(30),
-          getMostPlayed(10),
-          getMostPlayed(10, 'month'),
-        ]);
-        setTotalTime(time);
-        setRecentHistory(history);
-        setMostPlayedAllTime(mostAll);
-        setMostPlayedMonth(mostMonth);
-      } catch (e) {
-        console.warn('Stats fetch error:', e);
-      } finally {
-        setLoading(false);
-      }
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadStats = useCallback(async (isRefresh = false) => {
+    if (!isRefresh) setLoading(true);
+    try {
+      const [time, history, mostAll, mostMonth] = await Promise.all([
+        getTotalListeningTime(),
+        getRecentHistory(30),
+        getMostPlayed(10),
+        getMostPlayed(10, 'month'),
+      ]);
+      setTotalTime(time);
+      setRecentHistory(history);
+      setMostPlayedAllTime(mostAll);
+      setMostPlayedMonth(mostMonth);
+    } catch (e) {
+      console.warn('Stats fetch error:', e);
+    } finally {
+      if (!isRefresh) setLoading(false);
+      if (isRefresh) setRefreshing(false);
     }
-    loadStats();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadStats();
+    }, [loadStats])
+  );
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadStats(true);
+  }, [loadStats]);
 
   const formatDuration = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -136,7 +147,18 @@ export default function StatisticsScreen() {
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
       ) : (
-        <ScrollView style={styles.scrollContent} contentContainerStyle={{ paddingBottom: 100 }}>
+        <ScrollView 
+          style={styles.scrollContent} 
+          contentContainerStyle={{ paddingBottom: 100 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.primary}
+              colors={[theme.primary]}
+            />
+          }
+        >
           {activeTab === 'overview' ? (
             <>
               {/* Total Time Card */}

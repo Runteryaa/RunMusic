@@ -20,8 +20,9 @@ export function usePlayTracker() {
 
     // Şarkı henüz kaydedilmediyse ve 30 saniye eşiğini geçtiyse
     if (trackedSessionIdRef.current !== activeTrack.id && progress.position >= 30) {
-      // Dinleme kaydediliyor
-      recordPlay(activeTrack.id, 30); // 30 saniye tetikleyici olarak kullanıldı, toplam süre farklı takip edilebilir
+      // Dinleme kaydediliyor (toplam süre hesabının doğru olması için şarkının kendi süresini ekliyoruz)
+      const durationToRecord = activeTrack.duration ? Math.floor(activeTrack.duration) : 30;
+      recordPlay(activeTrack.id, durationToRecord);
       trackedSessionIdRef.current = activeTrack.id;
     }
   }, [progress.position, activeTrack?.id]);
