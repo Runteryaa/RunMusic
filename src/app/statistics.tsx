@@ -59,13 +59,25 @@ export default function StatisticsScreen() {
     loadStats(true);
   }, [loadStats]);
 
-  const formatDuration = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) {
-      return `${hours} sa ${minutes} dk`;
-    }
-    return `${minutes} dakika`;
+  const formatDurationDetailed = (totalSeconds: number) => {
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    
+    let parts = [];
+    if (days > 0) parts.push(`${days} gün`);
+    if (hours > 0) parts.push(`${hours} saat`);
+    if (minutes > 0) parts.push(`${minutes} dk`);
+    if (seconds > 0 || parts.length === 0) parts.push(`${seconds} sn`);
+    
+    const mainText = parts.join(' ');
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    
+    return {
+      mainText,
+      subText: totalMinutes > 0 ? `(Toplam ${totalMinutes} dk)` : ''
+    };
   };
 
   const getTrackInfo = (trackId: string) => {
@@ -166,7 +178,14 @@ export default function StatisticsScreen() {
                 <Ionicons name="time-outline" size={32} color={theme.primary} />
                 <View style={styles.cardTextContent}>
                   <Text style={styles.cardTitle}>Toplam Dinleme Süresi</Text>
-                  <Text style={styles.cardValue}>{formatDuration(totalTime)}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    <Text style={styles.cardValue}>{formatDurationDetailed(totalTime).mainText}</Text>
+                    {formatDurationDetailed(totalTime).subText ? (
+                      <Text style={styles.cardSubtitle}>
+                        {formatDurationDetailed(totalTime).subText}
+                      </Text>
+                    ) : null}
+                  </View>
                 </View>
               </View>
 
@@ -275,6 +294,12 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '800',
     color: '#ffffff',
+  },
+  cardSubtitle: {
+    fontSize: 13,
+    color: '#a1a1aa',
+    marginLeft: 6,
+    fontWeight: '600',
   },
   section: {
     marginBottom: 24,
