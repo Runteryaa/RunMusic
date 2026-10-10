@@ -159,6 +159,26 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const [activeIndex, setActiveIndex] = useState<number>(0);
   const [shuffleNextIndex, setShuffleNextIndex] = useState<number | null>(null);
 
+  const createModalPanResponder = useCallback((closeFn: () => void) => {
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onStartShouldSetPanResponderCapture: () => false,
+      onMoveShouldSetPanResponder: (_, gesture) => {
+        return gesture.dy > 20 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.5;
+      },
+      onMoveShouldSetPanResponderCapture: () => false,
+      onPanResponderRelease: (_, gesture) => {
+        if (gesture.dy > 40) {
+          closeFn();
+        }
+      },
+    });
+  }, []);
+
+  const searchModalPanResponder = createModalPanResponder(() => setIsManualSearchOpen(false));
+  const optionsModalPanResponder = createModalPanResponder(() => setIsOptionsModalOpen(false));
+  const queueModalPanResponder = createModalPanResponder(() => setIsQueueModalOpen(false));
+
   // Manual Lyrics Search state
   const [isLoadingLyrics, setIsLoadingLyrics] = useState(false);
   const [isManualSearchOpen, setIsManualSearchOpen] = useState(false);
@@ -897,14 +917,43 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     [closeFullscreenPlayer]
   );
 
+  const isLyricsModeRef = useRef(isLyricsMode);
+  useEffect(() => {
+    isLyricsModeRef.current = isLyricsMode;
+  }, [isLyricsMode]);
+
+  const globalPanResponder = useMemo(
+    () => {
+      // eslint-disable-next-line react-hooks/refs
+      return PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
+        onMoveShouldSetPanResponder: (_, gesture) => {
+          if (isLyricsModeRef.current) return false;
+          // Sadece net aşağı kaydırmalarda aktif ol (diğer gesture'larla çakışmamak için)
+          return gesture.dy > 20 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.5;
+        },
+        onMoveShouldSetPanResponderCapture: (_, gesture) => {
+          if (isLyricsModeRef.current) return false;
+          return gesture.dy > 20 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.5;
+        },
+        onPanResponderRelease: (_, gesture) => {
+          if (!isLyricsModeRef.current && gesture.dy > 40) {
+            closeFullscreenPlayer();
+          }
+        },
+      });
+    },
+    [closeFullscreenPlayer]
+  );
+
   if (!activeTrack) {
     return null;
   }
 
-
-
   return (
     <View
+      {...globalPanResponder.panHandlers}
       style={[
         styles.fullscreenContainer,
         {
@@ -1473,7 +1522,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           onRequestClose={() => setIsManualSearchOpen(false)}>
           <Pressable
             style={styles.modalBackdrop}
-            onPress={() => setIsManualSearchOpen(false)}>
+            onPress={() => setIsManualSearchOpen(false)}
+            {...searchModalPanResponder.panHandlers}>
             <Pressable style={styles.searchModalBox} onPress={(e) => e.stopPropagation()}>
               <View style={styles.searchModalHeader}>
                 <Text style={styles.searchModalTitle}>Şarkı Sözü Arama</Text>
@@ -1601,7 +1651,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           onRequestClose={() => setIsOptionsModalOpen(false)}>
           <Pressable
             style={styles.modalBackdrop}
-            onPress={() => setIsOptionsModalOpen(false)}>
+            onPress={() => setIsOptionsModalOpen(false)}
+            {...optionsModalPanResponder.panHandlers}>
             <Pressable style={styles.optionsModalBox} onPress={(e) => e.stopPropagation()}>
               <TouchableOpacity
                 style={styles.optionsModalRow}
@@ -1634,7 +1685,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           animationType="slide"
           transparent
           onRequestClose={() => setIsQueueModalOpen(false)}>
-          <View style={styles.queueModalBackdrop}>
+          <View style={styles.queueModalBackdrop} {...queueModalPanResponder.panHandlers}>
             <View style={styles.queueModalCard}>
               <View style={styles.queueHeader}>
                 <View style={styles.queueHeaderHandle} />
