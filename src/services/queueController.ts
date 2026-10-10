@@ -89,9 +89,9 @@ export async function startPlaybackFromLibrary(params: {
   }
   await TrackPlayer.play();
 
-  const store = useStore.getState();
-  store.setContextIds(contextIds);
-  store.clearUpNext();
+  // TEK `set`: zustand persist her set çağrısında TÜM store'u serileştirip
+  // diske yazdığı için iki ayrı action çağırmak gereksiz iki yazım demekti.
+  useStore.setState({ contextIds, upNextIds: [] });
   await persistQueue();
 }
 
