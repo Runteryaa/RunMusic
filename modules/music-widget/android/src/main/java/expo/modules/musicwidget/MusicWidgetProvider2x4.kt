@@ -22,15 +22,15 @@ class MusicWidgetProvider2x4 : AppWidgetProvider() {
             // Intents for Media Buttons
             views.setOnClickPendingIntent(
                 context.resources.getIdentifier("widget_btn_play_pause", "id", context.packageName),
-                getMediaButtonPendingIntent(context, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+                getCustomActionPendingIntent(context, "play_pause")
             )
             views.setOnClickPendingIntent(
                 context.resources.getIdentifier("widget_btn_next", "id", context.packageName),
-                getMediaButtonPendingIntent(context, KeyEvent.KEYCODE_MEDIA_NEXT)
+                getCustomActionPendingIntent(context, "next")
             )
             views.setOnClickPendingIntent(
                 context.resources.getIdentifier("widget_btn_prev", "id", context.packageName),
-                getMediaButtonPendingIntent(context, KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+                getCustomActionPendingIntent(context, "prev")
             )
 
             // Intent to open app
@@ -43,19 +43,6 @@ class MusicWidgetProvider2x4 : AppWidgetProvider() {
             appWidgetManager.updateAppWidget(appWidgetId, views)
         }
 
-        private fun getMediaButtonPendingIntent(context: Context, keycode: Int): PendingIntent {
-            val intent = Intent(Intent.ACTION_MEDIA_BUTTON)
-            intent.component = android.content.ComponentName(context, "com.doublesymmetry.trackplayer.service.MusicService")
-            val event = KeyEvent(KeyEvent.ACTION_DOWN, keycode)
-            intent.putExtra(Intent.EXTRA_KEY_EVENT, event)
-            
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                PendingIntent.getForegroundService(context, keycode, intent, flags)
-            } else {
-                PendingIntent.getService(context, keycode, intent, flags)
-            }
-        }
         private fun getCustomActionPendingIntent(context: Context, actionName: String): PendingIntent {
             val intent = Intent(context, WidgetActionReceiver::class.java)
             intent.putExtra("action", actionName)
