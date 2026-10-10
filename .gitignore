@@ -39,6 +39,9 @@ yarn-error.*
 # doğrulama script'i derleme çıktısı (scripts/verify-persist-migration.ts)
 .tmp-verify/
 
+# EAS Update sırasında geçici dizin (bkz. AGENTS.md - hermesc %TEMP% izin sorunu)
+.tmp-eas/
+
 example
 
 # generated native folders
