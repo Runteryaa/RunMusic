@@ -120,21 +120,10 @@ function MainAppLayout() {
             }}
           />
           <Tabs.Screen
-            name="library"
-            options={{
-              href: null,
-            }}
-          />
-          <Tabs.Screen
-            name="explore"
-            options={{
-              href: null,
-            }}
-          />
-          <Tabs.Screen
             name="statistics"
             options={{
               href: null,
+              headerShown: false,
             }}
           />
         </Tabs>
