@@ -273,7 +273,10 @@ export function MiniPlayer() {
 
   return (
     <View
-      style={[styles.miniPlayerContainer, { borderColor: theme.border }]}
+      style={[
+        styles.miniPlayerContainer,
+        { borderTopColor: theme.border || 'rgba(255, 255, 255, 0.1)' },
+      ]}
       {...panResponder.panHandlers}>
       {/* Top 2px Progress Bar */}
       <View style={styles.progressBarTrack}>
@@ -393,18 +396,20 @@ export function MiniPlayer() {
 
 const styles = StyleSheet.create({
   miniPlayerContainer: {
-    backgroundColor: '#1f1f23',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    marginHorizontal: 10,
-    marginBottom: 4,
+    backgroundColor: '#18181b',
+    borderRadius: 0,
+    borderTopWidth: 1,
+    borderBottomWidth: 0,
+    borderLeftWidth: 0,
+    borderRightWidth: 0,
+    marginHorizontal: 0,
+    marginBottom: 0,
     overflow: 'hidden',
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 12,
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 10,
   },
   progressBarTrack: {
     height: 2,
@@ -453,7 +458,7 @@ const styles = StyleSheet.create({
   controlsBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1f1f23', // Mask text sliding under controls
+    backgroundColor: '#18181b', // Mask text sliding under controls
   },
   controlIconBtn: {
     width: 38,

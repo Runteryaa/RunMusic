@@ -61,7 +61,7 @@ function MainAppLayout() {
       <View style={{ flex: 1, backgroundColor: '#121212' }}>
         <Tabs
           screenOptions={{
-            headerShown: false,
+            headerShown: true,
             headerStyle: {
               backgroundColor: '#121212',
               elevation: 0,
@@ -84,6 +84,7 @@ function MainAppLayout() {
             name="index"
             options={{
               title: 'Kütüphane',
+              headerShown: false,
               tabBarIcon: ({ color }) => <Ionicons name="musical-notes" size={24} color={color} />,
             }}
           />

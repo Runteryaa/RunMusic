@@ -864,14 +864,20 @@ export function FullscreenPlayerModal() {
               styles.coverCenterBox,
               {
                 opacity: lyricsTransition.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [1, 0],
+                  inputRange: [0, 0.45, 1],
+                  outputRange: [1, 0.2, 0],
                 }),
                 transform: [
                   {
                     scale: lyricsTransition.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [1, 0.9],
+                      outputRange: [1, 0.55],
+                    }),
+                  },
+                  {
+                    translateY: lyricsTransition.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0, 90],
                     }),
                   },
                 ],
@@ -1140,7 +1146,7 @@ export function FullscreenPlayerModal() {
         <View style={styles.bottomSection}>
           {/* Şarkı Başlığı & Sanatçı */}
           <View style={styles.metaRow}>
-            <View style={{ flex: 1, marginRight: 16 }}>
+            <View style={{ flex: 1, marginRight: 14 }}>
               <Text style={styles.trackTitle} numberOfLines={1}>
                 {displayTitle}
               </Text>
@@ -1148,6 +1154,35 @@ export function FullscreenPlayerModal() {
                 {displayArtist}
               </Text>
             </View>
+
+            {/* Şarkı Sözleri Modunda Sağ Tarafa Animasyonla Yerleşen Küçük Kapak */}
+            <Animated.View
+              style={{
+                opacity: lyricsTransition,
+                transform: [
+                  {
+                    scale: lyricsTransition.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.4, 1],
+                    }),
+                  },
+                ],
+              }}
+              pointerEvents={isLyricsMode ? 'auto' : 'none'}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={toggleLyricsMode}
+                style={styles.lyricsMiniCoverBtn}>
+                <TrackArtwork
+                  uri={currentArtworkUri}
+                  trackId={activeTrack.id}
+                  trackUri={activeTrack.url}
+                  size={52}
+                  borderRadius={10}
+                  iconSize={26}
+                />
+              </TouchableOpacity>
+            </Animated.View>
           </View>
 
           {/* İlerleme Çubuğu (Apple Music Scrubber) */}
@@ -1560,16 +1595,15 @@ const styles = StyleSheet.create({
   },
   lyricsCardContainer: {
     position: 'absolute',
-    top: 8,
-    bottom: 8,
-    left: 16,
-    right: 16,
-    alignSelf: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+    top: 4,
+    bottom: 4,
+    left: 8,
+    right: 8,
+    alignSelf: 'stretch',
     borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
   lyricsCardHeader: {
     flexDirection: 'row',
@@ -1712,6 +1746,17 @@ const styles = StyleSheet.create({
   },
   metaActionBtn: {
     padding: 6,
+  },
+  lyricsMiniCoverBtn: {
+    borderRadius: 10,
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.45,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   scrubberBox: {
     marginBottom: 6,

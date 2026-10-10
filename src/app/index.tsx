@@ -16,6 +16,7 @@ import * as MediaLibrary from 'expo-media-library/legacy';
 import * as FileSystem from 'expo-file-system';
 import TrackPlayer, { useActiveTrack } from 'react-native-track-player';
 import { Swipeable } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
@@ -48,6 +49,7 @@ const SORT_OPTIONS: SortItem[] = [
 ];
 
 export default function LibraryScreen() {
+  const insets = useSafeAreaInsets();
   const theme = useThemeStore((s) => s.theme);
   const library = useStore((s) => s.library);
   const setLibrary = useStore((s) => s.setLibrary);
@@ -484,7 +486,7 @@ export default function LibraryScreen() {
     <View style={styles.container}>
       {/* Top Header / Search Bar */}
       {isSearchOpen ? (
-        <View style={styles.searchBarContainer}>
+        <View style={[styles.searchBarContainer, { paddingTop: Math.max(insets.top, 16) + 4 }]}>
           <TouchableOpacity onPress={closeSearch} style={styles.searchBackBtn}>
             <Ionicons name="arrow-back" size={22} color="#ffffff" />
           </TouchableOpacity>
@@ -506,7 +508,7 @@ export default function LibraryScreen() {
           </View>
         </View>
       ) : (
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) + 4 }]}>
           <View>
             <Text style={styles.headerTitle}>Kütüphane</Text>
             <Text style={styles.headerSubtitle}>
@@ -786,7 +788,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 120, // MiniPlayer ve TabBar'ın altında kalmaması için
+    paddingBottom: 136, // MiniPlayer ve TabBar'ın altında kalmaması için
   },
   trackItem: {
     flexDirection: 'row',
