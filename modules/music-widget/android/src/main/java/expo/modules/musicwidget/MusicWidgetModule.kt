@@ -9,8 +9,6 @@ import android.graphics.Color
 import android.widget.RemoteViews
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URL
 
@@ -22,20 +20,17 @@ class MusicWidgetModule : Module() {
       val context = appContext.reactContext ?: return@AsyncFunction
       val appWidgetManager = AppWidgetManager.getInstance(context)
 
-      // Fetch bitmap in background
-      val bitmap = withContext(Dispatchers.IO) {
-        try {
-          if (artworkUri != null) {
-            if (artworkUri.startsWith("http")) {
-              BitmapFactory.decodeStream(URL(artworkUri).openStream())
-            } else {
-              val path = artworkUri.replace("file://", "")
-              BitmapFactory.decodeFile(path)
-            }
-          } else null
-        } catch (e: Exception) {
-          null
-        }
+      val bitmap = try {
+        if (artworkUri != null) {
+          if (artworkUri.startsWith("http")) {
+            BitmapFactory.decodeStream(URL(artworkUri).openStream())
+          } else {
+            val path = artworkUri.replace("file://", "")
+            BitmapFactory.decodeFile(path)
+          }
+        } else null
+      } catch (e: Exception) {
+        null
       }
 
       val bgColor = try { Color.parseColor(bgColorHex ?: "#212121") } catch (e: Exception) { Color.parseColor("#212121") }
