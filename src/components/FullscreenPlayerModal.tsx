@@ -1102,7 +1102,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             <View style={styles.lyricsCardHeader}>
               <View style={[styles.lyricsSourceBadge, { backgroundColor: theme.surface }]}>
                 <Ionicons
-                  name={hasWordSync ? 'sparkles' : currentLyrics?.source === 'lrclib' ? 'musical-notes' : 'document-text-outline'}
+                  name={
+                    hasWordSync
+                      ? 'sparkles'
+                      : currentLyrics?.syncedLyrics || parsedLines.length > 0
+                      ? 'musical-notes'
+                      : 'document-text-outline'
+                  }
                   size={12}
                   color={hasWordSync ? '#10b981' : theme.primary}
                   style={{ marginRight: 4 }}
@@ -1112,6 +1118,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     ? 'LRCLIB (Kelime Senkronizasyonu ✨)'
                     : currentLyrics?.syncedLyrics || parsedLines.length > 0
                     ? 'LRCLIB (Senkronize)'
+                    : currentLyrics?.source === 'lrclib'
+                    ? 'LRCLIB (Düz Metin)'
                     : currentLyrics?.source === 'genius'
                     ? 'Genius (Düz Metin)'
                     : 'Şarkı Sözleri'}
