@@ -153,28 +153,28 @@ export function MiniPlayer() {
             return;
           }
           if (gesture.dx < -35) {
-            // Sola kaydırma: Sonraki şarkı
+            // Sola kaydırma: Sonraki şarkı — hemen geç, animasyon paralel
             isMiniSkippingRef.current = true;
+            skipNext();
             Animated.spring(miniPanX, {
               toValue: -90,
               tension: 70,
               friction: 9,
               useNativeDriver: true,
             }).start(() => {
-              skipNext();
               miniPanX.setValue(0);
               isMiniSkippingRef.current = false;
             });
           } else if (gesture.dx > 35) {
-            // Sağa kaydırma: Önceki şarkı
+            // Sağa kaydırma: Önceki şarkı — hemen geç, animasyon paralel
             isMiniSkippingRef.current = true;
+            skipPrev();
             Animated.spring(miniPanX, {
               toValue: 90,
               tension: 70,
               friction: 9,
               useNativeDriver: true,
             }).start(() => {
-              skipPrev();
               miniPanX.setValue(0);
               isMiniSkippingRef.current = false;
             });
