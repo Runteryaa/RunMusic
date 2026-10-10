@@ -111,7 +111,7 @@ function MainAppLayout() {
 
         {/* Kalıcı Alt Mini Çalar (Tab Bar üzerinde yüzer) */}
         <View
-          style={{ position: 'absolute', bottom: 56, left: 0, right: 0 }}
+          style={{ position: 'absolute', bottom: 55, left: 0, right: 0 }}
           pointerEvents="box-none">
           <MiniPlayer />
         </View>

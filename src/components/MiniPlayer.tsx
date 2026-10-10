@@ -289,7 +289,7 @@ export function MiniPlayer() {
       </View>
 
       <View style={styles.contentRow}>
-        <View style={{ flex: 1, overflow: 'visible' }}>
+        <View style={{ flex: 1, overflow: 'hidden', marginRight: 4 }}>
           <Animated.View
             style={[
               styles.animatedInfoRow,
@@ -397,8 +397,8 @@ export function MiniPlayer() {
 const styles = StyleSheet.create({
   miniPlayerContainer: {
     backgroundColor: '#18181b',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
     borderTopWidth: 1,
@@ -461,12 +461,14 @@ const styles = StyleSheet.create({
   controlsBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#18181b', // Mask text sliding under controls
+    backgroundColor: '#18181b',
+    paddingLeft: 6,
+    zIndex: 10,
   },
   controlIconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 42,
+    height: 42,
+    borderRadius: 15,
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 4,
