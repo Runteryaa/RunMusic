@@ -40,7 +40,10 @@ const LYRICS_SOURCES: { value: LyricsSourcePreference; label: string }[] = [
   { value: 'lrclib_only', label: 'Yalnızca LRCLIB' },
 ];
 
+import { useRouter } from 'expo-router';
+
 export default function SettingsScreen() {
+  const router = useRouter();
   const theme = useThemeStore((s) => s.theme);
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
@@ -258,6 +261,20 @@ export default function SettingsScreen() {
           hint="Son kullanılanlardan kaydırıp kapatınca müzik durmasın."
           value={preferences.keepPlayingWhenAppKilled}
           onChange={(v) => updatePreferences({ keepPlayingWhenAppKilled: v })}
+        />
+      </Section>
+
+      {/* ── İSTATİSTİKLER ─────────────────────────────────────────────────── */}
+      <Section
+        icon="stats-chart-outline"
+        title="İstatistikler ve Geçmiş"
+        subtitle="Dinleme verileriniz ve en çok dinlenenler"
+        theme={theme}>
+        <ActionRow
+          theme={theme}
+          label="Detayları Görüntüle"
+          icon="chevron-forward-outline"
+          onPress={() => router.push('/statistics')}
         />
       </Section>
 

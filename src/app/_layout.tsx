@@ -163,6 +163,12 @@ export default function TabLayout() {
 
     async function setup() {
       try {
+        try {
+          const { initStatsDB } = require('../services/statsDatabase');
+          await initStatsDB();
+        } catch (dbErr) {
+          console.warn('Stats DB init error:', dbErr);
+        }
 
         try {
           await TrackPlayer.setupPlayer();

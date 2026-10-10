@@ -13,6 +13,7 @@ import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { MiniPlayer } from './MiniPlayer';
 import { FullscreenPlayerModal } from './FullscreenPlayerModal';
+import { usePlayTracker } from '../hooks/usePlayTracker';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MINI_HEIGHT = 62;
@@ -21,6 +22,7 @@ const MINI_MARGIN = 10;
 const MINI_RADIUS = 10;
 
 export function ExpandingPlayer() {
+  usePlayTracker();
   const activeTrack = useActiveTrack();
   const theme = useThemeStore((s) => s.theme);
   const isFullscreenPlayerOpen = usePlayerUIStore((s) => s.isFullscreenPlayerOpen);

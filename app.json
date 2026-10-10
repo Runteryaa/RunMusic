@@ -7,7 +7,9 @@
     "icon": "./assets/images/icon.png",
     "scheme": "runmusic",
     "userInterfaceStyle": "dark",
-    "platforms": ["android"],
+    "platforms": [
+      "android"
+    ],
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -47,7 +49,8 @@
           "savePhotosPermission": "Allow RunMusic to save audio files.",
           "isAccessMediaLocationEnabled": true
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true,
