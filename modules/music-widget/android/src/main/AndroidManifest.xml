@@ -1,4 +1,4 @@
-<manifest package="expo.modules.musicwidget">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="expo.modules.musicwidget">
     <application>
         <receiver android:name=".MusicWidgetProvider1x4" android:exported="true">
             <intent-filter>
