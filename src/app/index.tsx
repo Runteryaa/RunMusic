@@ -30,14 +30,7 @@ import {
   startPlaybackFromLibrary,
   type QueueTrack,
 } from '../services/queueController';
-
-type SortOption =
-  | 'name_asc'
-  | 'name_desc'
-  | 'duration_asc'
-  | 'duration_desc'
-  | 'date_desc'
-  | 'date_asc';
+import { compareAddedDate, type SortOption } from '../services/librarySort';
 
 interface SortItem {
   id: SortOption;
@@ -299,10 +292,12 @@ export default function LibraryScreen() {
           return (a.asset.duration || 0) - (b.asset.duration || 0);
         case 'duration_desc':
           return (b.asset.duration || 0) - (a.asset.duration || 0);
+        // Eklenme tarihi: `creationTime` ses dosyalarında 0 olduğu için
+        // kullanılmaz; doğru alan `modificationTime` (bkz. librarySort.ts).
         case 'date_desc':
-          return (b.asset.creationTime || 0) - (a.asset.creationTime || 0);
+          return compareAddedDate(b.asset, a.asset);
         case 'date_asc':
-          return (a.asset.creationTime || 0) - (b.asset.creationTime || 0);
+          return compareAddedDate(a.asset, b.asset);
         default:
           return 0;
       }
