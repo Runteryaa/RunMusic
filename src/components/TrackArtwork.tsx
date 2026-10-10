@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
+
+import Animated from 'react-native-reanimated';
 
 interface TrackArtworkProps {
   uri?: string | null;
@@ -14,6 +16,7 @@ interface TrackArtworkProps {
   borderRadius?: number;
   iconSize?: number;
   shadow?: boolean;
+  sharedTransitionTag?: string;
 }
 
 export function TrackArtwork({
@@ -24,6 +27,7 @@ export function TrackArtwork({
   borderRadius = 10,
   iconSize = 20,
   shadow = false,
+  sharedTransitionTag,
 }: TrackArtworkProps) {
   const [hasError, setHasError] = useState(false);
   const theme = useThemeStore((state) => state.theme);
@@ -61,7 +65,7 @@ export function TrackArtwork({
 
   if (effectiveUri && !hasError) {
     return (
-      <View style={containerStyle}>
+      <Animated.View style={containerStyle} sharedTransitionTag={sharedTransitionTag}>
         <Image
           source={{ uri: effectiveUri }}
           style={{ width: size, height: size, borderRadius }}
@@ -69,14 +73,14 @@ export function TrackArtwork({
           transition={200}
           onError={() => setHasError(true)}
         />
-      </View>
+      </Animated.View>
     );
   }
 
   return (
-    <View style={containerStyle}>
+    <Animated.View style={containerStyle} sharedTransitionTag={sharedTransitionTag}>
       <Ionicons name="musical-notes" size={iconSize} color={theme.primary} />
-    </View>
+    </Animated.View>
   );
 }
 

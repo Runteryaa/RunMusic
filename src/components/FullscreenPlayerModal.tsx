@@ -45,7 +45,7 @@ import {
 } from '../services/lyricsService';
 import { saveLastPlayback } from '../services/playbackStorage';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
 
 function getRandomIndex(length: number): number {
@@ -86,7 +86,16 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     if (!expandAnim) return 1;
     return expandAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [0.4, 1],
+      outputRange: [44 / ARTWORK_SIZE, 1],
+      extrapolate: 'clamp',
+    });
+  }, [expandAnim]);
+
+  const middleMorphX = useMemo(() => {
+    if (!expandAnim) return 0;
+    return expandAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [44 - (SCREEN_WIDTH / 2), 0],
       extrapolate: 'clamp',
     });
   }, [expandAnim]);
@@ -95,7 +104,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     if (!expandAnim) return 0;
     return expandAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [100, 0],
+      outputRange: [(SCREEN_HEIGHT / 2) + 50, 0],
       extrapolate: 'clamp',
     });
   }, [expandAnim]);
@@ -105,6 +114,24 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     return expandAnim.interpolate({
       inputRange: [0, 1],
       outputRange: [70, 0],
+      extrapolate: 'clamp',
+    });
+  }, [expandAnim]);
+
+  const textMorphX = useMemo(() => {
+    if (!expandAnim) return 0;
+    return expandAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [52, 0], // 76 - 24 = 52
+      extrapolate: 'clamp',
+    });
+  }, [expandAnim]);
+
+  const textMorphY = useMemo(() => {
+    if (!expandAnim) return 0;
+    return expandAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [200, 0],
       extrapolate: 'clamp',
     });
   }, [expandAnim]);
@@ -935,6 +962,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           {
             transform: [
               { scale: middleMorphScale },
+              { translateX: middleMorphX },
               { translateY: middleMorphY },
             ],
           },
@@ -1106,6 +1134,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       outputRange: [0.92, 1],
                     }),
                   },
+                  { scale: artworkScale },
                 ],
               },
             ]}
@@ -1270,7 +1299,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         {/* ALT BÖLÜM: Apple Music Şarkı Bilgileri, Scrubber ve Kontroller */}
         <Animated.View style={[styles.bottomSection, { transform: [{ translateY: bottomMorphY }] }]}>
           {/* Şarkı Başlığı & Sanatçı */}
-          <View style={styles.metaRow}>
+          <Animated.View style={[styles.metaRow, { transform: [{ translateX: textMorphX }, { translateY: textMorphY }] }]}>
             <View style={{ flex: 1, marginRight: 14 }}>
               <Text style={styles.trackTitle} numberOfLines={1}>
                 {displayTitle}
@@ -1308,7 +1337,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 />
               </TouchableOpacity>
             </Animated.View>
-          </View>
+          </Animated.View>
 
           {/* İlerleme Çubuğu (Apple Music Scrubber) */}
           <View style={styles.scrubberBox}>

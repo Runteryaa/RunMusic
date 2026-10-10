@@ -1,9 +1,12 @@
-import React, { useMemo, useEffect } from 'react';
-import {
-  StyleSheet,
-  Animated,
-  Dimensions,
-} from 'react-native';
+import React, { useEffect, useMemo } from 'react';
+import { StyleSheet, Dimensions, Animated as RNAnimated } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  interpolate,
+  Extrapolation,
+} from 'react-native-reanimated';
 import { useActiveTrack } from 'react-native-track-player';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
@@ -21,109 +24,91 @@ export function ExpandingPlayer() {
   const theme = useThemeStore((s) => s.theme);
   const isFullscreenPlayerOpen = usePlayerUIStore((s) => s.isFullscreenPlayerOpen);
 
-  const expandAnim = useMemo(() => new Animated.Value(0), []);
+  const expandVal = useSharedValue(0);
+  const rnExpandAnim = useMemo(() => new RNAnimated.Value(0), []);
 
   useEffect(() => {
     if (isFullscreenPlayerOpen) {
-      Animated.spring(expandAnim, {
+      expandVal.value = withSpring(1, {
+        damping: 26,
+        mass: 0.9,
+        stiffness: 240,
+      });
+      RNAnimated.spring(rnExpandAnim, {
         toValue: 1,
         damping: 26,
         mass: 0.9,
         stiffness: 240,
-        useNativeDriver: false,
+        useNativeDriver: true, // We can now use native driver for opacity inside Fullscreen
       }).start();
     } else {
-      Animated.spring(expandAnim, {
+      expandVal.value = withSpring(0, {
+        damping: 26,
+        mass: 0.9,
+        stiffness: 260,
+      });
+      RNAnimated.spring(rnExpandAnim, {
         toValue: 0,
         damping: 26,
         mass: 0.9,
         stiffness: 260,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }).start();
     }
-  }, [isFullscreenPlayerOpen, expandAnim]);
+  }, [isFullscreenPlayerOpen, expandVal, rnExpandAnim]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      bottom: interpolate(expandVal.value, [0, 1], [MINI_BOTTOM, 0]),
+      marginHorizontal: interpolate(expandVal.value, [0, 0.7, 1], [MINI_MARGIN, 3, 0]),
+      height: interpolate(expandVal.value, [0, 1], [MINI_HEIGHT, SCREEN_HEIGHT]),
+      borderTopLeftRadius: interpolate(expandVal.value, [0, 0.45, 1], [MINI_RADIUS, 18, 0]),
+      borderTopRightRadius: interpolate(expandVal.value, [0, 0.45, 1], [MINI_RADIUS, 18, 0]),
+      borderTopWidth: interpolate(expandVal.value, [0, 0.75, 1], [1, 0.5, 0]),
+      borderLeftWidth: interpolate(expandVal.value, [0, 0.75, 1], [1, 0.5, 0]),
+      borderRightWidth: interpolate(expandVal.value, [0, 0.75, 1], [1, 0.5, 0]),
+    };
+  });
+
+  const miniStyle = useAnimatedStyle(() => {
+    return {
+      opacity: interpolate(expandVal.value, [0, 0.16], [1, 0], Extrapolation.CLAMP),
+    };
+  });
+
+  const fullStyle = useAnimatedStyle(() => {
+    return {
+      opacity: interpolate(expandVal.value, [0.12, 0.45], [0, 1], Extrapolation.CLAMP),
+    };
+  });
 
   if (!activeTrack) {
     return null;
   }
-
-  const containerBottom = expandAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [MINI_BOTTOM, 0],
-  });
-
-  const containerMarginHorizontal = expandAnim.interpolate({
-    inputRange: [0, 0.7, 1],
-    outputRange: [MINI_MARGIN, 3, 0],
-  });
-
-  const containerHeight = expandAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [MINI_HEIGHT, SCREEN_HEIGHT],
-  });
-
-  const containerRadius = expandAnim.interpolate({
-    inputRange: [0, 0.45, 1],
-    outputRange: [MINI_RADIUS, 18, 0],
-  });
-
-  const containerBorderWidth = expandAnim.interpolate({
-    inputRange: [0, 0.75, 1],
-    outputRange: [1, 0.5, 0],
-  });
-
-  const miniOpacity = expandAnim.interpolate({
-    inputRange: [0, 0.16],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-
-  const fullOpacity = expandAnim.interpolate({
-    inputRange: [0.12, 0.45],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
 
   return (
     <Animated.View
       style={[
         styles.expandingCard,
         {
-          bottom: containerBottom,
-          marginHorizontal: containerMarginHorizontal,
-          height: containerHeight,
-          borderTopLeftRadius: containerRadius,
-          borderTopRightRadius: containerRadius,
-          borderTopWidth: containerBorderWidth,
-          borderLeftWidth: containerBorderWidth,
-          borderRightWidth: containerBorderWidth,
-          borderBottomWidth: 0,
           borderColor: theme.border || 'rgba(255, 255, 255, 0.12)',
+          borderBottomWidth: 0,
         },
+        animatedStyle,
       ]}
       pointerEvents="box-none">
       {/* 1. MINIPLAYER CONTENT LAYER */}
       <Animated.View
-        style={[
-          styles.miniContentLayer,
-          {
-            opacity: miniOpacity,
-          },
-        ]}
+        style={[styles.miniContentLayer, miniStyle]}
         pointerEvents={isFullscreenPlayerOpen ? 'none' : 'auto'}>
         <MiniPlayer isEmbedded />
       </Animated.View>
 
       {/* 2. FULLSCREEN PLAYER CONTENT LAYER */}
       <Animated.View
-        style={[
-          styles.fullscreenContentLayer,
-          {
-            opacity: fullOpacity,
-          },
-        ]}
+        style={[styles.fullscreenContentLayer, fullStyle]}
         pointerEvents={isFullscreenPlayerOpen ? 'auto' : 'none'}>
-        <FullscreenPlayerModal expandAnim={expandAnim} />
+        <FullscreenPlayerModal expandAnim={rnExpandAnim} />
       </Animated.View>
     </Animated.View>
   );
