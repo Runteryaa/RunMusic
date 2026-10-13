@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Linking,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import * as Updates from 'expo-updates';
@@ -39,8 +40,6 @@ const LYRICS_SOURCES: { value: LyricsSourcePreference; label: string }[] = [
   { value: 'genius_first', label: 'Genius önce' },
   { value: 'lrclib_only', label: 'Yalnızca LRCLIB' },
 ];
-
-import { useRouter } from 'expo-router';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -238,6 +237,21 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+      {/* ── İSTATİSTİKLER VE GEÇMİŞ (EN BAŞTA BUTON) ────────────────────────── */}
+      <TouchableOpacity
+        style={[styles.statButtonCard, { borderColor: theme.border || '#27272a' }]}
+        activeOpacity={0.7}
+        onPress={() => router.push('/statistics')}>
+        <View style={[styles.statButtonIcon, { backgroundColor: `${theme.primary}20` }]}>
+          <Ionicons name="stats-chart" size={20} color={theme.primary} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.statButtonTitle}>İstatistikler ve Geçmiş</Text>
+          <Text style={styles.statButtonSubtitle}>Dinleme verileriniz ve en çok dinlenenler</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color="#a1a1aa" style={{ marginLeft: 8 }} />
+      </TouchableOpacity>
+
       {/* ── ÇALMA ─────────────────────────────────────────────────────────── */}
       <Section icon="musical-notes-outline" title="Çalma" theme={theme}>
         <ChipsRow
@@ -261,20 +275,6 @@ export default function SettingsScreen() {
           hint="Son kullanılanlardan kaydırıp kapatınca müzik durmasın."
           value={preferences.keepPlayingWhenAppKilled}
           onChange={(v) => updatePreferences({ keepPlayingWhenAppKilled: v })}
-        />
-      </Section>
-
-      {/* ── İSTATİSTİKLER ─────────────────────────────────────────────────── */}
-      <Section
-        icon="stats-chart-outline"
-        title="İstatistikler ve Geçmiş"
-        subtitle="Dinleme verileriniz ve en çok dinlenenler"
-        theme={theme}>
-        <ActionRow
-          theme={theme}
-          label="Detayları Görüntüle"
-          icon="chevron-forward-outline"
-          onPress={() => router.push('/statistics')}
         />
       </Section>
 
@@ -579,7 +579,7 @@ function Section({
   theme: Theme;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   return (
     <View style={styles.section}>
       <TouchableOpacity
@@ -974,5 +974,33 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 13,
     fontWeight: '700',
+  },
+  statButtonCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#18181b',
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginBottom: 14,
+  },
+  statButtonIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  statButtonTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  statButtonSubtitle: {
+    fontSize: 12,
+    color: '#71717a',
+    marginTop: 2,
   },
 });
