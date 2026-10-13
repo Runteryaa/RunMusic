@@ -1377,11 +1377,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         <Image
           source={{ uri: currentArtworkUri }}
           style={StyleSheet.absoluteFill}
-          blurRadius={70}
+          blurRadius={35}
           contentFit="cover"
-          // Tüm ekranı kapladığı için, önceki şarkının bulanık görselinin yeni
-          // kapak yüklenene kadar ekranda kalması en çok burada fark ediliyordu.
-          recyclingKey={currentArtworkUri}
+          transition={500}
         />
       ) : null}
       <View style={[StyleSheet.absoluteFill, styles.backdropOverlay]} />

@@ -204,7 +204,8 @@ function rgbToHex(r: number, g: number, b: number): string {
   return '#' + [r, g, b].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
 
-function hexToRgb(hex: string): [number, number, number] {
+export function hexToRgb(hex: string | null | undefined): [number, number, number] {
+  if (!hex || typeof hex !== 'string') return [59, 130, 246];
   const clean = hex.replace('#', '');
   const num = parseInt(clean, 16);
   if (isNaN(num)) return [59, 130, 246];
