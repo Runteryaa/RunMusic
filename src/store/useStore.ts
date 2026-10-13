@@ -147,6 +147,10 @@ interface AppState {
 
   isHydrated: boolean;
   setIsHydrated: (isHydrated: boolean) => void;
+
+  /** Kuyruk içeriği her değiştiğinde artırılır; UI ekranlarının anında senkronize olmasını sağlar. */
+  queueRevision: number;
+  bumpQueueRevision: () => void;
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
@@ -289,6 +293,9 @@ export const useStore = create<AppState>()(
 
       isHydrated: false,
       setIsHydrated: (isHydrated) => set({ isHydrated }),
+
+      queueRevision: 0,
+      bumpQueueRevision: () => set((state) => ({ queueRevision: state.queueRevision + 1 })),
     }),
     {
       name: STORE_STORAGE_KEY,

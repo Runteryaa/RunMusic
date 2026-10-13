@@ -64,6 +64,7 @@ async function persistQueue(): Promise<void> {
     contextIds: s.contextIds,
     isShuffle: s.isShuffle,
   });
+  s.bumpQueueRevision();
 }
 
 async function readQueueState(): Promise<{ queue: Track[]; activeIndex: number }> {
@@ -239,15 +240,17 @@ export async function clearUpNextQueue(): Promise<void> {
  * kalır; yalnızca kütüphane bağlamı karıştırılır ya da `contextIds` sırasına
  * göre geri dizilir.
  *
- * Not: `setQueue` yerel oynatıcıyı sıfırladığı için konum `seekTo` ile geri
- * yüklenir; bu yüzden kısa bir ses kesintisi olur (bilinçli bir kullanıcı
- * eylemi olduğu için kabul edilebilir).
+ * Kesintisiz (gapless) oynatma:
+ * Yerel oynatıcıda `setQueue` kullanmak yerine `removeUpcomingTracks()` ile
+ * yalnızca mevcut çalan parçanın ardındaki parçalar silinir ve yeni sıra
+ * `TrackPlayer.add()` ile eklenir. Böylece çalan parça HİÇ DURMAZ, ses kesintisi
+ * yaşanmaz.
  */
 export async function setShuffle(enabled: boolean, smart: boolean = false): Promise<void> {
   const store = useStore.getState();
   const { queue, activeIndex } = await readQueueState();
 
-  if (queue.length === 0) {
+  if (queue.length === 0 || activeIndex < 0) {
     store.setIsShuffle(enabled);
     store.setIsSmartShuffle(enabled ? smart : false);
     return;
@@ -284,19 +287,27 @@ export async function setShuffle(enabled: boolean, smart: boolean = false): Prom
     getArtist: (t) => metadataMap[t.id || '']?.artist || t.artist,
   });
 
-  const newQueue = [...history, ...upcoming];
-
-  await TrackPlayer.setQueue(newQueue);
-  if (activeIndex > 0) {
-    await TrackPlayer.skip(activeIndex);
-  }
-  if (position > 0) {
-    await TrackPlayer.seekTo(position);
-  }
-  if (wasPlaying) {
-    await TrackPlayer.play();
-  } else {
-    await TrackPlayer.pause();
+  try {
+    // Çalan parçayı durdurmadan ve sıfırlamadan sıradaki parçaları güncelle
+    await TrackPlayer.removeUpcomingTracks();
+    if (upcoming.length > 0) {
+      await TrackPlayer.add(upcoming as Track[]);
+    }
+  } catch (err) {
+    console.warn('Seamless queue update failed, falling back to setQueue', err);
+    const newQueue = [...history, ...upcoming];
+    await TrackPlayer.setQueue(newQueue);
+    if (activeIndex > 0) {
+      await TrackPlayer.skip(activeIndex);
+    }
+    if (position > 0) {
+      await TrackPlayer.seekTo(position);
+    }
+    if (wasPlaying) {
+      await TrackPlayer.play();
+    } else {
+      await TrackPlayer.pause();
+    }
   }
 
   // Tek `set`: persist her set'te tüm store'u yazdığı için birleştiriyoruz.
@@ -308,6 +319,8 @@ export async function setShuffle(enabled: boolean, smart: boolean = false): Prom
   await persistQueue();
 }
 
+let isCyclingPlaybackMode = false;
+
 /**
  * 4 Aşamalı Oynatma Modu Döngüsü:
  * 1. Sırayla (Sequential): isShuffle = false, repeatMode = RepeatMode.Queue (veya Off)
@@ -317,29 +330,40 @@ export async function setShuffle(enabled: boolean, smart: boolean = false): Prom
  * Tekrar basıldığında -> 1. Sırayla durumuna döner.
  */
 export async function cyclePlaybackMode(): Promise<void> {
-  const store = useStore.getState();
-  const { isShuffle, isSmartShuffle, repeatMode } = store;
+  if (isCyclingPlaybackMode) return;
+  isCyclingPlaybackMode = true;
+  try {
+    const store = useStore.getState();
+    const { isShuffle, isSmartShuffle, repeatMode } = store;
 
-  if (isShuffle && !isSmartShuffle) {
-    // 2 (Karıştır) -> 3 (Akıllı Karıştır)
-    store.setRepeatMode(RepeatMode.Off);
-    await TrackPlayer.setRepeatMode(RepeatMode.Off);
-    await setShuffle(true, true);
-  } else if (isShuffle && isSmartShuffle) {
-    // 3 (Akıllı Karıştır) -> 4 (Tek Şarkı Tekrarla)
-    await setShuffle(false, false);
-    store.setRepeatMode(RepeatMode.Track);
-    await TrackPlayer.setRepeatMode(RepeatMode.Track);
-  } else if (!isShuffle && repeatMode === RepeatMode.Track) {
-    // 4 (Tek Şarkı Tekrarla) -> 1 (Sırayla)
-    await setShuffle(false, false);
-    store.setRepeatMode(RepeatMode.Queue);
-    await TrackPlayer.setRepeatMode(RepeatMode.Queue);
-  } else {
-    // 1 (Sırayla) -> 2 (Klasik Karıştır)
-    store.setRepeatMode(RepeatMode.Off);
-    await TrackPlayer.setRepeatMode(RepeatMode.Off);
-    await setShuffle(true, false);
+    if (isShuffle && !isSmartShuffle) {
+      // 2 (Karıştır) -> 3 (Akıllı Karıştır)
+      store.setRepeatMode(RepeatMode.Off);
+      await TrackPlayer.setRepeatMode(RepeatMode.Off);
+      await setShuffle(true, true);
+    } else if (isShuffle && isSmartShuffle) {
+      // 3 (Akıllı Karıştır) -> 4 (Tek Şarkı Tekrarla)
+      await setShuffle(false, false);
+      store.setRepeatMode(RepeatMode.Track);
+      await TrackPlayer.setRepeatMode(RepeatMode.Track);
+    } else if (repeatMode === RepeatMode.Track) {
+      // 4 (Tek Şarkı Tekrarla) -> 1 (Sırayla)
+      // Mod 4'e geçerken zaten kuyruk sırası normale döndürülmüştü.
+      // Sadece repeatMode'u güncelliyoruz; ses ve sıra kesintisiz kalır.
+      if (isShuffle) {
+        await setShuffle(false, false);
+      }
+      store.setRepeatMode(RepeatMode.Queue);
+      await TrackPlayer.setRepeatMode(RepeatMode.Queue);
+      store.bumpQueueRevision();
+    } else {
+      // 1 (Sırayla) -> 2 (Klasik Karıştır)
+      store.setRepeatMode(RepeatMode.Off);
+      await TrackPlayer.setRepeatMode(RepeatMode.Off);
+      await setShuffle(true, false);
+    }
+  } finally {
+    isCyclingPlaybackMode = false;
   }
 }
 

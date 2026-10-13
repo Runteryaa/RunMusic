@@ -165,6 +165,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const isSmartShuffle = useStore((s) => s.isSmartShuffle);
   const library = useStore((s) => s.library);
   const repeatMode = useStore((s) => s.repeatMode);
+  const upNextIds = useStore((s) => s.upNextIds);
+  const contextIds = useStore((s) => s.contextIds);
+  const queueRevision = useStore((s) => s.queueRevision);
   const artworkMap = useStore((s) => s.artworkMap);
   const metadataMap = useStore((s) => s.metadataMap);
   const lyricsCache = useStore((s) => s.lyricsCache);
@@ -293,13 +296,24 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     }
   }, []);
 
-  // Kuyruk modu açıldığında ve aktif parça değiştiğinde bölümleri tazele.
+  // Kuyruk modu açıkken veya aktif parça / kuyruk / modlar değiştiğinde bölümleri tazele.
   useEffect(() => {
     if (isQueueMode) {
       refreshQueueSections();
       refreshQueue();
     }
-  }, [isQueueMode, activeTrack?.id, refreshQueueSections, refreshQueue]);
+  }, [
+    isQueueMode,
+    activeTrack?.id,
+    isShuffle,
+    isSmartShuffle,
+    repeatMode,
+    upNextIds,
+    contextIds,
+    queueRevision,
+    refreshQueueSections,
+    refreshQueue,
+  ]);
 
   // Çalınan parça manuel kuyruktan geldiyse listeden düşür.
   useEffect(() => {
@@ -1141,7 +1155,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const togglePlaybackMode = useCallback(async () => {
     await cyclePlaybackMode();
-  }, []);
+    if (isQueueMode) {
+      await refreshQueueSections();
+      await refreshQueue();
+    }
+  }, [isQueueMode, refreshQueueSections, refreshQueue]);
 
   // Gestures: Middle container (Interactive Carousel Artwork / Lyrics)
   const artworkPanResponder = useMemo(
@@ -1749,6 +1767,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             <FlatList
               ref={queueListRef}
               data={queueRows}
+              extraData={`${isShuffle}-${isSmartShuffle}-${repeatMode}-${queueRevision}`}
               keyExtractor={(row) => row.key}
               renderItem={renderQueueRow}
               contentContainerStyle={styles.queueScrollContent}
@@ -1919,11 +1938,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 <Ionicons
                   name={isShuffle ? (isSmartShuffle ? 'sparkles' : 'shuffle') : 'repeat'}
                   size={20}
-                  color={
-                    isShuffle || repeatMode === RepeatMode.Track
-                      ? theme.primary
-                      : 'rgba(255, 255, 255, 0.45)'
-                  }
+                  color={theme.primary}
                 />
                 {repeatMode === RepeatMode.Track ? (
                   <Text style={[styles.repeatBadge, { color: theme.primary }]}>1</Text>
