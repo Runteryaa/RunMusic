@@ -1982,7 +1982,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 onPress={startTrackTimer}>
                 <Ionicons
                   name="musical-note"
-                  size={16}
+                  size={18}
                   color={
                     isSleepTimerActive && sleepTimerDurationOption === 'track'
                       ? theme.primary
@@ -2842,8 +2842,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 7,
-    paddingHorizontal: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: 12,
     borderWidth: 1,
     marginBottom: 8,
@@ -2855,28 +2855,28 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   sleepTimerIconBubble: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
+    width: 30,
+    height: 30,
+    borderRadius: 9,
     justifyContent: 'center',
     alignItems: 'center',
   },
   sleepTimerActiveBarTitle: {
-    fontSize: 9,
+    fontSize: 9.5,
     fontWeight: '700',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
   },
   sleepTimerActiveBarRemaining: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '700',
   },
   stopTimerPillBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(239, 68, 68, 0.16)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
     borderRadius: 8,
   },
   stopTimerPillBtnText: {
@@ -2903,22 +2903,23 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: '45%',
     backgroundColor: '#27272a',
-    paddingVertical: 10,
-    borderRadius: 10,
+    height: 44,
+    borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'transparent',
   },
   timerOptionText: {
     color: '#ffffff',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
   },
   timerFullWidthBtn: {
     flexDirection: 'row',
     backgroundColor: '#27272a',
-    paddingVertical: 10,
-    borderRadius: 10,
+    height: 44,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
@@ -2932,21 +2933,21 @@ const styles = StyleSheet.create({
   customTimerInput: {
     flex: 1,
     backgroundColor: '#27272a',
-    borderRadius: 10,
+    borderRadius: 12,
     color: '#ffffff',
-    paddingHorizontal: 12,
-    fontSize: 13,
-    height: 38,
+    paddingHorizontal: 14,
+    fontSize: 14,
+    height: 44,
   },
   customTimerBtn: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 10,
-    height: 38,
+    borderRadius: 12,
+    height: 44,
   },
   customTimerBtnText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
   },
   optionsModalBox: {
