@@ -74,6 +74,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     toggleLyricsMode,
     isQueueMode,
     toggleQueueMode,
+    isSleepTimerMode,
+    toggleSleepTimerMode,
   } = usePlayerUIStore();
 
   const theme = useThemeStore((s) => s.theme);
@@ -86,6 +88,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   useEffect(() => {
     if (!isFullscreenPlayerOpen) return;
     const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isSleepTimerMode) {
+        toggleSleepTimerMode();
+        return true;
+      }
       if (isQueueMode) {
         toggleQueueMode();
         return true;
@@ -100,8 +106,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     return () => backSub.remove();
   }, [
     isFullscreenPlayerOpen,
+    isSleepTimerMode,
     isQueueMode,
     isLyricsMode,
+    toggleSleepTimerMode,
     toggleQueueMode,
     toggleLyricsMode,
     closeFullscreenPlayer,
@@ -184,9 +192,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
   const [isEditTrackModalOpen, setIsEditTrackModalOpen] = useState(false);
-  const [isSleepTimerModalOpen, setIsSleepTimerModalOpen] = useState(false);
   const [customTimerMinutes, setCustomTimerMinutes] = useState('');
   const [sleepTimerRemaining, setSleepTimerRemaining] = useState<string>('');
+  const [isLyricsAutoScrollPaused, setIsLyricsAutoScrollPaused] = useState(false);
+
+  useEffect(() => {
+    setIsLyricsAutoScrollPaused(false);
+  }, [activeTrack?.id]);
 
   // Sleep Timer store
   const isSleepTimerActive = useSleepTimerStore((s) => s.isActive);
@@ -198,7 +210,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
-    if (isSleepTimerModalOpen && isSleepTimerActive) {
+    if (isSleepTimerActive) {
       const updateRemaining = () => {
         if (sleepTimerDurationOption === 'track') {
           setSleepTimerRemaining('Şarkı bitince');
@@ -209,12 +221,14 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         }
       };
       updateRemaining();
-      interval = setInterval(updateRemaining, 10000); // every 10s
+      interval = setInterval(updateRemaining, 2000);
+    } else {
+      setSleepTimerRemaining('');
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isSleepTimerModalOpen, isSleepTimerActive, sleepTimerEndTime, sleepTimerDurationOption]);
+  }, [isSleepTimerActive, sleepTimerEndTime, sleepTimerDurationOption]);
 
   const [queue, setQueue] = useState<Track[]>([]);
   const [activeIndex, setActiveIndex] = useState<number>(0);
@@ -239,7 +253,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const searchModalPanResponder = createModalPanResponder(() => setIsManualSearchOpen(false));
   const optionsModalPanResponder = createModalPanResponder(() => setIsOptionsModalOpen(false));
-  const sleepTimerModalPanResponder = createModalPanResponder(() => setIsSleepTimerModalOpen(false));
 
   // Manual Lyrics Search state
   const [isLoadingLyrics, setIsLoadingLyrics] = useState(false);
@@ -812,10 +825,29 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     return -1;
   }, [parsedLines, progress.position]);
 
+  const toggleLyricsAutoScroll = useCallback(() => {
+    setIsLyricsAutoScrollPaused((prev) => {
+      const next = !prev;
+      if (!next && activeLineIndex >= 0 && parsedLines.length > 0) {
+        try {
+          lyricsFlatListRef.current?.scrollToIndex({
+            index: activeLineIndex,
+            animated: true,
+            viewPosition: 0.35,
+          });
+        } catch {
+          // Fallback
+        }
+      }
+      return next;
+    });
+  }, [activeLineIndex, parsedLines.length]);
+
   useEffect(() => {
     if (
       isFullscreenPlayerOpen &&
       isLyricsMode &&
+      !isLyricsAutoScrollPaused &&
       activeLineIndex >= 0 &&
       parsedLines.length > 0 &&
       !isUserScrollingRef.current
@@ -830,13 +862,14 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         // Fallback
       }
     }
-  }, [activeLineIndex, isFullscreenPlayerOpen, isLyricsMode, parsedLines.length]);
+  }, [activeLineIndex, isFullscreenPlayerOpen, isLyricsMode, isLyricsAutoScrollPaused, parsedLines.length]);
 
   // Düz metin (Genius / LRCLIB plain) şarkı sözlerini şarkının saniyesine göre aşağıya doğru orantılı kaydır
   useEffect(() => {
     if (
       isFullscreenPlayerOpen &&
       isLyricsMode &&
+      !isLyricsAutoScrollPaused &&
       !currentLyrics?.syncedLyrics &&
       currentLyrics?.plainLyrics &&
       duration > 0 &&
@@ -856,6 +889,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     duration,
     isFullscreenPlayerOpen,
     isLyricsMode,
+    isLyricsAutoScrollPaused,
     currentLyrics?.syncedLyrics,
     currentLyrics?.plainLyrics,
   ]);
@@ -1005,6 +1039,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const panX = useMemo(() => new Animated.Value(0), []);
   const lyricsTransition = useMemo(() => new Animated.Value(0), []);
   const queueTransition = useMemo(() => new Animated.Value(0), []);
+  const sleepTimerTransition = useMemo(() => new Animated.Value(0), []);
   const coverTransition = useMemo(() => new Animated.Value(1), []);
   const playBtnScale = useMemo(() => new Animated.Value(1), []);
   const [isSkipping, setIsSkipping] = useState(false);
@@ -1023,10 +1058,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, [playing, artworkScale, reduceMotion]);
 
   useEffect(() => {
-    const isCover = !isLyricsMode && !isQueueMode;
+    const isCover = !isLyricsMode && !isQueueMode && !isSleepTimerMode;
     if (reduceMotion) {
       lyricsTransition.setValue(isLyricsMode ? 1 : 0);
       queueTransition.setValue(isQueueMode ? 1 : 0);
+      sleepTimerTransition.setValue(isSleepTimerMode ? 1 : 0);
       coverTransition.setValue(isCover ? 1 : 0);
       return;
     }
@@ -1045,6 +1081,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         stiffness: 150,
         useNativeDriver: true,
       }),
+      Animated.spring(sleepTimerTransition, {
+        toValue: isSleepTimerMode ? 1 : 0,
+        damping: 20,
+        mass: 0.9,
+        stiffness: 150,
+        useNativeDriver: true,
+      }),
       Animated.spring(coverTransition, {
         toValue: isCover ? 1 : 0,
         damping: 20,
@@ -1056,8 +1099,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, [
     isLyricsMode,
     isQueueMode,
+    isSleepTimerMode,
     lyricsTransition,
     queueTransition,
+    sleepTimerTransition,
     coverTransition,
     reduceMotion,
   ]);
@@ -1168,11 +1213,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => {
-          if (isLyricsMode || isQueueMode || isSkipping) return false;
+          if (isLyricsMode || isQueueMode || isSleepTimerMode || isSkipping) return false;
           return Math.abs(gesture.dx) > 12 || gesture.dy > 15;
         },
         onMoveShouldSetPanResponderCapture: (_, gesture) => {
-          if (isLyricsMode || isQueueMode || isSkipping) return false;
+          if (isLyricsMode || isQueueMode || isSleepTimerMode || isSkipping) return false;
           return Math.abs(gesture.dx) > 12 || gesture.dy > 15;
         },
         onPanResponderMove: (_, gesture) => {
@@ -1254,6 +1299,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     [
       isLyricsMode,
       isQueueMode,
+      isSleepTimerMode,
       isSkipping,
       nextTrack,
       prevTrack,
@@ -1409,7 +1455,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 ],
               },
             ]}
-            pointerEvents={(!isLyricsMode && !isQueueMode) ? 'auto' : 'none'}>
+            pointerEvents={(!isLyricsMode && !isQueueMode && !isSleepTimerMode) ? 'auto' : 'none'}>
             {/* Önceki Şarkı Kapağı (Soldan süzülen önizleme) */}
             {prevTrack ? (
               <Animated.View
@@ -1581,13 +1627,40 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     : 'Şarkı Sözleri'}
                 </Text>
               </View>
-              <TouchableOpacity
-                style={styles.lyricsSearchBtn}
-                activeOpacity={0.7}
-                onPress={toggleManualSearch}>
-                <Ionicons name="search" size={14} color={theme.primary} />
-                <Text style={[styles.lyricsSearchBtnText, { color: theme.primary }]}>Manuel Ara</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {(parsedLines.length > 0 || currentLyrics?.plainLyrics) ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.lyricsActionBtn,
+                      { backgroundColor: theme.surface },
+                      isLyricsAutoScrollPaused && { backgroundColor: 'rgba(239, 68, 68, 0.18)' },
+                    ]}
+                    activeOpacity={0.7}
+                    onPress={toggleLyricsAutoScroll}
+                    hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+                    <Ionicons
+                      name={isLyricsAutoScrollPaused ? 'play' : 'pause'}
+                      size={12}
+                      color={isLyricsAutoScrollPaused ? '#ef4444' : theme.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.lyricsActionBtnText,
+                        { color: isLyricsAutoScrollPaused ? '#ef4444' : theme.primary },
+                      ]}>
+                      {isLyricsAutoScrollPaused ? 'Kaydır' : 'Durdur'}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+
+                <TouchableOpacity
+                  style={[styles.lyricsSearchBtn, { backgroundColor: theme.surface }]}
+                  activeOpacity={0.7}
+                  onPress={toggleManualSearch}>
+                  <Ionicons name="search" size={12} color={theme.primary} />
+                  <Text style={[styles.lyricsSearchBtnText, { color: theme.primary }]}>Manuel Ara</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             {isLoadingLyrics ? (
@@ -1788,6 +1861,159 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               }
             />
           </Animated.View>
+
+          {/* 4. Uyku Zamanlayıcısı Görünümü (Kapak yerine aynı boyutta yumuşak geçiş) */}
+          <Animated.View
+            style={[
+              styles.sleepTimerCardContainer,
+              {
+                opacity: sleepTimerTransition,
+                transform: [
+                  {
+                    scale: sleepTimerTransition.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.92, 1],
+                    }),
+                  },
+                  { scale: artworkScale },
+                ],
+              },
+            ]}
+            pointerEvents={isSleepTimerMode ? 'auto' : 'none'}>
+            <View style={styles.queueCardHeader}>
+              <View style={[styles.queueSourceBadge, { backgroundColor: theme.surface }]}>
+                <Ionicons name="moon" size={13} color={theme.primary} style={{ marginRight: 6 }} />
+                <Text style={[styles.queueSourceText, { color: theme.textAccent }]}>
+                  Uyku Zamanlayıcısı
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.queueCardCloseBtn}
+                activeOpacity={0.7}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                onPress={toggleSleepTimerMode}>
+                <Ionicons name="close" size={18} color="rgba(255, 255, 255, 0.7)" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.sleepTimerScrollContent}
+              keyboardShouldPersistTaps="handled">
+              {isSleepTimerActive ? (
+                <View style={[styles.sleepTimerActiveCard, { backgroundColor: theme.surface }]}>
+                  <View style={[styles.sleepTimerIconGlow, { backgroundColor: `${theme.primary}25` }]}>
+                    <Ionicons name="moon" size={32} color={theme.primary} />
+                  </View>
+                  <Text style={styles.sleepTimerActiveTitle}>Zamanlayıcı Aktif</Text>
+                  <Text style={[styles.sleepTimerActiveRemaining, { color: theme.primary }]}>
+                    {sleepTimerRemaining}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.stopTimerBtn}
+                    activeOpacity={0.8}
+                    onPress={stopTimer}>
+                    <Ionicons name="stop-circle-outline" size={17} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={styles.stopTimerBtnText}>İptal Et</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              <Text style={[styles.sleepTimerSectionLabel, { color: theme.textAccent }]}>
+                {isSleepTimerActive ? 'Süreyi Değiştir' : 'Kapanma Süresi Seçin'}
+              </Text>
+
+              <View style={styles.timerOptionsGrid}>
+                {([15, 30, 45, 60] as const).map((min) => (
+                  <TouchableOpacity
+                    key={min}
+                    style={[
+                      styles.timerOptionBtn,
+                      { backgroundColor: theme.surface },
+                      isSleepTimerActive && sleepTimerDurationOption === min && {
+                        borderColor: theme.primary,
+                        borderWidth: 1.5,
+                        backgroundColor: `${theme.primary}20`,
+                      },
+                    ]}
+                    activeOpacity={0.75}
+                    onPress={() => startTimer(min, min)}>
+                    <Text
+                      style={[
+                        styles.timerOptionText,
+                        isSleepTimerActive && sleepTimerDurationOption === min && {
+                          color: theme.primary,
+                        },
+                      ]}>
+                      {min} Dakika
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.timerFullWidthBtn,
+                  { backgroundColor: theme.surface },
+                  isSleepTimerActive && sleepTimerDurationOption === 'track' && {
+                    borderColor: theme.primary,
+                    borderWidth: 1.5,
+                    backgroundColor: `${theme.primary}20`,
+                  },
+                ]}
+                activeOpacity={0.75}
+                onPress={startTrackTimer}>
+                <Ionicons
+                  name="musical-note"
+                  size={18}
+                  color={isSleepTimerActive && sleepTimerDurationOption === 'track' ? theme.primary : '#ffffff'}
+                  style={{ marginRight: 8 }}
+                />
+                <Text
+                  style={[
+                    styles.timerOptionText,
+                    isSleepTimerActive && sleepTimerDurationOption === 'track' && {
+                      color: theme.primary,
+                    },
+                  ]}>
+                  Şarkı Bitince Durdur
+                </Text>
+              </TouchableOpacity>
+
+              <View style={styles.customTimerRow}>
+                <TextInput
+                  style={[styles.customTimerInput, { backgroundColor: theme.surface }]}
+                  placeholder="Dakika (örn: 20)"
+                  placeholderTextColor="#71717a"
+                  keyboardType="numeric"
+                  value={customTimerMinutes}
+                  onChangeText={setCustomTimerMinutes}
+                />
+                <TouchableOpacity
+                  style={[
+                    styles.customTimerBtn,
+                    { backgroundColor: customTimerMinutes.trim() ? theme.primary : '#27272a' },
+                  ]}
+                  activeOpacity={0.8}
+                  disabled={!customTimerMinutes.trim()}
+                  onPress={() => {
+                    const mins = parseInt(customTimerMinutes, 10);
+                    if (!isNaN(mins) && mins > 0) {
+                      startTimer(mins, 'custom');
+                      setCustomTimerMinutes('');
+                    }
+                  }}>
+                  <Text
+                    style={[
+                      styles.customTimerBtnText,
+                      { color: customTimerMinutes.trim() ? '#ffffff' : '#71717a' },
+                    ]}>
+                    Başlat
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </Animated.View>
         </Animated.View>
 
         {/* ALT BÖLÜM: Apple Music Şarkı Bilgileri, Scrubber ve Kontroller */}
@@ -1799,7 +2025,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <MarqueeText text={displayArtist || ''} style={styles.trackArtist} />
             </View>
 
-            {/* Sözler veya Çalma Sırası Modundayken Sağ Tarafa Animasyonla Yerleşen Küçük Kapak */}
+            {/* Sözler, Çalma Sırası veya Uyku Zamanlayıcısı Modundayken Sağ Tarafa Animasyonla Yerleşen Küçük Kapak */}
             <Animated.View
               style={{
                 opacity: coverTransition.interpolate({
@@ -1815,10 +2041,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   },
                 ],
               }}
-              pointerEvents={(!isLyricsMode && !isQueueMode) ? 'none' : 'auto'}>
+              pointerEvents={(!isLyricsMode && !isQueueMode && !isSleepTimerMode) ? 'none' : 'auto'}>
               <TouchableOpacity
                 activeOpacity={0.8}
                 onPress={() => {
+                  if (isSleepTimerMode) toggleSleepTimerMode();
                   if (isQueueMode) toggleQueueMode();
                   if (isLyricsMode) toggleLyricsMode();
                 }}
@@ -1946,13 +2173,19 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.appleSubUtilBtn}
-                onPress={() => setIsSleepTimerModalOpen(true)}
+                style={[
+                  styles.appleSubUtilBtn,
+                  isSleepTimerMode && {
+                    backgroundColor: theme.surface,
+                    borderRadius: 20,
+                  },
+                ]}
+                onPress={toggleSleepTimerMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Ionicons
-                  name={isSleepTimerActive ? 'moon' : 'moon-outline'}
+                  name={isSleepTimerActive || isSleepTimerMode ? 'moon' : 'moon-outline'}
                   size={20}
-                  color={isSleepTimerActive ? theme.primary : 'rgba(255, 255, 255, 0.5)'}
+                  color={isSleepTimerActive || isSleepTimerMode ? theme.primary : 'rgba(255, 255, 255, 0.5)'}
                 />
                 {isSleepTimerActive ? (
                   <View style={[styles.activeDotBadge, { backgroundColor: theme.primary }]} />
@@ -2156,99 +2389,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           </Pressable>
         </Modal>
 
-        {/* Uyku Zamanlayıcısı Modalı */}
-        <Modal
-          visible={isSleepTimerModalOpen}
-          animationType="fade"
-          transparent
-          onRequestClose={() => setIsSleepTimerModalOpen(false)}>
-          <Pressable
-            style={styles.modalBackdrop}
-            onPress={() => setIsSleepTimerModalOpen(false)}
-            {...sleepTimerModalPanResponder.panHandlers}>
-            <Pressable style={styles.sleepTimerModalBox} onPress={(e) => e.stopPropagation()}>
-              <View style={styles.searchModalHeader}>
-                <Text style={styles.searchModalTitle}>Uyku Zamanlayıcısı</Text>
-                <TouchableOpacity onPress={() => setIsSleepTimerModalOpen(false)}>
-                  <Ionicons name="close" size={22} color="#a1a1aa" />
-                </TouchableOpacity>
-              </View>
-
-              {isSleepTimerActive ? (
-                <View style={styles.activeTimerBox}>
-                  <Text style={styles.activeTimerText}>
-                    Uyku zamanlayıcısı aktif. ({sleepTimerRemaining})
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.stopTimerBtn}
-                    onPress={() => {
-                      stopTimer();
-                      setIsSleepTimerModalOpen(false);
-                    }}>
-                    <Text style={styles.stopTimerBtnText}>İptal Et</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <View>
-                  <View style={styles.timerOptionsGrid}>
-                    {([15, 30, 45, 60] as const).map((min) => (
-                      <TouchableOpacity
-                        key={min}
-                        style={styles.timerOptionBtn}
-                        onPress={() => {
-                          startTimer(min, min);
-                          setIsSleepTimerModalOpen(false);
-                        }}>
-                        <Text style={styles.timerOptionText}>{min} Dakika</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-
-                  <TouchableOpacity
-                    style={styles.timerFullWidthBtn}
-                    onPress={() => {
-                      startTrackTimer();
-                      setIsSleepTimerModalOpen(false);
-                    }}>
-                    <Ionicons name="musical-note" size={20} color="#ffffff" style={{ marginRight: 8 }} />
-                    <Text style={styles.timerOptionText}>Şarkı Bitince Durdur</Text>
-                  </TouchableOpacity>
-
-                  <View style={styles.customTimerRow}>
-                    <TextInput
-                      style={styles.customTimerInput}
-                      placeholder="Dk"
-                      placeholderTextColor="#71717a"
-                      keyboardType="numeric"
-                      value={customTimerMinutes}
-                      onChangeText={setCustomTimerMinutes}
-                    />
-                    <TouchableOpacity
-                      style={[
-                        styles.customTimerBtn,
-                        { backgroundColor: customTimerMinutes.trim() ? theme.primary : '#27272a' }
-                      ]}
-                      disabled={!customTimerMinutes.trim()}
-                      onPress={() => {
-                        const mins = parseInt(customTimerMinutes, 10);
-                        if (!isNaN(mins) && mins > 0) {
-                          startTimer(mins, 'custom');
-                          setIsSleepTimerModalOpen(false);
-                          setCustomTimerMinutes('');
-                        }
-                      }}>
-                      <Text style={[
-                        styles.customTimerBtnText,
-                        { color: customTimerMinutes.trim() ? '#ffffff' : '#71717a' }
-                      ]}>Özel Süre Başlat</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-            </Pressable>
-          </Pressable>
-        </Modal>
-
         {/* Şarkı Bilgilerini Düzenleme Modalı */}
         <EditTrackModal
           visible={isEditTrackModalOpen && activeTrack != null}
@@ -2398,17 +2538,30 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
+  lyricsActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  lyricsActionBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginLeft: 3,
+  },
   lyricsSearchBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 5,
+    borderRadius: 12,
   },
   lyricsSearchBtnText: {
     color: '#ffffff',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
-    marginLeft: 4,
+    marginLeft: 3,
   },
   lyricsListContent: {
     paddingVertical: 24,
@@ -2645,32 +2798,71 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#27272a',
   },
-  sleepTimerModalBox: {
-    width: '100%',
-    backgroundColor: '#18181b',
-    borderRadius: 20,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: '#27272a',
+  sleepTimerCardContainer: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    left: 8,
+    right: 8,
+    alignSelf: 'stretch',
+    borderRadius: 24,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
-  activeTimerBox: {
+  sleepTimerScrollContent: {
+    paddingTop: 8,
+    paddingBottom: 24,
+    paddingHorizontal: 4,
+  },
+  sleepTimerActiveCard: {
     alignItems: 'center',
-    paddingVertical: 20,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    borderRadius: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  activeTimerText: {
-    color: '#ffffff',
-    fontSize: 16,
-    marginBottom: 20,
+  sleepTimerIconGlow: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  sleepTimerActiveTitle: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  sleepTimerActiveRemaining: {
+    fontSize: 22,
+    fontWeight: '700',
+    marginBottom: 14,
+  },
+  sleepTimerSectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+    marginTop: 4,
+    paddingHorizontal: 4,
   },
   stopTimerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#ef4444',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
     borderRadius: 12,
   },
   stopTimerBtnText: {
     color: '#ffffff',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
   },
   timerOptionsGrid: {
@@ -2686,6 +2878,8 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   timerOptionText: {
     color: '#ffffff',
@@ -2700,6 +2894,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   customTimerRow: {
     flexDirection: 'row',
