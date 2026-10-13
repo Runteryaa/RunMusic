@@ -11,10 +11,13 @@ import {
   TextInput,
   Modal,
   Pressable,
+  LayoutAnimation,
+  Platform,
+  UIManager,
 } from 'react-native';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import * as FileSystem from 'expo-file-system';
-import TrackPlayer, { useActiveTrack } from 'react-native-track-player';
+import TrackPlayer, { useActiveTrack, useIsPlaying } from 'react-native-track-player';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,6 +26,8 @@ import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { EditTrackModal, EditTrackTarget } from '../components/EditTrackModal';
+import { AnimatedEqualizer } from '../components/ui/AnimatedEqualizer';
+import { BouncyPressable } from '../components/ui/BouncyPressable';
 import { getBatchMetadataAsync, getArtworkAsync } from '../../modules/audio-artwork/src';
 import { cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import {
@@ -34,6 +39,10 @@ import {
 import { compareAddedDate, type SortOption } from '../services/librarySort';
 import { normalizeSearchText } from '../services/searchUtils';
 import { useTranslation } from '../services/i18n';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 interface SortItem {
   id: SortOption;
@@ -68,6 +77,7 @@ export default function LibraryScreen() {
 
   const openFullscreenPlayer = usePlayerUIStore((s) => s.openFullscreenPlayer);
   const activeTrack = useActiveTrack();
+  const { playing } = useIsPlaying();
 
   const [statusMessage, setStatusMessage] = useState<string>('');
 
@@ -531,7 +541,17 @@ export default function LibraryScreen() {
     }
   };
 
+  const openSearch = () => {
+    if (!preferences.reduceMotion) {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    }
+    setIsSearchOpen(true);
+  };
+
   const closeSearch = () => {
+    if (!preferences.reduceMotion) {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    }
     setSearchQuery('');
     setIsSearchOpen(false);
   };
@@ -568,9 +588,9 @@ export default function LibraryScreen() {
               { borderColor: theme.border, backgroundColor: theme.surface },
             ],
           ]}>
-          <TouchableOpacity
+          <BouncyPressable
             style={styles.trackMainContent}
-            activeOpacity={0.7}
+            activeScale={0.975}
             onPress={() => playTrack(asset)}>
             <View style={{ marginRight: 12 }}>
               <TrackArtwork
@@ -585,12 +605,9 @@ export default function LibraryScreen() {
             <View style={styles.trackInfo}>
               <View style={styles.titleRow}>
                 {isPlayingCurrent ? (
-                  <Ionicons
-                    name="volume-high"
-                    size={16}
-                    color={theme.primary}
-                    style={{ marginRight: 6 }}
-                  />
+                  <View style={{ marginRight: 6 }}>
+                    <AnimatedEqualizer isPlaying={!!playing} color={theme.primary} size={14} />
+                  </View>
                 ) : null}
                 <Text
                   style={[
@@ -609,13 +626,14 @@ export default function LibraryScreen() {
                 {info.artist ? ` • ${info.artist}` : ''}
               </Text>
             </View>
-          </TouchableOpacity>
-          <TouchableOpacity
+          </BouncyPressable>
+          <BouncyPressable
             style={styles.trackMoreBtn}
+            activeScale={0.86}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             onPress={() => setSelectedTrackForMenu(asset)}>
             <Ionicons name="ellipsis-vertical" size={18} color="#a1a1aa" />
-          </TouchableOpacity>
+          </BouncyPressable>
         </View>
       </Swipeable>
     );
@@ -657,7 +675,7 @@ export default function LibraryScreen() {
           <View style={styles.headerRightActions}>
             <TouchableOpacity
               style={styles.headerActionBtn}
-              onPress={() => setIsSearchOpen(true)}
+              onPress={openSearch}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Ionicons name="search" size={20} color="#ffffff" />
             </TouchableOpacity>

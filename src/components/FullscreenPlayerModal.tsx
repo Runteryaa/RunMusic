@@ -34,6 +34,7 @@ import { useSleepTimerStore } from '../store/useSleepTimerStore';
 import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
+import { BouncyPressable } from './ui/BouncyPressable';
 import { useTranslation } from '../services/i18n';
 import {
   LyricLine,
@@ -1010,10 +1011,32 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     return (x / barWidth) * duration;
   };
 
+  const scrubberHeightAnim = useMemo(() => new Animated.Value(7), []);
+  const thumbScaleAnim = useMemo(() => new Animated.Value(0), []);
+
   const handleSeekGrant = (e: GestureResponderEvent) => {
     if (duration <= 0) return;
     setIsDragging(true);
     setDragTime(handleTouchCalc(e));
+    if (!reduceMotion) {
+      Animated.parallel([
+        Animated.spring(scrubberHeightAnim, {
+          toValue: 11,
+          tension: 180,
+          friction: 12,
+          useNativeDriver: false,
+        }),
+        Animated.spring(thumbScaleAnim, {
+          toValue: 1,
+          tension: 200,
+          friction: 10,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      scrubberHeightAnim.setValue(11);
+      thumbScaleAnim.setValue(1);
+    }
   };
 
   const handleSeekMove = (e: GestureResponderEvent) => {
@@ -1028,6 +1051,25 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     }
     const target = handleTouchCalc(e);
     setIsDragging(false);
+    if (!reduceMotion) {
+      Animated.parallel([
+        Animated.spring(scrubberHeightAnim, {
+          toValue: 7,
+          tension: 180,
+          friction: 14,
+          useNativeDriver: false,
+        }),
+        Animated.spring(thumbScaleAnim, {
+          toValue: 0,
+          tension: 200,
+          friction: 12,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      scrubberHeightAnim.setValue(7);
+      thumbScaleAnim.setValue(0);
+    }
     await TrackPlayer.seekTo(target);
   };
 
@@ -1063,7 +1105,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const queueTransition = useMemo(() => new Animated.Value(0), []);
   const sleepTimerTransition = useMemo(() => new Animated.Value(0), []);
   const coverTransition = useMemo(() => new Animated.Value(1), []);
-  const playBtnScale = useMemo(() => new Animated.Value(1), []);
   const [isSkipping, setIsSkipping] = useState(false);
 
   const CARD_OFFSET = ARTWORK_SIZE + 24;
@@ -1128,24 +1169,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     coverTransition,
     reduceMotion,
   ]);
-
-  const handlePlayPressIn = useCallback(() => {
-    Animated.spring(playBtnScale, {
-      toValue: 0.88,
-      useNativeDriver: true,
-      speed: 50,
-      bounciness: 4,
-    }).start();
-  }, [playBtnScale]);
-
-  const handlePlayPressOut = useCallback(() => {
-    Animated.spring(playBtnScale, {
-      toValue: 1,
-      useNativeDriver: true,
-      speed: 30,
-      bounciness: 12,
-    }).start();
-  }, [playBtnScale]);
 
   // Sıra (shuffle/repeat dahil) doğrudan kuyruğa gömülü olduğu için native
   // next/prev her zaman doğru parçayı çalar; ekstra indeks hesabı gerekmez.
@@ -1416,24 +1439,26 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
         {/* Top Header */}
         <View style={styles.topHeader}>
-          <TouchableOpacity
+          <BouncyPressable
             style={styles.headerIconBtn}
+            activeScale={0.88}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             onPress={closeFullscreenPlayer}>
             <Ionicons name="chevron-down" size={26} color="rgba(255, 255, 255, 0.75)" />
-          </TouchableOpacity>
+          </BouncyPressable>
           <View style={styles.headerTitleBox}>
             <Text style={styles.headerSmallLabel}>{t('player.now_playing')}</Text>
             <Text style={styles.headerAlbumName} numberOfLines={1}>
               {displayArtist}
             </Text>
           </View>
-          <TouchableOpacity
+          <BouncyPressable
             style={styles.headerIconBtn}
+            activeScale={0.88}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             onPress={() => setIsOptionsModalOpen(true)}>
             <Ionicons name="ellipsis-horizontal-circle" size={24} color="rgba(255, 255, 255, 0.75)" />
-          </TouchableOpacity>
+          </BouncyPressable>
         </View>
       </Animated.View>
 
@@ -2113,13 +2138,14 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               onResponderGrant={handleSeekGrant}
               onResponderMove={handleSeekMove}
               onResponderRelease={handleSeekRelease}>
-              <View
+              <Animated.View
                 pointerEvents="none"
                 style={[
                   styles.progressBarBackground,
                   {
-                    height: isDragging ? 10 : 7,
-                  }
+                    height: scrubberHeightAnim,
+                    borderRadius: 6,
+                  },
                 ]}>
                 <View
                   style={[
@@ -2127,10 +2153,27 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     { backgroundColor: theme.primary, width: `${progressPercent * 100}%` },
                   ]}
                 />
-              </View>
+              </Animated.View>
+              {/* Apple Music Thumb Knob (Parmak tutamacı) */}
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.scrubberThumbKnob,
+                  {
+                    left: `${Math.min(100, Math.max(0, progressPercent * 100))}%`,
+                    transform: [{ scale: thumbScaleAnim }],
+                  },
+                ]}
+              />
             </View>
             <View style={styles.timeRow}>
-              <Text style={styles.timeText}>{formatTime(currentPosition)}</Text>
+              <Text
+                style={[
+                  styles.timeText,
+                  isDragging && styles.timeTextActive,
+                ]}>
+                {formatTime(currentPosition)}
+              </Text>
               <Text style={styles.timeText}>
                 {duration > 0 ? formatTime(duration) : '0:00'}
               </Text>
@@ -2139,46 +2182,42 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
           {/* Oynatma Kontrolleri (Apple Music Minimalist Glyphs) */}
           <View style={styles.controlsRow}>
-            <TouchableOpacity
+            <BouncyPressable
               style={styles.appleNavBtn}
+              activeScale={0.88}
               onPress={skipPrev}
               onLongPress={handleSeekBackward}
-              hitSlop={{ top: 18, bottom: 18, left: 16, right: 16 }}
-              activeOpacity={0.65}>
+              hitSlop={{ top: 18, bottom: 18, left: 16, right: 16 }}>
               <Ionicons name="play-skip-back" size={38} color="#ffffff" />
-            </TouchableOpacity>
+            </BouncyPressable>
 
-            <Animated.View style={{ transform: [{ scale: playBtnScale }] }}>
-              <TouchableOpacity
-                style={styles.applePlayBtn}
-                activeOpacity={0.85}
-                onPressIn={handlePlayPressIn}
-                onPressOut={handlePlayPressOut}
-                hitSlop={{ top: 18, bottom: 18, left: 18, right: 18 }}
-                onPress={togglePlayback}>
-                <Ionicons
-                  name={playing ? 'pause' : 'play'}
-                  size={52}
-                  color="#ffffff"
-                  style={!playing ? { marginLeft: 4 } : undefined}
-                />
-              </TouchableOpacity>
-            </Animated.View>
+            <BouncyPressable
+              style={styles.applePlayBtn}
+              activeScale={0.88}
+              hitSlop={{ top: 18, bottom: 18, left: 18, right: 18 }}
+              onPress={togglePlayback}>
+              <Ionicons
+                name={playing ? 'pause' : 'play'}
+                size={52}
+                color="#ffffff"
+                style={!playing ? { marginLeft: 4 } : undefined}
+              />
+            </BouncyPressable>
 
-            <TouchableOpacity
+            <BouncyPressable
               style={styles.appleNavBtn}
+              activeScale={0.88}
               onPress={skipNext}
               onLongPress={handleSeekForward}
-              hitSlop={{ top: 18, bottom: 18, left: 16, right: 16 }}
-              activeOpacity={0.65}>
+              hitSlop={{ top: 18, bottom: 18, left: 16, right: 16 }}>
               <Ionicons name="play-skip-forward" size={38} color="#ffffff" />
-            </TouchableOpacity>
+            </BouncyPressable>
           </View>
 
           {/* Apple Music Alt Araç Çubuğu (Lyrics | Shuffle/Repeat | Queue) */}
           <View style={styles.appleBottomRow}>
             {/* Şarkı Sözleri Butonu */}
-            <TouchableOpacity
+            <BouncyPressable
               style={[
                 styles.appleUtilBtn,
                 isLyricsMode && {
@@ -2187,7 +2226,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   borderColor: theme.border,
                 },
               ]}
-              activeOpacity={0.7}
+              activeScale={0.88}
               hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
               onPress={toggleLyricsMode}>
               <Ionicons
@@ -2195,12 +2234,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 size={22}
                 color={isLyricsMode ? theme.primary : 'rgba(255, 255, 255, 0.55)'}
               />
-            </TouchableOpacity>
+            </BouncyPressable>
 
             {/* Orta: Karışık ve Tekrar Kontrolleri (Tek Buton) + Uyku Zamanlayıcısı */}
             <View style={styles.appleCenterUtilRow}>
-              <TouchableOpacity
+              <BouncyPressable
                 style={styles.appleSubUtilBtn}
+                activeScale={0.88}
                 onPress={togglePlaybackMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Ionicons
@@ -2211,9 +2251,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 {repeatMode === RepeatMode.Track ? (
                   <Text style={[styles.repeatBadge, { color: theme.primary }]}>1</Text>
                 ) : null}
-              </TouchableOpacity>
+              </BouncyPressable>
 
-              <TouchableOpacity
+              <BouncyPressable
                 style={[
                   styles.appleSubUtilBtn,
                   isSleepTimerMode && {
@@ -2221,6 +2261,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     borderRadius: 20,
                   },
                 ]}
+                activeScale={0.88}
                 onPress={toggleSleepTimerMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Ionicons
@@ -2234,11 +2275,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                         : 'rgba(255, 255, 255, 0.5)'
                   }
                 />
-              </TouchableOpacity>
+              </BouncyPressable>
             </View>
 
             {/* Çalma Sırası Butonu */}
-            <TouchableOpacity
+            <BouncyPressable
               style={[
                 styles.appleUtilBtn,
                 isQueueMode && {
@@ -2247,7 +2288,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   borderColor: theme.border,
                 },
               ]}
-              activeOpacity={0.7}
+              activeScale={0.88}
               hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
               onPress={toggleQueueMode}>
               <Ionicons
@@ -2255,7 +2296,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 size={22}
                 color={isQueueMode ? theme.primary : 'rgba(255, 255, 255, 0.55)'}
               />
-            </TouchableOpacity>
+            </BouncyPressable>
           </View>
         </Animated.View>
 
@@ -2619,7 +2660,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   lyricRowActive: {
-    transform: [{ scale: 1.02 }],
+    transform: [{ scale: 1.035 }],
   },
   lyricText: {
     color: 'rgba(255, 255, 255, 0.35)',
@@ -2748,14 +2789,28 @@ const styles = StyleSheet.create({
   progressBarBackground: {
     height: 7,
     backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderRadius: 4,
+    borderRadius: 6,
     overflow: 'hidden',
   },
   progressBarFill: {
     height: '100%',
-    borderRadius: 4,
+    borderRadius: 6,
   },
-  // progressKnob removed
+  scrubberThumbKnob: {
+    position: 'absolute',
+    top: '50%',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#ffffff',
+    marginTop: -9,
+    marginLeft: -9,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.45,
+    shadowRadius: 5,
+    elevation: 6,
+  },
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2766,6 +2821,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     fontVariant: ['tabular-nums'],
+  },
+  timeTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
   },
   controlsRow: {
     flexDirection: 'row',

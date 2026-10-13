@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   StyleSheet,
   View,
-  TouchableOpacity,
   PanResponder,
   Animated,
   Dimensions,
@@ -20,6 +19,7 @@ import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from './TrackArtwork';
 import { MarqueeText } from './ui/MarqueeText';
+import { BouncyPressable } from './ui/BouncyPressable';
 import { cleanYouTubeTitle, cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import { useTranslation } from '../services/i18n';
@@ -320,9 +320,9 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
             )}
 
             {/* ACTIVE TRACK */}
-            <TouchableOpacity
+            <BouncyPressable
               style={[styles.mainInfoPressable, { width: '100%' }]}
-              activeOpacity={0.8}
+              activeScale={0.975}
               onPress={openFullscreenPlayer}>
               <View style={styles.artworkBox}>
                 <TrackArtwork
@@ -338,7 +338,7 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
                 <MarqueeText text={activeMeta.title || ''} style={styles.titleText} />
                 <MarqueeText text={activeMeta.artist || ''} style={styles.artistText} />
               </View>
-            </TouchableOpacity>
+            </BouncyPressable>
 
             {/* NEXT TRACK PREVIEW */}
             {nextTrack && (
@@ -365,9 +365,9 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
 
         {/* Controls: Play/Pause and Next */}
         <View style={styles.controlsBox}>
-          <TouchableOpacity
+          <BouncyPressable
             style={styles.controlIconBtn}
-            activeOpacity={0.65}
+            activeScale={0.88}
             hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
             onPress={togglePlayback}>
             <Ionicons
@@ -376,15 +376,15 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
               color="#ffffff"
               style={!playing ? { marginLeft: 2 } : undefined}
             />
-          </TouchableOpacity>
+          </BouncyPressable>
 
-          <TouchableOpacity
+          <BouncyPressable
             style={styles.controlIconBtn}
-            activeOpacity={0.65}
+            activeScale={0.88}
             hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
             onPress={skipNext}>
             <Ionicons name="play-skip-forward" size={22} color="#ffffff" />
-          </TouchableOpacity>
+          </BouncyPressable>
         </View>
       </View>
     </View>
