@@ -25,6 +25,8 @@ export interface FilterSettings {
 /** Şarkı sözü kaynağı tercihi, tanımı lyricsService'te (native'siz modül). */
 export type { LyricsSourcePreference };
 
+export type AppLanguage = 'system' | 'en' | 'tr';
+
 /**
  * Kullanıcı tercihleri (Ayarlar ekranı).
  *
@@ -32,6 +34,8 @@ export type { LyricsSourcePreference };
  * `preferences` ise uygulamanın davranışını/görünümünü yönetir.
  */
 export interface AppPreferences {
+  /** Uygulama dili tercihi ('system' | 'en' | 'tr'). */
+  appLanguage: AppLanguage;
   /** Kitaplık açılışındaki sıralama. */
   defaultSortOption: SortOption;
   /**
@@ -59,6 +63,7 @@ export interface AppPreferences {
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
+  appLanguage: 'system',
   defaultSortOption: 'date_desc',
   restoreQueueOnLaunch: true,
   keepPlayingWhenAppKilled: true,
@@ -154,7 +159,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 4;
+const PERSIST_VERSION = 5;
 
 export const useStore = create<AppState>()(
   persist(

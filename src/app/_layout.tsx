@@ -17,6 +17,7 @@ import { getArtworkAsync } from '../../modules/audio-artwork/src';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
 import { initSleepTimerService } from '../store/useSleepTimerStore';
 import { initStatsDB } from '../services/statsDatabase';
+import { useTranslation } from '../services/i18n';
 
 let MusicWidgetModule: any = null;
 try {
@@ -33,6 +34,7 @@ TrackPlayer.registerPlaybackService(() => playbackService);
 
 function MainAppLayout() {
   useWidgetUpdater();
+  const { t } = useTranslation();
   
   const activeTrack = useActiveTrack();
   const theme = useThemeStore((s) => s.theme);
@@ -106,7 +108,7 @@ function MainAppLayout() {
           <Tabs.Screen
             name="index"
             options={{
-              title: 'Kütüphane',
+              title: t('tabs.library'),
               headerShown: false,
               tabBarIcon: ({ color }) => <Ionicons name="musical-notes" size={24} color={color} />,
             }}
@@ -114,7 +116,7 @@ function MainAppLayout() {
           <Tabs.Screen
             name="settings"
             options={{
-              title: 'Ayarlar',
+              title: t('tabs.settings'),
               tabBarIcon: ({ color }) => <Ionicons name="settings-outline" size={24} color={color} />,
             }}
           />

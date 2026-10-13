@@ -34,6 +34,7 @@ import { useSleepTimerStore } from '../store/useSleepTimerStore';
 import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
+import { useTranslation } from '../services/i18n';
 import {
   LyricLine,
   LyricsResult,
@@ -68,6 +69,7 @@ const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
 
 export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
   const insets = useSafeAreaInsets();
+  const { t } = useTranslation();
   const {
     isFullscreenPlayerOpen,
     closeFullscreenPlayer,
@@ -1402,7 +1404,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             <Ionicons name="chevron-down" size={26} color="rgba(255, 255, 255, 0.75)" />
           </TouchableOpacity>
           <View style={styles.headerTitleBox}>
-            <Text style={styles.headerSmallLabel}>ŞU AN ÇALIYOR</Text>
+            <Text style={styles.headerSmallLabel}>{t('player.now_playing')}</Text>
             <Text style={styles.headerAlbumName} numberOfLines={1}>
               {displayArtist}
             </Text>
@@ -1623,7 +1625,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     ? 'LRCLIB (Plain Text)'
                     : currentLyrics?.source === 'genius'
                     ? 'Genius (Plain Text)'
-                    : 'Şarkı Sözleri'}
+                    : t('player.lyrics')}
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -1647,7 +1649,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                         styles.lyricsActionBtnText,
                         { color: isLyricsAutoScrollPaused ? '#ef4444' : theme.primary },
                       ]}>
-                      {isLyricsAutoScrollPaused ? 'Kaydır' : 'Durdur'}
+                      {isLyricsAutoScrollPaused ? t('player.auto_scroll') : t('player.pause_scroll')}
                     </Text>
                   </TouchableOpacity>
                 ) : null}
@@ -1657,7 +1659,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   activeOpacity={0.7}
                   onPress={toggleManualSearch}>
                   <Ionicons name="search" size={12} color={theme.primary} />
-                  <Text style={[styles.lyricsSearchBtnText, { color: theme.primary }]}>Manuel Ara</Text>
+                  <Text style={[styles.lyricsSearchBtnText, { color: theme.primary }]}>{t('player.manual_search')}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1665,7 +1667,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             {isLoadingLyrics ? (
               <View style={styles.lyricsLoadingCenter}>
                 <ActivityIndicator size="large" color={theme.primary} />
-                <Text style={styles.lyricsLoadingText}>Sözler aranıyor...</Text>
+                <Text style={styles.lyricsLoadingText}>{t('player.searching_lyrics')}</Text>
               </View>
             ) : parsedLines.length > 0 ? (
               /* Senkronize Söz Akışı (Apple Music Tipografisi & Kelime Senkronizasyonu) */
@@ -1883,7 +1885,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <View style={[styles.queueSourceBadge, { backgroundColor: theme.surface }]}>
                 <Ionicons name="moon" size={13} color={theme.primary} style={{ marginRight: 6 }} />
                 <Text style={[styles.queueSourceText, { color: theme.textAccent }]}>
-                  Uyku Zamanlayıcısı
+                  {t('player.sleep_timer')}
                 </Text>
               </View>
               <TouchableOpacity
@@ -1913,10 +1915,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     </View>
                     <View style={{ marginLeft: 10 }}>
                       <Text style={[styles.sleepTimerActiveBarTitle, { color: theme.textAccent }]}>
-                        Kalan Süre
+                        {t('player.remaining_time')}
                       </Text>
                       <Text style={[styles.sleepTimerActiveBarRemaining, { color: theme.primary }]}>
-                        {sleepTimerRemaining || 'Hesaplanıyor...'}
+                        {sleepTimerRemaining || t('player.calculating')}
                       </Text>
                     </View>
                   </View>
@@ -1926,13 +1928,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     onPress={stopTimer}>
                     <Ionicons name="close-circle" size={16} color="#ef4444" style={{ marginRight: 5 }} />
-                    <Text style={styles.stopTimerPillBtnText}>İptal Et</Text>
+                    <Text style={styles.stopTimerPillBtnText}>{t('player.cancel_timer')}</Text>
                   </TouchableOpacity>
                 </View>
               ) : null}
 
               <Text style={[styles.sleepTimerSectionLabel, { color: theme.textAccent }]}>
-                {isSleepTimerActive ? 'Süreyi Değiştir' : 'Kapanma Süresi Seçin'}
+                {isSleepTimerActive ? t('player.change_duration') : t('player.select_sleep_duration')}
               </Text>
 
               {/* Hızlı Seçenekler Grid (15, 30, 45, 60 dk) */}
@@ -1958,7 +1960,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           styles.timerOptionText,
                           isSelected && { color: theme.primary, fontWeight: '700' },
                         ]}>
-                        {min} Dakika
+                        {min} {t('player.minutes')}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -1996,14 +1998,14 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       fontWeight: '700',
                     },
                   ]}>
-                  Şarkı Bitince Durdur
+                  {t('player.stop_after_track')}
                 </Text>
               </TouchableOpacity>
 
               <View style={styles.customTimerRow}>
                 <TextInput
                   style={[styles.customTimerInput, { backgroundColor: theme.surface }]}
-                  placeholder="Dakika (örn: 20)"
+                  placeholder={t('player.custom_minutes_placeholder')}
                   placeholderTextColor="#71717a"
                   keyboardType="numeric"
                   value={customTimerMinutes}
@@ -2028,7 +2030,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       styles.customTimerBtnText,
                       { color: customTimerMinutes.trim() ? '#ffffff' : '#71717a' },
                     ]}>
-                    Başlat
+                    {t('player.start')}
                   </Text>
                 </TouchableOpacity>
               </View>

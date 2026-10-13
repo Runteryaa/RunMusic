@@ -20,11 +20,12 @@ import { useStore, DEFAULT_PREFERENCES } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { cleanDisplayTitle, type LyricsSourcePreference } from '../services/lyricsService';
-import { SORT_OPTION_LABELS, type SortOption } from '../services/librarySort';
+import { getSortOptionLabel, type SortOption } from '../services/librarySort';
 import { PRESET_THEME_COLORS } from '../constants/theme';
 import { getPersistedSizeKB } from '../services/persistStorage';
 import { clearUpNextQueue } from '../services/queueController';
 import { syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
+import { useTranslation, type AppLanguage } from '../services/i18n';
 
 const GITHUB_URL = 'https://github.com/Runteryaa/RunMusic';
 
@@ -35,12 +36,6 @@ const SORT_OPTIONS: SortOption[] = [
   'duration_desc',
   'date_desc',
   'date_asc',
-];
-
-const LYRICS_SOURCES: { value: LyricsSourcePreference; label: string }[] = [
-  { value: 'lrclib_first', label: 'LRCLIB önce' },
-  { value: 'genius_first', label: 'Genius önce' },
-  { value: 'lrclib_only', label: 'Yalnızca LRCLIB' },
 ];
 
 export default function SettingsScreen() {
@@ -62,9 +57,38 @@ export default function SettingsScreen() {
   const clearArtworkCache = useStore((s) => s.clearArtworkCache);
   const upNextCount = useStore((s) => s.upNextIds.length);
 
+  const { t, resolvedLanguage } = useTranslation();
+
   const [isHiddenExpanded, setIsHiddenExpanded] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [storageKB, setStorageKB] = useState<number | null>(null);
+
+  const languageOptions = useMemo(
+    () => [
+      { value: 'system', label: t('settings.lang_system') },
+      { value: 'en', label: 'English' },
+      { value: 'tr', label: 'Türkçe' },
+    ],
+    [t]
+  );
+
+  const lyricsSources = useMemo(
+    () => [
+      { value: 'lrclib_first' as const, label: t('settings.source_lrclib_first') },
+      { value: 'genius_first' as const, label: t('settings.source_genius_first') },
+      { value: 'lrclib_only' as const, label: t('settings.source_lrclib_only') },
+    ],
+    [t]
+  );
+
+  const sortOptions = useMemo(
+    () =>
+      SORT_OPTIONS.map((o) => ({
+        value: o,
+        label: getSortOptionLabel(o, resolvedLanguage),
+      })),
+    [resolvedLanguage]
+  );
 
   const hiddenTrackItems = useMemo(() => {
     return hiddenTrackIds.map((id) => {
@@ -103,27 +127,31 @@ export default function SettingsScreen() {
   }, [refreshStorageUsage]);
 
   const handleClearLyricsCache = () => {
-    Alert.alert('Şarkı Sözlerini Temizle', 'Kayıtlı tüm şarkı sözleri silinecek. Emin misiniz?', [
-      { text: 'İptal', style: 'cancel' },
-      {
-        text: 'Temizle',
-        style: 'destructive',
-        onPress: () => {
-          clearLyricsCache();
-          refreshStorageUsage();
+    Alert.alert(
+      t('settings.alerts.clear_lyrics_title'),
+      t('settings.alerts.clear_lyrics_msg'),
+      [
+        { text: t('settings.alerts.cancel'), style: 'cancel' },
+        {
+          text: t('settings.alerts.clear'),
+          style: 'destructive',
+          onPress: () => {
+            clearLyricsCache();
+            refreshStorageUsage();
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
 
   const handleClearArtworkCache = () => {
     Alert.alert(
-      'Kapak Önbelleğini Temizle',
-      'Çıkarılmış kapak görselleri silinecek. Gerektiğinde dosyalardan yeniden oluşturulur.',
+      t('settings.alerts.clear_artwork_title'),
+      t('settings.alerts.clear_artwork_msg'),
       [
-        { text: 'İptal', style: 'cancel' },
+        { text: t('settings.alerts.cancel'), style: 'cancel' },
         {
-          text: 'Temizle',
+          text: t('settings.alerts.clear'),
           style: 'destructive',
           onPress: async () => {
             try {
@@ -143,30 +171,34 @@ export default function SettingsScreen() {
   };
 
   const handleClearUpNext = () => {
-    Alert.alert('Sırada Listesini Temizle', 'Öne aldığınız tüm şarkılar kuyruktan çıkarılacak.', [
-      { text: 'İptal', style: 'cancel' },
-      {
-        text: 'Temizle',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await clearUpNextQueue();
-          } catch (e) {
-            console.warn('Clear up-next failed:', e);
-          }
+    Alert.alert(
+      t('settings.alerts.clear_up_next_title'),
+      t('settings.alerts.clear_up_next_msg'),
+      [
+        { text: t('settings.alerts.cancel'), style: 'cancel' },
+        {
+          text: t('settings.alerts.clear'),
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearUpNextQueue();
+            } catch (e) {
+              console.warn('Clear up-next failed:', e);
+            }
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
 
   const handleResetSettings = () => {
     Alert.alert(
-      'Ayarları Sıfırla',
-      'Tercihler ve kitaplık filtreleri varsayılana dönecek. Gizlenen şarkılar ve kayıtlı sözler korunur.',
+      t('settings.alerts.reset_settings_title'),
+      t('settings.alerts.reset_settings_msg'),
       [
-        { text: 'İptal', style: 'cancel' },
+        { text: t('settings.alerts.cancel'), style: 'cancel' },
         {
-          text: 'Sıfırla',
+          text: t('settings.alerts.reset'),
           style: 'destructive',
           onPress: () => {
             resetPreferences();
@@ -198,18 +230,18 @@ export default function SettingsScreen() {
       const check = await Updates.checkForUpdateAsync();
       if (check.isAvailable) {
         Alert.alert(
-          'Yeni Güncelleme Bulundu',
-          'Yeni bir güncelleme bulundu ve arka planda indiriliyor...'
+          t('settings.alerts.update_found_title'),
+          t('settings.alerts.update_found_msg')
         );
         const fetchResult = await Updates.fetchUpdateAsync();
         if (fetchResult.isNew) {
           Alert.alert(
-            'Güncelleme Hazır',
-            'Güncelleme başarıyla indirildi. Yeni sürümü uygulamak için şimdi yeniden başlatılsın mı?',
+            t('settings.alerts.update_ready_title'),
+            t('settings.alerts.update_ready_msg'),
             [
-              { text: 'Daha Sonra', style: 'cancel' },
+              { text: t('settings.alerts.later'), style: 'cancel' },
               {
-                text: 'Yeniden Başlat',
+                text: t('settings.alerts.restart'),
                 onPress: async () => {
                   await Updates.reloadAsync();
                 },
@@ -219,8 +251,8 @@ export default function SettingsScreen() {
         }
       } else {
         Alert.alert(
-          'Uygulama Güncel',
-          'Şu anda en son sürüme sahipsiniz. Yeni bir OTA güncellemesi bulunmuyor.'
+          t('settings.alerts.up_to_date_title'),
+          t('settings.alerts.up_to_date_msg')
         );
       }
     } catch (e: any) {
@@ -228,11 +260,11 @@ export default function SettingsScreen() {
       const msg = e?.message || '';
       if (msg.includes('failed to check for update') || msg.includes('channel-name')) {
         Alert.alert(
-          'Güncelleme Yapılandırması',
-          'Mevcut APK sürümünde güncelleme kanalı tanımlı değil. Kanal desteği eklenmiş yeni APK sürümünü GitHub Releases üzerinden indirip kurmanız gerekmektedir.'
+          t('settings.alerts.update_config_title'),
+          t('settings.alerts.update_config_msg')
         );
       } else {
-        Alert.alert('Güncelleme Denetimi', e?.message || 'Güncelleme sunucusuna bağlanılamadı.');
+        Alert.alert(t('settings.alerts.update_check_title'), e?.message || t('settings.alerts.update_check_failed'));
       }
     } finally {
       setIsCheckingUpdate(false);
@@ -250,33 +282,56 @@ export default function SettingsScreen() {
           <Ionicons name="stats-chart" size={20} color={theme.primary} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.statButtonTitle}>İstatistikler ve Geçmiş</Text>
-          <Text style={styles.statButtonSubtitle}>Dinleme verileriniz ve en çok dinlenenler</Text>
+          <Text style={styles.statButtonTitle}>{t('settings.stats_title')}</Text>
+          <Text style={styles.statButtonSubtitle}>{t('settings.stats_subtitle')}</Text>
         </View>
         <Ionicons name="chevron-forward" size={20} color="#a1a1aa" style={{ marginLeft: 8 }} />
       </TouchableOpacity>
 
-      {/* ── ÇALMA ─────────────────────────────────────────────────────────── */}
-      <Section icon="musical-notes-outline" title="Çalma" theme={theme}>
+      {/* ── DİL (LANGUAGE) ─────────────────────────────────────────────────── */}
+      <Section
+        icon="globe-outline"
+        title={t('settings.language_section')}
+        subtitle={
+          preferences.appLanguage === 'system'
+            ? `${t('settings.lang_system')} (${resolvedLanguage === 'tr' ? 'Türkçe' : 'English'})`
+            : preferences.appLanguage === 'tr'
+            ? 'Türkçe'
+            : 'English'
+        }
+        theme={theme}
+        defaultOpen={true}>
         <ChipsRow
           theme={theme}
-          label="Varsayılan sıralama"
-          hint="Kitaplık her açıldığında bu sırayla listelenir."
+          label={t('settings.language_label')}
+          hint={t('settings.language_hint')}
+          value={preferences.appLanguage || 'system'}
+          options={languageOptions}
+          onChange={(value) => updatePreferences({ appLanguage: value as AppLanguage })}
+        />
+      </Section>
+
+      {/* ── ÇALMA ─────────────────────────────────────────────────────────── */}
+      <Section icon="musical-notes-outline" title={t('settings.playback_section')} theme={theme}>
+        <ChipsRow
+          theme={theme}
+          label={t('settings.default_sort')}
+          hint={t('settings.default_sort_hint')}
           value={preferences.defaultSortOption}
-          options={SORT_OPTIONS.map((o) => ({ value: o, label: SORT_OPTION_LABELS[o] }))}
+          options={sortOptions}
           onChange={(value) => updatePreferences({ defaultSortOption: value as SortOption })}
         />
         <ToggleRow
           theme={theme}
-          label="Açılışta son kuyruğu geri yükle"
-          hint="Kapalıysa yalnızca son çalan parça yüklenir."
+          label={t('settings.restore_queue')}
+          hint={t('settings.restore_queue_hint')}
           value={preferences.restoreQueueOnLaunch}
           onChange={(v) => updatePreferences({ restoreQueueOnLaunch: v })}
         />
         <ToggleRow
           theme={theme}
-          label="Uygulama kapatılınca çalmaya devam et"
-          hint="Son kullanılanlardan kaydırıp kapatınca müzik durmasın."
+          label={t('settings.keep_playing')}
+          hint={t('settings.keep_playing_hint')}
           value={preferences.keepPlayingWhenAppKilled}
           onChange={(v) => {
             updatePreferences({ keepPlayingWhenAppKilled: v });
@@ -288,36 +343,36 @@ export default function SettingsScreen() {
       {/* ── ŞARKI SÖZLERİ ─────────────────────────────────────────────────── */}
       <Section
         icon="mic-outline"
-        title="Şarkı Sözleri"
-        subtitle={cachedLyricsCount > 0 ? `${cachedLyricsCount} söz çevrimdışı kayıtlı` : undefined}
+        title={t('settings.lyrics_section')}
+        subtitle={cachedLyricsCount > 0 ? `${cachedLyricsCount} ${t('settings.cached_lyrics_count')}` : undefined}
         theme={theme}>
         <ToggleRow
           theme={theme}
-          label="Çalarken otomatik ara"
-          hint="Kapalıysa yalnızca kayıtlı sözler kullanılır; internet kullanılmaz."
+          label={t('settings.auto_fetch_lyrics')}
+          hint={t('settings.auto_fetch_lyrics_hint')}
           value={preferences.autoFetchLyrics}
           onChange={(v) => updatePreferences({ autoFetchLyrics: v })}
         />
         <ToggleRow
           theme={theme}
-          label="Player açılınca sözleri göster"
+          label={t('settings.open_with_lyrics')}
           value={preferences.openPlayerWithLyrics}
           onChange={(v) => updatePreferences({ openPlayerWithLyrics: v })}
         />
         <ChipsRow
           theme={theme}
-          label="Tercih edilen kaynak"
-          hint="Sonuç bulunamazsa sıradaki kaynağa geçilir."
+          label={t('settings.preferred_source')}
+          hint={t('settings.preferred_source_hint')}
           value={preferences.lyricsSourcePreference}
-          options={LYRICS_SOURCES}
+          options={lyricsSources}
           onChange={(value) =>
             updatePreferences({ lyricsSourcePreference: value as LyricsSourcePreference })
           }
         />
         <ActionRow
           theme={theme}
-          label="Kayıtlı sözleri temizle"
-          value={`${cachedLyricsCount} kayıt`}
+          label={t('settings.clear_lyrics')}
+          value={`${cachedLyricsCount} ${t('settings.records')}`}
           icon="trash-outline"
           destructive
           disabled={cachedLyricsCount === 0}
@@ -326,11 +381,11 @@ export default function SettingsScreen() {
       </Section>
 
       {/* ── GÖRÜNÜM ───────────────────────────────────────────────────────── */}
-      <Section icon="color-palette-outline" title="Görünüm" theme={theme}>
+      <Section icon="color-palette-outline" title={t('settings.appearance_section')} theme={theme}>
         <ToggleRow
           theme={theme}
-          label="Kapaktan renk türet"
-          hint="Tema renkleri çalan parçanın kapağından alınır."
+          label={t('settings.dynamic_color')}
+          hint={t('settings.dynamic_color_hint')}
           value={preferences.dynamicColorFromArtwork}
           onChange={(v) => {
             updatePreferences({ dynamicColorFromArtwork: v });
@@ -343,9 +398,9 @@ export default function SettingsScreen() {
 
         {!preferences.dynamicColorFromArtwork && (
           <View style={styles.paletteSection}>
-            <Text style={styles.paletteTitle}>Sabit Tema Rengi</Text>
+            <Text style={styles.paletteTitle}>{t('settings.preset_color_title')}</Text>
             <Text style={styles.paletteHint}>
-              Kapak rengi kapalıyken uygulama genelinde kullanılacak renk seçimi:
+              {t('settings.preset_color_hint')}
             </Text>
             <View style={styles.paletteGrid}>
               {PRESET_THEME_COLORS.map((item) => {
@@ -388,8 +443,8 @@ export default function SettingsScreen() {
 
         <ToggleRow
           theme={theme}
-          label="Hareketleri azalt"
-          hint="Duraklatma ölçeği ve söz geçişi animasyonlarını kapatır."
+          label={t('settings.reduce_motion')}
+          hint={t('settings.reduce_motion_hint')}
           value={preferences.reduceMotion}
           onChange={(v) => updatePreferences({ reduceMotion: v })}
         />
@@ -398,42 +453,42 @@ export default function SettingsScreen() {
       {/* ── KİTAPLIK FİLTRELERİ ───────────────────────────────────────────── */}
       <Section
         icon="funnel-outline"
-        title="Kitaplık Filtreleri"
-        subtitle="Taramada hangi dosyaların listeleneceğini belirler"
+        title={t('settings.filters_section')}
+        subtitle={t('settings.filters_subtitle')}
         theme={theme}>
         <NumberRow
           theme={theme}
-          label="En kısa süre (saniye)"
-          hint="Örn. 30 → 30 sn'den kısa parçalar (sesli notlar) listelenmez."
-          placeholder="sınırsız"
+          label={t('settings.min_duration')}
+          hint={t('settings.min_duration_hint')}
+          placeholder={t('settings.unlimited')}
           value={settings.minLengthSec}
           onChange={(v) => updateSettings({ minLengthSec: v })}
         />
         <NumberRow
           theme={theme}
-          label="En uzun süre (saniye)"
-          placeholder="sınırsız"
+          label={t('settings.max_duration')}
+          placeholder={t('settings.unlimited')}
           value={settings.maxLengthSec}
           onChange={(v) => updateSettings({ maxLengthSec: v })}
         />
         <NumberRow
           theme={theme}
-          label="En küçük boyut (MB)"
-          placeholder="sınırsız"
+          label={t('settings.min_size')}
+          placeholder={t('settings.unlimited')}
           value={settings.minSizeMB}
           onChange={(v) => updateSettings({ minSizeMB: v })}
           decimal
         />
         <NumberRow
           theme={theme}
-          label="En büyük boyut (MB)"
-          placeholder="sınırsız"
+          label={t('settings.max_size')}
+          placeholder={t('settings.unlimited')}
           value={settings.maxSizeMB}
           onChange={(v) => updateSettings({ maxSizeMB: v })}
           decimal
         />
         <Text style={styles.noteText}>
-          Değişiklikler kitaplık yeniden tarandığında uygulanır.
+          {t('settings.filters_note')}
         </Text>
       </Section>
 
@@ -447,7 +502,7 @@ export default function SettingsScreen() {
             <Ionicons name="eye-off-outline" size={18} color={theme.primary} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.sectionTitle}>Gizlenen Şarkılar</Text>
+            <Text style={styles.sectionTitle}>{t('settings.hidden_tracks_title')}</Text>
           </View>
           <View style={[styles.countBadge, { backgroundColor: theme.surface }]}>
             <Text style={[styles.countBadgeText, { color: theme.textAccent }]}>
@@ -467,11 +522,13 @@ export default function SettingsScreen() {
             {hiddenTrackItems.length > 0 ? (
               <>
                 <View style={styles.actionsRow}>
-                  <Text style={styles.smallMuted}>{hiddenTrackItems.length} şarkı gizlendi</Text>
+                  <Text style={styles.smallMuted}>
+                    {hiddenTrackItems.length} {t('settings.hidden_tracks_count')}
+                  </Text>
                   <TouchableOpacity style={styles.smallBtn} activeOpacity={0.7} onPress={unhideAllTracks}>
                     <Ionicons name="refresh" size={14} color={theme.primary} />
                     <Text style={[styles.smallBtnText, { color: theme.primary }]}>
-                      Tümünü Geri Getir
+                      {t('settings.restore_all')}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -503,7 +560,9 @@ export default function SettingsScreen() {
                       activeOpacity={0.7}
                       onPress={() => unhideTrack(item.id)}>
                       <Ionicons name="eye-outline" size={15} color={theme.primary} />
-                      <Text style={[styles.smallBtnText, { color: theme.primary }]}>Geri Getir</Text>
+                      <Text style={[styles.smallBtnText, { color: theme.primary }]}>
+                        {t('settings.restore')}
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 ))}
@@ -511,7 +570,7 @@ export default function SettingsScreen() {
             ) : (
               <View style={styles.emptyState}>
                 <Ionicons name="checkmark-circle-outline" size={28} color="#52525b" />
-                <Text style={styles.smallMuted}>Gizlenen şarkı bulunmuyor.</Text>
+                <Text style={styles.smallMuted}>{t('settings.no_hidden_tracks')}</Text>
               </View>
             )}
           </View>
@@ -519,13 +578,13 @@ export default function SettingsScreen() {
       </View>
 
       {/* ── VERİ VE BAKIM ─────────────────────────────────────────────────── */}
-      <Section icon="server-outline" title="Veri ve Bakım" theme={theme}>
+      <Section icon="server-outline" title={t('settings.data_section')} theme={theme}>
         <View style={styles.row}>
           <View style={styles.rowText}>
-            <Text style={styles.rowLabel}>Kayıtlı veri boyutu</Text>
+            <Text style={styles.rowLabel}>{t('settings.data_size')}</Text>
             <Text style={styles.rowHint}>
               {storageKB == null
-                ? 'Hesaplanıyor...'
+                ? t('settings.calculating')
                 : storageKB > 1024
                 ? `${(storageKB / 1024).toFixed(1)} MB`
                 : `${storageKB} KB`}
@@ -538,23 +597,23 @@ export default function SettingsScreen() {
 
         <ActionRow
           theme={theme}
-          label="Kapak önbelleğini temizle"
-          value={`${artworkCount} kapak`}
+          label={t('settings.clear_artwork')}
+          value={`${artworkCount} ${t('settings.artwork_count')}`}
           icon="images-outline"
           onPress={handleClearArtworkCache}
         />
         <ActionRow
           theme={theme}
-          label="Sırada listesini temizle"
-          value={upNextCount > 0 ? `${upNextCount} şarkı` : 'boş'}
+          label={t('settings.clear_up_next')}
+          value={upNextCount > 0 ? `${upNextCount} ${t('settings.tracks_count')}` : t('settings.up_next_empty')}
           icon="list-outline"
           disabled={upNextCount === 0}
           onPress={handleClearUpNext}
         />
         <ActionRow
           theme={theme}
-          label="Tüm ayarları sıfırla"
-          hint="Gizlenen şarkılar ve kayıtlı sözler korunur."
+          label={t('settings.reset_settings')}
+          hint={t('settings.reset_settings_hint')}
           icon="refresh-outline"
           destructive
           onPress={handleResetSettings}
@@ -564,29 +623,29 @@ export default function SettingsScreen() {
       {/* ── HAKKINDA ──────────────────────────────────────────────────────── */}
       <Section
         icon="information-circle-outline"
-        title="Hakkında"
+        title={t('settings.about_section')}
         subtitle={`RunMusic v${Constants.expoConfig?.version || '1.0.0'}`}
         theme={theme}>
         <View style={styles.detailsBox}>
-          <DetailRow label="Sürüm" value={`v${Constants.expoConfig?.version || '1.0.0'}`} />
-          <DetailRow label="Çalışma ortamı" value={Updates.runtimeVersion || '1.0.0'} />
-          <DetailRow label="Kanal" value={Updates.channel || 'production'} />
+          <DetailRow label={resolvedLanguage === 'tr' ? 'Sürüm' : 'Version'} value={`v${Constants.expoConfig?.version || '1.0.0'}`} />
+          <DetailRow label={resolvedLanguage === 'tr' ? 'Çalışma ortamı' : 'Runtime'} value={Updates.runtimeVersion || '1.0.0'} />
+          <DetailRow label={resolvedLanguage === 'tr' ? 'Kanal' : 'Channel'} value={Updates.channel || 'production'} />
           <DetailRow
-            label="Çalışan paket"
+            label={resolvedLanguage === 'tr' ? 'Çalışan paket' : 'Active bundle'}
             value={
               Updates.updateId
                 ? `OTA (${Updates.updateId.slice(0, 8)})`
                 : Updates.isEmbeddedLaunch
-                ? 'Yerel APK'
-                : 'Standart'
+                ? (resolvedLanguage === 'tr' ? 'Yerel APK' : 'Embedded APK')
+                : (resolvedLanguage === 'tr' ? 'Standart' : 'Standard')
             }
           />
           {Updates.createdAt ? (
             <DetailRow
-              label="Son güncelleme"
-              value={`${new Date(Updates.createdAt).toLocaleDateString('tr-TR')} ${new Date(
+              label={resolvedLanguage === 'tr' ? 'Son güncelleme' : 'Last update'}
+              value={`${new Date(Updates.createdAt).toLocaleDateString(resolvedLanguage === 'tr' ? 'tr-TR' : 'en-US')} ${new Date(
                 Updates.createdAt
-              ).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`}
+              ).toLocaleTimeString(resolvedLanguage === 'tr' ? 'tr-TR' : 'en-US', { hour: '2-digit', minute: '2-digit' })}`}
             />
           ) : null}
         </View>
@@ -601,14 +660,14 @@ export default function SettingsScreen() {
           ) : (
             <>
               <Ionicons name="cloud-download-outline" size={16} color="#ffffff" />
-              <Text style={styles.primaryBtnText}>Güncellemeleri Denetle</Text>
+              <Text style={styles.primaryBtnText}>{t('settings.check_updates')}</Text>
             </>
           )}
         </TouchableOpacity>
 
         <ActionRow
           theme={theme}
-          label="GitHub'da kaynak kodu"
+          label={t('settings.source_code')}
           value="Runteryaa/RunMusic"
           icon="logo-github"
           onPress={() => Linking.openURL(GITHUB_URL).catch(() => {})}
@@ -631,14 +690,16 @@ function Section({
   subtitle,
   theme,
   children,
+  defaultOpen = false,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
   subtitle?: string;
   theme: Theme;
   children: ReactNode;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <View style={styles.section}>
       <TouchableOpacity

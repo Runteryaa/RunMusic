@@ -42,6 +42,22 @@ export const SORT_OPTION_LABELS: Record<SortOption, string> = {
   date_asc: 'Eklenme (eski→yeni)',
 };
 
+export const SORT_OPTION_LABELS_EN: Record<SortOption, string> = {
+  name_asc: 'Name (A→Z)',
+  name_desc: 'Name (Z→A)',
+  duration_asc: 'Duration (short→long)',
+  duration_desc: 'Duration (long→short)',
+  date_desc: 'Date added (new→old)',
+  date_asc: 'Date added (old→new)',
+};
+
+export function getSortOptionLabel(option: SortOption, lang: 'en' | 'tr' = 'tr'): string {
+  if (lang === 'en') {
+    return SORT_OPTION_LABELS_EN[option] || SORT_OPTION_LABELS[option];
+  }
+  return SORT_OPTION_LABELS[option];
+}
+
 /**
  * Bir parçanın "eklenme" zamanı (ms).
  *

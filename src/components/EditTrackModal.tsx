@@ -24,6 +24,7 @@ import {
 } from '../services/artworkSearchService';
 import { cleanDisplayTitle } from '../services/lyricsService';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
+import { useTranslation } from '../services/i18n';
 
 let MusicWidgetModule: any = null;
 try {
@@ -57,6 +58,7 @@ export function EditTrackModal({
   onSaved,
 }: EditTrackModalProps) {
   const theme = useThemeStore((s) => s.theme);
+  const { t, resolvedLanguage } = useTranslation();
   const metadataMap = useStore((s) => s.metadataMap);
   const artworkMap = useStore((s) => s.artworkMap);
   const setTrackMetadata = useStore((s) => s.setTrackMetadata);
@@ -286,7 +288,7 @@ export function EditTrackModal({
         <View style={styles.modalCard}>
           {/* Header */}
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Şarkı Bilgilerini Düzenle</Text>
+            <Text style={styles.modalTitle}>{t('edit_track.title')}</Text>
             <TouchableOpacity
               onPress={onClose}
               style={styles.closeBtn}
@@ -322,7 +324,9 @@ export function EditTrackModal({
                   style={[styles.artActionBtn, { backgroundColor: '#27272a' }]}
                   onPress={handlePickFromGallery}>
                   <Ionicons name="images-outline" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                  <Text style={styles.artActionBtnText}>Galeriden</Text>
+                  <Text style={styles.artActionBtnText}>
+                    {resolvedLanguage === 'tr' ? 'Galeriden' : 'Gallery'}
+                  </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -334,14 +338,18 @@ export function EditTrackModal({
                   ) : (
                     <Ionicons name="globe-outline" size={16} color="#ffffff" style={{ marginRight: 6 }} />
                   )}
-                  <Text style={styles.artActionBtnText}>Kapak Bul</Text>
+                  <Text style={styles.artActionBtnText}>
+                    {resolvedLanguage === 'tr' ? 'Kapak Bul' : 'Find Cover'}
+                  </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[styles.artActionBtn, { backgroundColor: '#27272a' }]}
                   onPress={handleResetArtwork}>
                   <Ionicons name="refresh-outline" size={16} color="#a1a1aa" style={{ marginRight: 4 }} />
-                  <Text style={[styles.artActionBtnText, { color: '#a1a1aa' }]}>Sıfırla</Text>
+                  <Text style={[styles.artActionBtnText, { color: '#a1a1aa' }]}>
+                    {resolvedLanguage === 'tr' ? 'Sıfırla' : 'Reset'}
+                  </Text>
                 </TouchableOpacity>
               </View>
 
@@ -350,10 +358,10 @@ export function EditTrackModal({
                 <View style={styles.onlineResultsBox}>
                   <Text style={styles.onlineResultsTitle}>
                     {isSearchingArtwork
-                      ? 'İnternetten kapaklar aranıyor...'
+                      ? (resolvedLanguage === 'tr' ? 'İnternetten kapaklar aranıyor...' : 'Searching covers online...')
                       : onlineArtworkList.length > 0
-                      ? 'Bir Kapak Seçin:'
-                      : 'Eşleşen kapak bulunamadı.'}
+                      ? (resolvedLanguage === 'tr' ? 'Bir Kapak Seçin:' : 'Select a Cover:')
+                      : (resolvedLanguage === 'tr' ? 'Eşleşen kapak bulunamadı.' : 'No matching covers found.')}
                   </Text>
 
                   <ScrollView
@@ -395,34 +403,34 @@ export function EditTrackModal({
 
             {/* METİN ALANLARI */}
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Şarkı Başlığı</Text>
+              <Text style={styles.inputLabel}>{t('edit_track.track_title')}</Text>
               <TextInput
                 style={styles.input}
                 value={title}
                 onChangeText={setTitle}
-                placeholder="Şarkı adını girin"
+                placeholder={resolvedLanguage === 'tr' ? 'Şarkı adını girin' : 'Enter track title'}
                 placeholderTextColor="#52525b"
               />
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Sanatçı</Text>
+              <Text style={styles.inputLabel}>{t('edit_track.artist')}</Text>
               <TextInput
                 style={styles.input}
                 value={artist}
                 onChangeText={setArtist}
-                placeholder="Sanatçı adını girin"
+                placeholder={resolvedLanguage === 'tr' ? 'Sanatçı adını girin' : 'Enter artist name'}
                 placeholderTextColor="#52525b"
               />
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Albüm</Text>
+              <Text style={styles.inputLabel}>{t('edit_track.album')}</Text>
               <TextInput
                 style={styles.input}
                 value={album}
                 onChangeText={setAlbum}
-                placeholder="Albüm adını girin (isteğe bağlı)"
+                placeholder={resolvedLanguage === 'tr' ? 'Albüm adını girin (isteğe bağlı)' : 'Enter album name (optional)'}
                 placeholderTextColor="#52525b"
               />
             </View>
@@ -433,7 +441,7 @@ export function EditTrackModal({
                 style={styles.fullResetBtn}
                 onPress={handleFullReset}>
                 <Ionicons name="trash-outline" size={16} color="#ef4444" style={{ marginRight: 6 }} />
-                <Text style={styles.fullResetText}>Tüm Özel Bilgileri Sıfırla</Text>
+                <Text style={styles.fullResetText}>{t('edit_track.reset_to_original')}</Text>
               </TouchableOpacity>
             )}
           </ScrollView>
@@ -443,13 +451,13 @@ export function EditTrackModal({
             <TouchableOpacity
               style={styles.cancelBtn}
               onPress={onClose}>
-              <Text style={styles.cancelBtnText}>İptal</Text>
+              <Text style={styles.cancelBtnText}>{t('edit_track.cancel')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.saveBtn, { backgroundColor: theme.primary }]}
               onPress={handleSave}>
-              <Text style={styles.saveBtnText}>Kaydet</Text>
+              <Text style={styles.saveBtnText}>{t('edit_track.save')}</Text>
             </TouchableOpacity>
           </View>
         </View>

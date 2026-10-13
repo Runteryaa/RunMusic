@@ -33,6 +33,7 @@ import {
 } from '../services/queueController';
 import { compareAddedDate, type SortOption } from '../services/librarySort';
 import { normalizeSearchText } from '../services/searchUtils';
+import { useTranslation } from '../services/i18n';
 
 interface SortItem {
   id: SortOption;
@@ -40,14 +41,6 @@ interface SortItem {
   icon: keyof typeof Ionicons.glyphMap;
 }
 
-const SORT_OPTIONS: SortItem[] = [
-  { id: 'name_asc', label: 'İsim (A ➔ Z)', icon: 'text' },
-  { id: 'name_desc', label: 'İsim (Z ➔ A)', icon: 'text' },
-  { id: 'duration_asc', label: 'Süre (En Kısa ➔ En Uzun)', icon: 'time-outline' },
-  { id: 'duration_desc', label: 'Süre (En Uzun ➔ En Kısa)', icon: 'time' },
-  { id: 'date_desc', label: 'Eklenme Tarihi (En Yeni ➔ En Eski)', icon: 'calendar' },
-  { id: 'date_asc', label: 'Eklenme Tarihi (En Eski ➔ En Yeni)', icon: 'calendar-outline' },
-];
 
 const TRACK_INFO_CACHE = new Map<
   string,
@@ -57,6 +50,7 @@ const MAX_TRACK_INFO_CACHE = 3000;
 
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
+  const { t } = useTranslation();
   const theme = useThemeStore((s) => s.theme);
   const library = useStore((s) => s.library);
   const setLibrary = useStore((s) => s.setLibrary);
@@ -76,6 +70,18 @@ export default function LibraryScreen() {
   const activeTrack = useActiveTrack();
 
   const [statusMessage, setStatusMessage] = useState<string>('');
+
+  const sortOptions: SortItem[] = useMemo(
+    () => [
+      { id: 'name_asc', label: t('sort.name_asc'), icon: 'text' },
+      { id: 'name_desc', label: t('sort.name_desc'), icon: 'text' },
+      { id: 'duration_asc', label: t('sort.duration_asc'), icon: 'time-outline' },
+      { id: 'duration_desc', label: t('sort.duration_desc'), icon: 'time' },
+      { id: 'date_desc', label: t('sort.date_desc'), icon: 'calendar' },
+      { id: 'date_asc', label: t('sort.date_asc'), icon: 'calendar-outline' },
+    ],
+    [t]
+  );
 
   // Search state
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -483,7 +489,7 @@ export default function LibraryScreen() {
     try {
       const track = buildQueueTrack(asset);
       await addToQueue(track);
-      showToast(`"${track.title}" sıraya eklendi`);
+      showToast(`"${track.title}" ${t('library.added_to_queue')}`);
     } catch (e) {
       console.warn('Failed to add track to queue', e);
     }
@@ -493,7 +499,7 @@ export default function LibraryScreen() {
     try {
       const track = buildQueueTrack(asset);
       await playNext(track);
-      showToast(`"${track.title}" sıradaki olarak eklendi`);
+      showToast(`"${track.title}" ${t('library.play_next_added')}`);
     } catch (e) {
       console.warn('Failed to play next', e);
     }
@@ -519,7 +525,7 @@ export default function LibraryScreen() {
         smartShuffle: useSmart,
       });
       openFullscreenPlayer();
-      showToast(useSmart ? 'Akıllı karıştırma başladı' : 'Karışık çalma başladı');
+      showToast(useSmart ? t('library.smart_shuffle_started') : t('library.shuffle_started'));
     } catch (e) {
       console.warn('Shuffle all failed', e);
     }
@@ -538,7 +544,7 @@ export default function LibraryScreen() {
     const renderLeftActions = () => (
       <View style={[styles.swipeLeftActionBox, { backgroundColor: theme.primary }]}>
         <Ionicons name="list" size={20} color="#ffffff" style={{ marginRight: 6 }} />
-        <Text style={styles.swipeLeftActionText}>Sıraya Ekle</Text>
+        <Text style={styles.swipeLeftActionText}>{t('library.add_to_queue')}</Text>
       </View>
     );
 
@@ -627,7 +633,7 @@ export default function LibraryScreen() {
             <Ionicons name="search" size={18} color="#71717a" style={styles.searchInnerIcon} />
             <TextInput
               style={styles.searchInput}
-              placeholder="Şarkılarda ara..."
+              placeholder={t('library.search_placeholder')}
               placeholderTextColor="#71717a"
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -643,9 +649,9 @@ export default function LibraryScreen() {
       ) : (
         <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) + 4 }]}>
           <View>
-            <Text style={styles.headerTitle}>Kütüphane</Text>
+            <Text style={styles.headerTitle}>{t('library.title')}</Text>
             <Text style={styles.headerSubtitle}>
-              {library.length} şarkı kayıtlı
+              {library.length} {t('library.songs_registered')}
             </Text>
           </View>
           <View style={styles.headerRightActions}>
@@ -718,11 +724,11 @@ export default function LibraryScreen() {
             <View style={styles.centerBox}>
               <Ionicons name="musical-notes-outline" size={48} color="#3f3f46" />
               <Text style={styles.emptyText}>
-                {searchQuery ? 'Eşleşen şarkı bulunamadı.' : 'Henüz şarkı bulunamadı.'}
+                {searchQuery ? t('library.no_matching_tracks') : t('library.no_tracks_yet')}
               </Text>
               {!searchQuery && (
                 <TouchableOpacity style={[styles.rescanBtn, { backgroundColor: theme.primary }]} onPress={scanMedia}>
-                  <Text style={styles.rescanBtnText}>Tekrar Tara</Text>
+                  <Text style={styles.rescanBtnText}>{t('library.rescan')}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -739,12 +745,12 @@ export default function LibraryScreen() {
         <Pressable style={styles.modalBackdrop} onPress={() => setIsSortModalOpen(false)}>
           <Pressable style={styles.sortModalCard} onPress={(e) => e.stopPropagation()}>
             <View style={styles.sortModalHeader}>
-              <Text style={styles.sortModalTitle}>Sıralama Seçenekleri</Text>
+              <Text style={styles.sortModalTitle}>{t('library.sort_options_title')}</Text>
               <TouchableOpacity onPress={() => setIsSortModalOpen(false)}>
                 <Ionicons name="close" size={20} color="#a1a1aa" />
               </TouchableOpacity>
             </View>
-            {SORT_OPTIONS.map((item) => {
+            {sortOptions.map((item) => {
               const isSelected = sortOption === item.id;
               return (
                 <TouchableOpacity
@@ -806,7 +812,7 @@ export default function LibraryScreen() {
                     setSelectedTrackForMenu(null);
                   }}>
                   <Ionicons name="play-skip-forward" size={18} color={theme.primary} style={{ marginRight: 12 }} />
-                  <Text style={styles.actionMenuText}>Sıradaki Olarak Çal</Text>
+                  <Text style={styles.actionMenuText}>{t('library.play_next')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -816,7 +822,7 @@ export default function LibraryScreen() {
                     setSelectedTrackForMenu(null);
                   }}>
                   <Ionicons name="list" size={18} color={theme.primary} style={{ marginRight: 12 }} />
-                  <Text style={styles.actionMenuText}>Sıraya Ekle</Text>
+                  <Text style={styles.actionMenuText}>{t('library.add_to_queue')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -835,14 +841,14 @@ export default function LibraryScreen() {
                     setSelectedTrackForMenu(null);
                   }}>
                   <Ionicons name="pencil-outline" size={18} color={theme.primary} style={{ marginRight: 12 }} />
-                  <Text style={styles.actionMenuText}>Bilgileri Düzenle</Text>
+                  <Text style={styles.actionMenuText}>{t('library.edit_info')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[styles.actionMenuItem, styles.actionMenuItemDestructive]}
                   onPress={() => {
                     Alert.alert(
-                      'Şarkıyı Gizle',
+                      t('library.hide_track'),
                       'Bu şarkı kütüphane listenizden gizlenecek. Daha sonra Ayarlar menüsünden geri getirebilirsiniz.',
                       [
                         { text: 'İptal', style: 'cancel' },
@@ -855,7 +861,7 @@ export default function LibraryScreen() {
                     );
                   }}>
                   <Ionicons name="eye-off-outline" size={18} color="#ef4444" style={{ marginRight: 12 }} />
-                  <Text style={styles.actionMenuTextDestructive}>Şarkıyı Gizle</Text>
+                  <Text style={styles.actionMenuTextDestructive}>{t('library.hide_track')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity

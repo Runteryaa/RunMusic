@@ -8,11 +8,13 @@ import { useThemeStore } from '../store/useThemeStore';
 import { useStore } from '../store/useStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { cleanDisplayTitle } from '../services/lyricsService';
+import { useTranslation } from '../services/i18n';
 
 export default function StatisticsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const theme = useThemeStore((s) => s.theme);
+  const { t, resolvedLanguage } = useTranslation();
   
   const allAssets = useStore((s) => s.allAssets);
   const metadataMap = useStore((s) => s.metadataMap);
@@ -66,17 +68,17 @@ export default function StatisticsScreen() {
     const seconds = totalSeconds % 60;
     
     let parts = [];
-    if (days > 0) parts.push(`${days} gün`);
-    if (hours > 0) parts.push(`${hours} saat`);
-    if (minutes > 0) parts.push(`${minutes} dk`);
-    if (seconds > 0 || parts.length === 0) parts.push(`${seconds} sn`);
+    if (days > 0) parts.push(`${days} ${resolvedLanguage === 'tr' ? 'gün' : 'd'}`);
+    if (hours > 0) parts.push(`${hours} ${resolvedLanguage === 'tr' ? 'saat' : 'h'}`);
+    if (minutes > 0) parts.push(`${minutes} ${resolvedLanguage === 'tr' ? 'dk' : 'm'}`);
+    if (seconds > 0 || parts.length === 0) parts.push(`${seconds} ${resolvedLanguage === 'tr' ? 'sn' : 's'}`);
     
     const mainText = parts.join(' ');
     const totalMinutes = Math.floor(totalSeconds / 60);
     
     return {
       mainText,
-      subText: totalMinutes > 0 ? `(Toplam ${totalMinutes} dk)` : ''
+      subText: totalMinutes > 0 ? (resolvedLanguage === 'tr' ? `(Toplam ${totalMinutes} dk)` : `(Total ${totalMinutes} min)`) : ''
     };
   };
 
@@ -132,7 +134,7 @@ export default function StatisticsScreen() {
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#ffffff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>İstatistikler ve Geçmiş</Text>
+        <Text style={styles.headerTitle}>{t('stats.title')}</Text>
       </View>
 
       {/* Tabs */}
@@ -142,7 +144,7 @@ export default function StatisticsScreen() {
           onPress={() => setActiveTab('overview')}
         >
           <Text style={[styles.tabText, activeTab === 'overview' && { color: theme.primary, fontWeight: '700' }]}>
-            Genel Bakış
+            {resolvedLanguage === 'tr' ? 'Genel Bakış' : 'Overview'}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity 
@@ -150,7 +152,7 @@ export default function StatisticsScreen() {
           onPress={() => setActiveTab('history')}
         >
           <Text style={[styles.tabText, activeTab === 'history' && { color: theme.primary, fontWeight: '700' }]}>
-            Dinleme Geçmişi
+            {resolvedLanguage === 'tr' ? 'Dinleme Geçmişi' : 'Listening History'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -178,7 +180,7 @@ export default function StatisticsScreen() {
               <View style={styles.card}>
                 <Ionicons name="time-outline" size={32} color={theme.primary} />
                 <View style={styles.cardTextContent}>
-                  <Text style={styles.cardTitle}>Toplam Dinleme Süresi</Text>
+                  <Text style={styles.cardTitle}>{t('stats.total_time')}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap' }}>
                     <Text style={styles.cardValue}>{formatDurationDetailed(totalTime).mainText}</Text>
                     {formatDurationDetailed(totalTime).subText ? (
@@ -192,21 +194,39 @@ export default function StatisticsScreen() {
 
               {/* Most Played This Month */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Bu Ay En Çok Dinlenenler</Text>
+                <Text style={styles.sectionTitle}>
+                  {resolvedLanguage === 'tr' ? 'Bu Ay En Çok Dinlenenler' : 'Top Tracks This Month'}
+                </Text>
                 {mostPlayedMonth.length > 0 ? (
-                  mostPlayedMonth.map((item, idx) => renderTrackItem(item.track_id, getTrackInfo(item.track_id).artist, `${item.play_count} kez`, `month-${idx}`))
+                  mostPlayedMonth.map((item, idx) =>
+                    renderTrackItem(
+                      item.track_id,
+                      getTrackInfo(item.track_id).artist,
+                      `${item.play_count} ${resolvedLanguage === 'tr' ? 'kez' : 'plays'}`,
+                      `month-${idx}`
+                    )
+                  )
                 ) : (
-                  <Text style={styles.emptyText}>Henüz yeterli veri yok.</Text>
+                  <Text style={styles.emptyText}>{t('stats.no_data')}</Text>
                 )}
               </View>
 
               {/* Most Played All Time */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Tüm Zamanların En Çok Dinlenenleri</Text>
+                <Text style={styles.sectionTitle}>
+                  {resolvedLanguage === 'tr' ? 'Tüm Zamanların En Çok Dinlenenleri' : 'Top Tracks All Time'}
+                </Text>
                 {mostPlayedAllTime.length > 0 ? (
-                  mostPlayedAllTime.map((item, idx) => renderTrackItem(item.track_id, getTrackInfo(item.track_id).artist, `${item.play_count} kez`, `all-${idx}`))
+                  mostPlayedAllTime.map((item, idx) =>
+                    renderTrackItem(
+                      item.track_id,
+                      getTrackInfo(item.track_id).artist,
+                      `${item.play_count} ${resolvedLanguage === 'tr' ? 'kez' : 'plays'}`,
+                      `all-${idx}`
+                    )
+                  )
                 ) : (
-                  <Text style={styles.emptyText}>Henüz yeterli veri yok.</Text>
+                  <Text style={styles.emptyText}>{t('stats.no_data')}</Text>
                 )}
               </View>
             </>
@@ -216,11 +236,18 @@ export default function StatisticsScreen() {
               {recentHistory.length > 0 ? (
                 recentHistory.map((item, idx) => {
                   const date = new Date(item.played_at);
-                  const dateStr = date.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+                  const dateStr = date.toLocaleDateString(resolvedLanguage === 'tr' ? 'tr-TR' : 'en-US', {
+                    day: '2-digit',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  });
                   return renderTrackItem(item.track_id, dateStr, undefined, `hist-${item.played_at}-${idx}`);
                 })
               ) : (
-                <Text style={styles.emptyText}>Dinleme geçmişi boş.</Text>
+                <Text style={styles.emptyText}>
+                  {resolvedLanguage === 'tr' ? 'Dinleme geçmişi boş.' : 'Listening history is empty.'}
+                </Text>
               )}
             </View>
           )}

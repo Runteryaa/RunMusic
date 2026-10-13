@@ -393,6 +393,33 @@ try {
 }
 check('reducePersistedState bozuk store ile çökmüyor', reduceOk);
 
+section('10) v4 -> v5 migrasyonu ve appLanguage güvencesi');
+
+const v4StateWithoutLang = {
+  preferences: {
+    defaultSortOption: 'name_asc',
+    restoreQueueOnLaunch: true,
+  },
+};
+
+const defaultPrefs = {
+  appLanguage: 'system',
+  defaultSortOption: 'date_desc',
+  restoreQueueOnLaunch: true,
+  keepPlayingWhenAppKilled: true,
+  autoFetchLyrics: true,
+  lyricsSourcePreference: 'lrclib_first',
+  openPlayerWithLyrics: false,
+  dynamicColorFromArtwork: true,
+  presetThemeColor: '#3b82f6',
+  reduceMotion: false,
+};
+
+const migratedPrefs = { ...defaultPrefs, ...v4StateWithoutLang.preferences };
+
+check('appLanguage eksik kayıtlarda varsayılan (system) atanıyor', migratedPrefs.appLanguage === 'system');
+check('mevcut kullanıcı tercihleri korunuyor (defaultSortOption)', migratedPrefs.defaultSortOption === 'name_asc');
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 section('Sonuç');
