@@ -341,6 +341,41 @@ export function buildDiacriticPattern(name: string): string {
     .join('');
 }
 
+interface CompiledArtistRegexes {
+  prefixSep: RegExp;
+  prefixSpace: RegExp;
+  suffixSep: RegExp;
+  suffixBy: RegExp;
+  suffixSpace: RegExp;
+  bracket: RegExp;
+  word: RegExp;
+}
+
+const ARTIST_REGEX_CACHE = new Map<string, CompiledArtistRegexes>();
+
+function getCompiledArtistRegexes(cand: string): CompiledArtistRegexes {
+  const key = cand.toLowerCase();
+  const cached = ARTIST_REGEX_CACHE.get(key);
+  if (cached) return cached;
+
+  const pat = buildDiacriticPattern(cand);
+  const regexes: CompiledArtistRegexes = {
+    prefixSep: new RegExp(`^${pat}\\s*[-–—―−‐:|~_/]+\\s*`, 'iu'),
+    prefixSpace: new RegExp(`^${pat}\\s+`, 'iu'),
+    suffixSep: new RegExp(`\\s*[-–—―−‐:|~_/]+\\s*${pat}$`, 'iu'),
+    suffixBy: new RegExp(`\\s+by\\s+${pat}$`, 'iu'),
+    suffixSpace: new RegExp(`\\s+${pat}$`, 'iu'),
+    bracket: new RegExp(`\\s*[\\[\\({]\\s*${pat}\\s*[\\]\\)}]`, 'iu'),
+    word: new RegExp(`(^|[^\\p{L}\\p{N}])${pat}(?=$|[^\\p{L}\\p{N}])`, 'giu'),
+  };
+
+  if (ARTIST_REGEX_CACHE.size > 500) {
+    ARTIST_REGEX_CACHE.clear();
+  }
+  ARTIST_REGEX_CACHE.set(key, regexes);
+  return regexes;
+}
+
 /**
  * Başlık içerisindeki mükerrer sanatçı adını temizler.
  * Örneğin:
@@ -390,12 +425,11 @@ export function stripArtistFromTitle(title?: string | null, artist?: string | nu
   };
 
   for (const cand of candidates) {
-    const pat = buildDiacriticPattern(cand);
+    const regexes = getCompiledArtistRegexes(cand);
 
     // 1. Başta sanatçı ve ayırıcı: "Artist - Title", "Artist : Title", vb.
-    const prefixSepRegex = new RegExp(`^${pat}\\s*[-–—―−‐:|~_/]+\\s*`, 'iu');
-    if (prefixSepRegex.test(result)) {
-      const stripped = sanitizeRemainder(result.replace(prefixSepRegex, ''));
+    if (regexes.prefixSep.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(regexes.prefixSep, ''));
       if (stripped.length > 0) {
         result = stripped;
         continue;
@@ -403,9 +437,8 @@ export function stripArtistFromTitle(title?: string | null, artist?: string | nu
     }
 
     // 2. Başta sanatçı ve boşluk: "Artist Title"
-    const prefixSpaceRegex = new RegExp(`^${pat}\\s+`, 'iu');
-    if (prefixSpaceRegex.test(result)) {
-      const stripped = sanitizeRemainder(result.replace(prefixSpaceRegex, ''));
+    if (regexes.prefixSpace.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(regexes.prefixSpace, ''));
       if (stripped.length > 0) {
         result = stripped;
         continue;
@@ -413,9 +446,8 @@ export function stripArtistFromTitle(title?: string | null, artist?: string | nu
     }
 
     // 3. Sonda sanatçı ve ayırıcı: "Title - Artist"
-    const suffixSepRegex = new RegExp(`\\s*[-–—―−‐:|~_/]+\\s*${pat}$`, 'iu');
-    if (suffixSepRegex.test(result)) {
-      const stripped = sanitizeRemainder(result.replace(suffixSepRegex, ''));
+    if (regexes.suffixSep.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(regexes.suffixSep, ''));
       if (stripped.length > 0) {
         result = stripped;
         continue;
@@ -423,9 +455,8 @@ export function stripArtistFromTitle(title?: string | null, artist?: string | nu
     }
 
     // 4. "Title by Artist"
-    const suffixByRegex = new RegExp(`\\s+by\\s+${pat}$`, 'iu');
-    if (suffixByRegex.test(result)) {
-      const stripped = sanitizeRemainder(result.replace(suffixByRegex, ''));
+    if (regexes.suffixBy.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(regexes.suffixBy, ''));
       if (stripped.length > 0) {
         result = stripped;
         continue;
@@ -433,9 +464,8 @@ export function stripArtistFromTitle(title?: string | null, artist?: string | nu
     }
 
     // 5. Sonda boşlukla sanatçı: "Title Artist"
-    const suffixSpaceRegex = new RegExp(`\\s+${pat}$`, 'iu');
-    if (suffixSpaceRegex.test(result)) {
-      const stripped = sanitizeRemainder(result.replace(suffixSpaceRegex, ''));
+    if (regexes.suffixSpace.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(regexes.suffixSpace, ''));
       if (stripped.length > 0) {
         result = stripped;
         continue;
@@ -443,9 +473,8 @@ export function stripArtistFromTitle(title?: string | null, artist?: string | nu
     }
 
     // 6. Parantez içi: "Title (Artist)"
-    const bracketRegex = new RegExp(`\\s*[\\[\\({]\\s*${pat}\\s*[\\]\\)}]`, 'iu');
-    if (bracketRegex.test(result)) {
-      const stripped = sanitizeRemainder(result.replace(bracketRegex, ''));
+    if (regexes.bracket.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(regexes.bracket, ''));
       if (stripped.length > 0) {
         result = stripped;
         continue;
@@ -453,9 +482,8 @@ export function stripArtistFromTitle(title?: string | null, artist?: string | nu
     }
 
     // 7. Kelime sınırlarında genel temizlik (kelime içi parçaları bozmadan: "Can" vs "Heyecan")
-    const wordRegex = new RegExp(`(^|[^\\p{L}\\p{N}])${pat}(?=$|[^\\p{L}\\p{N}])`, 'giu');
-    if (wordRegex.test(result)) {
-      const stripped = result.replace(wordRegex, '$1').trim();
+    if (regexes.word.test(result)) {
+      const stripped = result.replace(regexes.word, '$1').trim();
       const sanitized = sanitizeRemainder(stripped);
       if (sanitized.length > 0) {
         result = sanitized;
@@ -465,6 +493,9 @@ export function stripArtistFromTitle(title?: string | null, artist?: string | nu
 
   return result;
 }
+
+const TITLE_CLEAN_CACHE = new Map<string, string>();
+const MAX_TITLE_CACHE = 2000;
 
 /**
  * Parça başlığını kullanıcı arayüzü ve etiketler için tamamen arındırır:
@@ -481,6 +512,11 @@ export function stripArtistFromTitle(title?: string | null, artist?: string | nu
  * 11. Başlığın boş kalmaması için güvenli geri dönüş (fallback) sağlar.
  */
 export function cleanDisplayTitle(rawTitle?: string | null, artist?: string | null): string {
+  if (!rawTitle) return '';
+  const cacheKey = `${rawTitle}\u001F${artist || ''}`;
+  const cached = TITLE_CLEAN_CACHE.get(cacheKey);
+  if (cached !== undefined) return cached;
+
   let s = rawTitle || '';
 
   // 1. Ses dosyası uzantısını kaldır
@@ -545,6 +581,16 @@ export function cleanDisplayTitle(rawTitle?: string | null, artist?: string | nu
     s = cleanedBeforeArtist || cleanYouTubeTitle(rawTitle) || (rawTitle || '').trim();
   }
 
+  if (TITLE_CLEAN_CACHE.size >= MAX_TITLE_CACHE) {
+    const iter = TITLE_CLEAN_CACHE.keys();
+    for (let i = 0; i < 400; i++) {
+      const next = iter.next();
+      if (next.done) break;
+      TITLE_CLEAN_CACHE.delete(next.value);
+    }
+  }
+  TITLE_CLEAN_CACHE.set(cacheKey, s);
+
   return s;
 }
 
@@ -575,14 +621,6 @@ export function getSearchKeywords(videoTitle: string, channelName = '') {
   let expectedArtist = cleanYouTubeTitle(rawArtist || channelName);
   let expectedTrack = cleanDisplayTitle(rawTrack, expectedArtist || channelName);
 
-  // Başlık içinde kalan sanatçı ismini ayıkla (mükerrerliği önler)
-  if (expectedArtist) {
-    expectedTrack = cleanDisplayTitle(expectedTrack, expectedArtist);
-  }
-  if (channelName && channelName !== expectedArtist) {
-    expectedTrack = cleanDisplayTitle(expectedTrack, channelName);
-  }
-
   const cleanChannel = cleanYouTubeTitle(channelName);
 
   let cleanedFullTitle = expectedTrack;
@@ -594,6 +632,7 @@ export function getSearchKeywords(videoTitle: string, channelName = '') {
 
   return { expectedArtist, expectedTrack, cleanChannel, cleanedFullTitle, dashMatch, titleBeforePipe };
 }
+
 
 export function parseArtistAndTitle(rawTitle: string, defaultArtist = ''): { artist: string; title: string } {
   const safeDefaultArtist =
