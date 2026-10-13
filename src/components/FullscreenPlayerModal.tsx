@@ -1911,9 +1911,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                         styles.sleepTimerIconBubble,
                         { backgroundColor: `${theme.primary}25` },
                       ]}>
-                      <Ionicons name="moon" size={14} color={theme.primary} />
+                      <Ionicons name="moon" size={17} color={theme.primary} />
                     </View>
-                    <View style={{ marginLeft: 8 }}>
+                    <View style={{ marginLeft: 10 }}>
                       <Text style={[styles.sleepTimerActiveBarTitle, { color: theme.textAccent }]}>
                         Kalan Süre
                       </Text>
@@ -1927,7 +1927,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     activeOpacity={0.75}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     onPress={stopTimer}>
-                    <Ionicons name="close-circle" size={14} color="#ef4444" style={{ marginRight: 4 }} />
+                    <Ionicons name="close-circle" size={16} color="#ef4444" style={{ marginRight: 5 }} />
                     <Text style={styles.stopTimerPillBtnText}>İptal Et</Text>
                   </TouchableOpacity>
                 </View>
@@ -2837,9 +2837,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 12,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     marginBottom: 8,
   },
@@ -2850,33 +2850,34 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   sleepTimerIconBubble: {
-    width: 30,
-    height: 30,
-    borderRadius: 9,
+    width: 36,
+    height: 36,
+    borderRadius: 11,
     justifyContent: 'center',
     alignItems: 'center',
   },
   sleepTimerActiveBarTitle: {
-    fontSize: 9.5,
+    fontSize: 10.5,
     fontWeight: '700',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
+    marginBottom: 2,
   },
   sleepTimerActiveBarRemaining: {
-    fontSize: 13.5,
+    fontSize: 15.5,
     fontWeight: '700',
   },
   stopTimerPillBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(239, 68, 68, 0.16)',
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    borderRadius: 10,
   },
   stopTimerPillBtnText: {
     color: '#ef4444',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
   },
   sleepTimerSectionLabel: {
