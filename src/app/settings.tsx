@@ -16,13 +16,15 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import * as Updates from 'expo-updates';
 import Constants from 'expo-constants';
-import { useStore } from '../store/useStore';
+import { useStore, DEFAULT_PREFERENCES } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { cleanDisplayTitle, type LyricsSourcePreference } from '../services/lyricsService';
 import { SORT_OPTION_LABELS, type SortOption } from '../services/librarySort';
+import { PRESET_THEME_COLORS } from '../constants/theme';
 import { getPersistedSizeKB } from '../services/persistStorage';
 import { clearUpNextQueue } from '../services/queueController';
+import { syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
 
 const GITHUB_URL = 'https://github.com/Runteryaa/RunMusic';
 
@@ -168,6 +170,8 @@ export default function SettingsScreen() {
           style: 'destructive',
           onPress: () => {
             resetPreferences();
+            syncAppKilledPlaybackBehavior(DEFAULT_PREFERENCES.keepPlayingWhenAppKilled);
+            useThemeStore.getState().applyPresetTheme(DEFAULT_PREFERENCES.presetThemeColor);
             updateSettings({
               minLengthSec: null,
               maxLengthSec: null,
@@ -274,7 +278,10 @@ export default function SettingsScreen() {
           label="Uygulama kapatılınca çalmaya devam et"
           hint="Son kullanılanlardan kaydırıp kapatınca müzik durmasın."
           value={preferences.keepPlayingWhenAppKilled}
-          onChange={(v) => updatePreferences({ keepPlayingWhenAppKilled: v })}
+          onChange={(v) => {
+            updatePreferences({ keepPlayingWhenAppKilled: v });
+            syncAppKilledPlaybackBehavior(v);
+          }}
         />
       </Section>
 
@@ -325,8 +332,60 @@ export default function SettingsScreen() {
           label="Kapaktan renk türet"
           hint="Tema renkleri çalan parçanın kapağından alınır."
           value={preferences.dynamicColorFromArtwork}
-          onChange={(v) => updatePreferences({ dynamicColorFromArtwork: v })}
+          onChange={(v) => {
+            updatePreferences({ dynamicColorFromArtwork: v });
+            if (!v) {
+              const preset = preferences.presetThemeColor || '#3b82f6';
+              useThemeStore.getState().applyPresetTheme(preset);
+            }
+          }}
         />
+
+        {!preferences.dynamicColorFromArtwork && (
+          <View style={styles.paletteSection}>
+            <Text style={styles.paletteTitle}>Sabit Tema Rengi</Text>
+            <Text style={styles.paletteHint}>
+              Kapak rengi kapalıyken uygulama genelinde kullanılacak renk seçimi:
+            </Text>
+            <View style={styles.paletteGrid}>
+              {PRESET_THEME_COLORS.map((item) => {
+                const isSelected = (preferences.presetThemeColor || '#3b82f6') === item.color;
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      updatePreferences({ presetThemeColor: item.color });
+                      useThemeStore.getState().applyPresetTheme(item.color);
+                    }}
+                    style={[
+                      styles.paletteItem,
+                      isSelected && {
+                        borderColor: item.color,
+                        backgroundColor: `${item.color}22`,
+                      },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={item.label}
+                    accessibilityState={{ selected: isSelected }}>
+                    <View style={[styles.paletteColorCircle, { backgroundColor: item.color }]}>
+                      {isSelected && <Ionicons name="checkmark" size={16} color="#ffffff" />}
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.paletteColorName,
+                        isSelected && { color: '#ffffff', fontWeight: '700' },
+                      ]}>
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
         <ToggleRow
           theme={theme}
           label="Hareketleri azalt"
@@ -1002,5 +1061,53 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#71717a',
     marginTop: 2,
+  },
+  paletteSection: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+  },
+  paletteTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginBottom: 2,
+  },
+  paletteHint: {
+    fontSize: 12,
+    color: '#a1a1aa',
+    marginBottom: 12,
+  },
+  paletteGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  paletteItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: '#18181b',
+    borderWidth: 1.5,
+    borderColor: '#27272a',
+    gap: 8,
+    minWidth: '47%',
+    flex: 1,
+    maxWidth: '49%',
+  },
+  paletteColorCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paletteColorName: {
+    fontSize: 12,
+    color: '#d4d4d8',
+    fontWeight: '500',
+    flex: 1,
   },
 });

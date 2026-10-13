@@ -22,6 +22,24 @@ export const PLAYBACK_CAPABILITIES = [
   Capability.SkipToPrevious,
 ];
 
+export async function syncAppKilledPlaybackBehavior(keepPlaying?: boolean): Promise<void> {
+  try {
+    const shouldKeepPlaying =
+      keepPlaying !== undefined
+        ? keepPlaying
+        : useStore.getState().preferences?.keepPlayingWhenAppKilled ?? true;
+    await TrackPlayer.updateOptions({
+      android: {
+        appKilledPlaybackBehavior: shouldKeepPlaying
+          ? AppKilledPlaybackBehavior.ContinuePlayback
+          : AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
+      },
+    });
+  } catch (e) {
+    console.warn('[playerBootstrap] syncAppKilledPlaybackBehavior error:', e);
+  }
+}
+
 let isPlayerInitializing = false;
 let isPlayerInitialized = false;
 
@@ -51,7 +69,7 @@ export async function setupTrackPlayerIfNeeded(): Promise<boolean> {
         android: {
           appKilledPlaybackBehavior: prefs?.keepPlayingWhenAppKilled
             ? AppKilledPlaybackBehavior.ContinuePlayback
-            : AppKilledPlaybackBehavior.PausePlayback,
+            : AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
         },
       });
 

@@ -11,7 +11,7 @@ import playbackService from '../service';
 
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
-import { restoreQueueIfNeeded } from '../services/playerBootstrap';
+import { restoreQueueIfNeeded, syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
 import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
@@ -38,6 +38,8 @@ function MainAppLayout() {
   const theme = useThemeStore((s) => s.theme);
   const updateThemeFromArtwork = useThemeStore((s) => s.updateThemeFromArtwork);
   const dynamicColorFromArtwork = useStore((s) => s.preferences.dynamicColorFromArtwork);
+  const presetThemeColor = useStore((s) => s.preferences.presetThemeColor);
+  const keepPlayingWhenAppKilled = useStore((s) => s.preferences.keepPlayingWhenAppKilled);
   const setArtwork = useStore((s) => s.setArtwork);
   const activeTrackId = activeTrack?.id;
   const storeArtwork = useStore((s) =>
@@ -46,6 +48,11 @@ function MainAppLayout() {
 
   const artworkUri =
     storeArtwork || (typeof activeTrack?.artwork === 'string' ? activeTrack.artwork : undefined);
+
+  // Uygulama kapatılınca çalma davranışını native servise senkronize et
+  useEffect(() => {
+    syncAppKilledPlaybackBehavior(keepPlayingWhenAppKilled);
+  }, [keepPlayingWhenAppKilled]);
 
   // Aktif şarkının kapak görseli henüz önbellekte yoksa anında çek ve temayı tetikle
   useEffect(() => {
@@ -64,13 +71,13 @@ function MainAppLayout() {
 
   useEffect(() => {
     // Tercih de bağımlılık: kullanıcı "kapaktan renk türet"i açıp kapatınca
-    // tema, şarkı değişmesini beklemeden hemen güncellenir.
+    // veya sabit tema rengini değiştirince tema hemen güncellenir.
     if (dynamicColorFromArtwork && artworkUri) {
       updateThemeFromArtwork(artworkUri);
-    } else if (!activeTrackId || !dynamicColorFromArtwork) {
+    } else {
       updateThemeFromArtwork(null);
     }
-  }, [artworkUri, activeTrackId, updateThemeFromArtwork, dynamicColorFromArtwork]);
+  }, [artworkUri, activeTrackId, updateThemeFromArtwork, dynamicColorFromArtwork, presetThemeColor]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#121212' }}>

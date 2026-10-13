@@ -52,6 +52,8 @@ export interface AppPreferences {
   openPlayerWithLyrics: boolean;
   /** Tema renkleri albüm kapağından türetilsin mi (kapalıysa sabit tema). */
   dynamicColorFromArtwork: boolean;
+  /** Dinamik renk kapalıyken veya kapak yokken kullanılacak hazır tema vurgu rengi (hex kodu). */
+  presetThemeColor: string;
   /** Bazı animasyonları (duraklatma ölçeği, söz geçişi) kapatır. */
   reduceMotion: boolean;
 }
@@ -64,6 +66,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   lyricsSourcePreference: 'lrclib_first',
   openPlayerWithLyrics: false,
   dynamicColorFromArtwork: true,
+  presetThemeColor: '#3b82f6',
   reduceMotion: false,
 };
 
@@ -145,7 +148,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 2;
+const PERSIST_VERSION = 3;
 
 export const useStore = create<AppState>()(
   persist(

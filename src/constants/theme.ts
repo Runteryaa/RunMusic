@@ -61,3 +61,22 @@ export const Spacing = {
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;
+
+export interface PresetThemeColor {
+  id: string;
+  label: string;
+  color: string;
+}
+
+export const PRESET_THEME_COLORS: PresetThemeColor[] = [
+  { id: 'blue', label: 'Okyanus Mavisi', color: '#3b82f6' },
+  { id: 'violet', label: 'Elektrik Menekşe', color: '#8b5cf6' },
+  { id: 'emerald', label: 'Zümrüt Yeşili', color: '#10b981' },
+  { id: 'cyan', label: 'Camgöbeği', color: '#06b6d4' },
+  { id: 'amber', label: 'Kehribar', color: '#f59e0b' },
+  { id: 'orange', label: 'Gün Batımı', color: '#f97316' },
+  { id: 'rose', label: 'Gül Pembesi', color: '#ec4899' },
+  { id: 'red', label: 'Yakut Kırmızısı', color: '#ef4444' },
+  { id: 'lime', label: 'Fıstık Yeşili', color: '#84cc16' },
+  { id: 'indigo', label: 'Gece Mavisi', color: '#6366f1' },
+];
