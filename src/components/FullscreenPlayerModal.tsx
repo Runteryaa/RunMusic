@@ -2205,13 +2205,16 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 onPress={toggleSleepTimerMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Ionicons
-                  name={isSleepTimerActive || isSleepTimerMode ? 'moon' : 'moon-outline'}
+                  name={isSleepTimerActive ? 'moon' : 'moon-outline'}
                   size={20}
-                  color={isSleepTimerActive || isSleepTimerMode ? theme.primary : 'rgba(255, 255, 255, 0.5)'}
+                  color={
+                    isSleepTimerActive
+                      ? theme.primary
+                      : isSleepTimerMode
+                        ? '#ffffff'
+                        : 'rgba(255, 255, 255, 0.5)'
+                  }
                 />
-                {isSleepTimerActive ? (
-                  <View style={[styles.activeDotBadge, { backgroundColor: theme.primary }]} />
-                ) : null}
               </TouchableOpacity>
             </View>
 
@@ -2797,14 +2800,6 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '900',
   },
-  activeDotBadge: {
-    position: 'absolute',
-    right: 4,
-    bottom: 4,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
@@ -2903,7 +2898,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: '45%',
     backgroundColor: '#27272a',
-    height: 44,
+    height: 48,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2918,7 +2913,7 @@ const styles = StyleSheet.create({
   timerFullWidthBtn: {
     flexDirection: 'row',
     backgroundColor: '#27272a',
-    height: 44,
+    height: 48,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2937,14 +2932,14 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     paddingHorizontal: 14,
     fontSize: 14,
-    height: 44,
+    height: 48,
   },
   customTimerBtn: {
     paddingHorizontal: 18,
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 12,
-    height: 44,
+    height: 48,
   },
   customTimerBtnText: {
     fontSize: 14,
