@@ -44,6 +44,7 @@ import {
   parseAnySyncedLyrics,
   getLyricsCacheKeys,
   cleanYouTubeTitle,
+  cleanDisplayTitle,
   getSearchKeywords,
 } from '../services/lyricsService';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
@@ -310,7 +311,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     if (!queueSections) return [];
     return queueSections.upNext.map((entry, i) => ({
       key: `${entry.track.id ?? entry.track.url}-${i}`,
-      title: entry.track.title ?? 'Bilinmeyen Parça',
+      title: cleanDisplayTitle(entry.track.title ?? '', entry.track.artist) || 'Bilinmeyen Parça',
       artist: entry.track.artist ?? undefined,
       artwork: typeof entry.track.artwork === 'string' ? entry.track.artwork : undefined,
       trackId: entry.track.id ?? null,
@@ -414,7 +415,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         <Text
           style={[styles.queueTrackTitle, isCurrent && { color: theme.primary }]}
           numberOfLines={1}>
-          {entry.track.title}
+          {cleanDisplayTitle(entry.track.title, entry.track.artist)}
         </Text>
         <Text style={styles.queueTrackArtist} numberOfLines={1}>
           {entry.track.artist}
@@ -449,7 +450,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={[styles.queueTrackTitle, { color: theme.primary }]} numberOfLines={1}>
-                  {item.entry.track.title}
+                  {cleanDisplayTitle(item.entry.track.title, item.entry.track.artist)}
                 </Text>
                 <Text style={styles.queueTrackArtist} numberOfLines={1}>
                   {item.entry.track.artist}
@@ -522,11 +523,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const rawTitle =
     (activeMeta?.title?.trim() ? activeMeta.title.trim() : '') ||
     activeKeywords.expectedTrack ||
-    cleanYouTubeTitle(activeTrack?.title || '') ||
-    'Bilinmeyen Parça';
+    activeTrack?.title ||
+    '';
 
   const displayArtist = rawArtist;
-  const displayTitle = rawTitle;
+  const displayTitle =
+    cleanDisplayTitle(rawTitle, displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : undefined) ||
+    'Bilinmeyen Parça';
 
   const currentArtworkUri =
     activeMeta?.artwork ||

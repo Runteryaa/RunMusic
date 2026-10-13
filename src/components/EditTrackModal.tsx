@@ -22,6 +22,7 @@ import {
   searchOnlineArtwork,
   OnlineArtworkResult,
 } from '../services/artworkSearchService';
+import { cleanDisplayTitle } from '../services/lyricsService';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 
 let MusicWidgetModule: any = null;
@@ -80,8 +81,10 @@ export function EditTrackModal({
         const stored = metadataMap[track.id] || (track.uri ? metadataMap[track.uri] : undefined);
         const storedArt = artworkMap[track.id] || (track.uri ? artworkMap[track.uri] : undefined);
 
-        setTitle(stored?.title ?? track.title ?? '');
-        setArtist(stored?.artist ?? track.artist ?? '');
+        const initialArtist = stored?.artist ?? track.artist ?? '';
+        const defaultTitle = cleanDisplayTitle(track.title ?? '', initialArtist);
+        setTitle(stored?.title ?? defaultTitle);
+        setArtist(initialArtist);
         setAlbum(stored?.album ?? track.album ?? '');
         setArtworkUri(stored?.artwork || storedArt || track.artwork || null);
         setShowOnlineResults(false);

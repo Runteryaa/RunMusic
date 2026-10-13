@@ -24,7 +24,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { EditTrackModal, EditTrackTarget } from '../components/EditTrackModal';
 import { getBatchMetadataAsync, getArtworkAsync } from '../../modules/audio-artwork/src';
-import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
+import { cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import {
   addToQueue,
   playNext,
@@ -95,7 +95,7 @@ export default function LibraryScreen() {
     }, 2200);
   };
 
-  const cleanTitle = (raw: string) => cleanYouTubeTitle(raw);
+  const cleanTitle = (raw: string) => cleanDisplayTitle(raw);
 
   const getTrackDisplayInfo = useCallback(
     (asset: MediaLibrary.Asset) => {
@@ -111,8 +111,8 @@ export default function LibraryScreen() {
       const rawTitle =
         (meta?.title?.trim() ? meta.title.trim() : '') ||
         keywords.expectedTrack ||
-        cleanYouTubeTitle(asset.filename);
-      const title = rawTitle;
+        asset.filename;
+      const title = cleanDisplayTitle(rawTitle, artist);
       return { title, artist };
     },
     [metadataMap]

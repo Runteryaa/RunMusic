@@ -7,7 +7,7 @@ import { getRecentHistory, getMostPlayed, getTotalListeningTime, PlayHistoryItem
 import { useThemeStore } from '../store/useThemeStore';
 import { useStore } from '../store/useStore';
 import { TrackArtwork } from '../components/TrackArtwork';
-import { cleanYouTubeTitle } from '../services/lyricsService';
+import { cleanDisplayTitle } from '../services/lyricsService';
 
 export default function StatisticsScreen() {
   const router = useRouter();
@@ -83,18 +83,18 @@ export default function StatisticsScreen() {
   const getTrackInfo = (trackId: string) => {
     const asset = allAssets.find((a) => a.id === trackId);
     const meta = metadataMap[trackId];
-    
-    let title = meta?.title?.trim() || '';
-    if (!title && asset) {
-      title = cleanYouTubeTitle(asset.filename);
-    } else if (title) {
-      title = cleanYouTubeTitle(title);
-    } else {
-      title = `Bilinmeyen Şarkı`;
-    }
 
     let artist = meta?.artist?.trim() || 'Bilinmeyen Sanatçı';
     if (artist === 'Local Audio') artist = 'Bilinmeyen Sanatçı';
+
+    let rawTitle = meta?.title?.trim() || '';
+    if (!rawTitle && asset) {
+      rawTitle = asset.filename;
+    }
+
+    let title = rawTitle
+      ? cleanDisplayTitle(rawTitle, artist !== 'Bilinmeyen Sanatçı' ? artist : undefined)
+      : 'Bilinmeyen Şarkı';
 
     return { title, artist, uri: asset?.uri };
   };

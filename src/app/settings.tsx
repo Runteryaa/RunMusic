@@ -19,7 +19,7 @@ import Constants from 'expo-constants';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
-import { cleanYouTubeTitle, type LyricsSourcePreference } from '../services/lyricsService';
+import { cleanDisplayTitle, type LyricsSourcePreference } from '../services/lyricsService';
 import { SORT_OPTION_LABELS, type SortOption } from '../services/librarySort';
 import { getPersistedSizeKB } from '../services/persistStorage';
 import { clearUpNextQueue } from '../services/queueController';
@@ -68,14 +68,14 @@ export default function SettingsScreen() {
     return hiddenTrackIds.map((id) => {
       const asset = allAssets.find((a) => a.id === id);
       const meta = metadataMap[id];
-      let title = meta?.title?.trim() || '';
-      if (!title && asset) {
-        title = cleanYouTubeTitle(asset.filename);
-      } else if (title) {
-        title = cleanYouTubeTitle(title);
-      } else {
-        title = `Şarkı (${id})`;
+      let artist = meta?.artist?.trim() || '';
+      let rawTitle = meta?.title?.trim() || '';
+      if (!rawTitle && asset) {
+        rawTitle = asset.filename;
       }
+      let title = rawTitle
+        ? cleanDisplayTitle(rawTitle, artist || undefined)
+        : `Şarkı (${id})`;
       return { id, asset, title, duration: asset?.duration };
     });
   }, [allAssets, hiddenTrackIds, metadataMap]);

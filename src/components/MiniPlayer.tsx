@@ -20,7 +20,7 @@ import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from './TrackArtwork';
 import { MarqueeText } from './ui/MarqueeText';
-import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
+import { cleanYouTubeTitle, cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -92,7 +92,11 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
     let rawTitle =
       (meta?.title?.trim() ? meta.title.trim() : '') ||
       keywords.expectedTrack ||
-      cleanYouTubeTitle(track.title || '') ||
+      track.title ||
+      '';
+
+    const title =
+      cleanDisplayTitle(rawTitle, rawArtist !== 'Bilinmeyen Sanatçı' ? rawArtist : undefined) ||
       'Bilinmeyen Parça';
       
     let artworkUri =
@@ -101,7 +105,7 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
       (track.url ? artworkMap[track.url] : undefined) ||
       (typeof track.artwork === 'string' ? track.artwork : undefined);
       
-    return { title: rawTitle, artist: rawArtist, artwork: artworkUri };
+    return { title, artist: rawArtist, artwork: artworkUri };
   }, [metadataMap, artworkMap]);
 
   const activeMeta = useMemo(() => getTrackMeta(activeTrack || null), [activeTrack, getTrackMeta]);

@@ -1,3 +1,4 @@
+
 export interface LyricWord {
   time: number;
   endTime?: number;
@@ -291,24 +292,54 @@ export const AUDIO_EXTENSIONS_REGEX =
  * Preserves the core song/artist name without breaking titles containing dots (like feat. or ft.).
  * Ported directly from Runteryaa/YT-LyricPopup background.js.
  */
-export function cleanYouTubeTitle(str: string): string {
+export function cleanYouTubeTitle(str?: string | null): string {
   let s = str || '';
 
   // Remove audio file extension if present (for local audio files!)
   s = s.replace(AUDIO_EXTENSIONS_REGEX, '');
 
   // Remove wrapping or standalone double quotes
-  s = s.replace(/"/g, '');
+  s = s.replace(/["'“”‘’]/g, '');
+
+  // Parantez ve köşeli parantez içindeki her şeyi (parantezler dahil) kaldır
+  while (/\([^)]*\)|\[[^\]]*\]|\{[^}]*\}/.test(s)) {
+    s = s.replace(/\([^)]*\)|\[[^\]]*\]|\{[^}]*\}/g, ' ');
+  }
+  s = s.replace(/\s*[\(\[\{][^\)\]\}]*$/, ' ');
+  s = s.replace(/[()\[\]{}⟨⟩]/g, ' ');
 
   for (const pat of YT_NOISE_PATTERNS) {
     s = s.replace(pat, ' ');
   }
+
+  // "-" ve benzeri tire/alt çizgi karakterlerini kaldır
+  s = s.replace(/[-–—―−‐_]/g, ' ');
+
   // Collapse multiple spaces / trim trailing punctuation
-  return s.replace(/\s+/g, ' ').replace(/[\s,\-–—|]+$/, '').trim();
+  return s.replace(/^[\s,.:;|\/~+]+|[\s,.:;|\/~+]+$/g, '').replace(/\s+/g, ' ').trim();
 }
 
-// Alias for backwards compatibility
-export const cleanTrackTitle = cleanYouTubeTitle;
+/**
+ * Creates a RegExp pattern string for a given name that matches both
+ * ASCII and Turkish diacritic variants (e.g. "s" matches "s" or "ş",
+ * "i" matches "i", "ı", "İ", "I", etc.).
+ */
+export function buildDiacriticPattern(name: string): string {
+  return name
+    .trim()
+    .split('')
+    .map((c) => {
+      if (/[iİıI]/i.test(c)) return '[iİıI]';
+      if (/[sşSŞ]/i.test(c)) return '[sşSŞ]';
+      if (/[cçCÇ]/i.test(c)) return '[cçCÇ]';
+      if (/[gğGĞ]/i.test(c)) return '[gğGĞ]';
+      if (/[oöOÖ]/i.test(c)) return '[oöOÖ]';
+      if (/[uüUÜ]/i.test(c)) return '[uüUÜ]';
+      if (/\s/.test(c)) return '\\s+';
+      return c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    })
+    .join('');
+}
 
 /**
  * Başlık içerisindeki mükerrer sanatçı adını temizler.
@@ -320,7 +351,7 @@ export const cleanTrackTitle = cleanYouTubeTitle;
  * - "Kırmış Kalbini by Duman" (artist="Duman") -> "Kırmış Kalbini"
  * - "Kırmış Kalbini (Duman)" (artist="Duman") -> "Kırmış Kalbini"
  */
-export function stripArtistFromTitle(title: string, artist?: string): string {
+export function stripArtistFromTitle(title?: string | null, artist?: string | null): string {
   if (!title) return '';
   let result = title.trim();
   const cleanArt = cleanYouTubeTitle(artist || '').trim();
@@ -329,20 +360,27 @@ export function stripArtistFromTitle(title: string, artist?: string): string {
     !cleanArt ||
     cleanArt.toLowerCase() === 'local audio' ||
     cleanArt.toLowerCase() === 'bilinmeyen sanatci' ||
-    cleanArt.toLowerCase() === 'bilinmeyen sanatçı'
+    cleanArt.toLowerCase() === 'bilinmeyen sanatçı' ||
+    cleanArt.toLowerCase() === 'unknown artist'
   ) {
     return result;
   }
 
-  // Yardımcı: Eğer ayıklama sonucu "&", "+", "feat" gibi işaretlerle başlıyorsa,
-  // şarkıda birden fazla kişi vardır (örn: "Keskin & KÖKSVL - Yapma Gadaşım").
-  // Bu durumda eğer tire (-) varsa tireden sonrasını (gerçek şarkı adını) al,
-  // yoksa orijinal başlığı bozmadan iade et.
+  // Sanatçı adayları: Tam sanatçı adı ve virgül/&/feat ile ayrılmış tekil sanatçılar
+  const rawCandidates = [
+    cleanArt,
+    ...cleanArt.split(/\s*(?:[,&+/|]|(?:\s+(?:feat\.?|ft\.?|featuring|with|x)\s+))\s*/i),
+  ];
+  const candidates = Array.from(new Set(rawCandidates))
+    .map((c) => c.trim())
+    .filter((c) => c.length > 1)
+    .sort((a, b) => b.length - a.length);
+
   const sanitizeRemainder = (stripped: string): string => {
     const s = stripped.trim();
     if (!s) return result;
     if (/^([&+,/|~_-]|(feat|ft|with|x)\b)/i.test(s)) {
-      const dashMatch = s.match(/[-–—]\s*(.+)$/);
+      const dashMatch = s.match(/[-–—―−‐_]\s*(.+)$/);
       if (dashMatch && dashMatch[1]?.trim()) {
         return dashMatch[1].trim();
       }
@@ -351,62 +389,167 @@ export function stripArtistFromTitle(title: string, artist?: string): string {
     return s;
   };
 
-  const escapedArt = cleanArt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const cand of candidates) {
+    const pat = buildDiacriticPattern(cand);
 
-  // 1. Başlığın başında sanatçı ve ayırıcı varsa: "Artist - Title", "Artist : Title", "Artist / Title", "Artist _ Title"
-  const prefixSeparatorRegex = new RegExp(`^${escapedArt}\\s*[-–—:|~_/]\\s*`, 'i');
-  if (prefixSeparatorRegex.test(result)) {
-    const stripped = sanitizeRemainder(result.replace(prefixSeparatorRegex, ''));
-    if (stripped.length > 0) return stripped;
-  }
+    // 1. Başta sanatçı ve ayırıcı: "Artist - Title", "Artist : Title", vb.
+    const prefixSepRegex = new RegExp(`^${pat}\\s*[-–—―−‐:|~_/]+\\s*`, 'iu');
+    if (prefixSepRegex.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(prefixSepRegex, ''));
+      if (stripped.length > 0) {
+        result = stripped;
+        continue;
+      }
+    }
 
-  // 2. Başlığın başında boşlukla ayrılmış sanatçı varsa: "Artist Title"
-  const prefixSpaceRegex = new RegExp(`^${escapedArt}\\s+`, 'i');
-  if (prefixSpaceRegex.test(result)) {
-    const stripped = sanitizeRemainder(result.replace(prefixSpaceRegex, ''));
-    if (stripped.length > 0) return stripped;
-  }
+    // 2. Başta sanatçı ve boşluk: "Artist Title"
+    const prefixSpaceRegex = new RegExp(`^${pat}\\s+`, 'iu');
+    if (prefixSpaceRegex.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(prefixSpaceRegex, ''));
+      if (stripped.length > 0) {
+        result = stripped;
+        continue;
+      }
+    }
 
-  // 3. Başlığın sonunda sanatçı ve ayırıcı varsa: "Title - Artist", "Title : Artist", vb.
-  const suffixSeparatorRegex = new RegExp(`\\s*[-–—:|~_/]\\s*${escapedArt}$`, 'i');
-  if (suffixSeparatorRegex.test(result)) {
-    const stripped = sanitizeRemainder(result.replace(suffixSeparatorRegex, ''));
-    if (stripped.length > 0) return stripped;
-  }
+    // 3. Sonda sanatçı ve ayırıcı: "Title - Artist"
+    const suffixSepRegex = new RegExp(`\\s*[-–—―−‐:|~_/]+\\s*${pat}$`, 'iu');
+    if (suffixSepRegex.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(suffixSepRegex, ''));
+      if (stripped.length > 0) {
+        result = stripped;
+        continue;
+      }
+    }
 
-  // 4. "Title by Artist"
-  const suffixByRegex = new RegExp(`\\s+by\\s+${escapedArt}$`, 'i');
-  if (suffixByRegex.test(result)) {
-    const stripped = sanitizeRemainder(result.replace(suffixByRegex, ''));
-    if (stripped.length > 0) return stripped;
-  }
+    // 4. "Title by Artist"
+    const suffixByRegex = new RegExp(`\\s+by\\s+${pat}$`, 'iu');
+    if (suffixByRegex.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(suffixByRegex, ''));
+      if (stripped.length > 0) {
+        result = stripped;
+        continue;
+      }
+    }
 
-  // 5. Parantez içi sanatçı: "Title (Artist)" veya "Title [Artist]"
-  const bracketRegex = new RegExp(`\\s*[\\[\\(]\\s*${escapedArt}\\s*[\\]\\)]`, 'i');
-  if (bracketRegex.test(result)) {
-    const stripped = sanitizeRemainder(result.replace(bracketRegex, ''));
-    if (stripped.length > 0) return stripped;
-  }
+    // 5. Sonda boşlukla sanatçı: "Title Artist"
+    const suffixSpaceRegex = new RegExp(`\\s+${pat}$`, 'iu');
+    if (suffixSpaceRegex.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(suffixSpaceRegex, ''));
+      if (stripped.length > 0) {
+        result = stripped;
+        continue;
+      }
+    }
 
-  // 6. Normalizasyon karşılaştırması (Türkçe karakter veya boşluk farkı durumu için)
-  const normArt = normalise(cleanArt);
-  const normRes = normalise(result);
-  if (normArt && normRes.startsWith(normArt + ' ')) {
-    const artWordCount = normArt.split(' ').filter(Boolean).length;
-    const titleWords = result.split(/\s+/);
-    if (titleWords.length > artWordCount) {
-      const stripped = sanitizeRemainder(
-        titleWords
-          .slice(artWordCount)
-          .join(' ')
-          .replace(/^[-–—:|~_/]\s*/, '')
-      );
-      if (stripped.length > 0) return stripped;
+    // 6. Parantez içi: "Title (Artist)"
+    const bracketRegex = new RegExp(`\\s*[\\[\\({]\\s*${pat}\\s*[\\]\\)}]`, 'iu');
+    if (bracketRegex.test(result)) {
+      const stripped = sanitizeRemainder(result.replace(bracketRegex, ''));
+      if (stripped.length > 0) {
+        result = stripped;
+        continue;
+      }
+    }
+
+    // 7. Kelime sınırlarında genel temizlik (kelime içi parçaları bozmadan: "Can" vs "Heyecan")
+    const wordRegex = new RegExp(`(^|[^\\p{L}\\p{N}])${pat}(?=$|[^\\p{L}\\p{N}])`, 'giu');
+    if (wordRegex.test(result)) {
+      const stripped = result.replace(wordRegex, '$1').trim();
+      const sanitized = sanitizeRemainder(stripped);
+      if (sanitized.length > 0) {
+        result = sanitized;
+      }
     }
   }
 
   return result;
 }
+
+/**
+ * Parça başlığını kullanıcı arayüzü ve etiketler için tamamen arındırır:
+ * 1. Dosya uzantılarını (.mp3 vb.) siler.
+ * 2. Boru (|) sonrası etiketleri siler.
+ * 3. Başındaki parça numaralarını ("01 - ", "1. ") siler.
+ * 4. Tırnak işaretlerini temizler.
+ * 5. Parantez ve köşeli parantez içindeki her şeyi (parantezler dahil) siler.
+ * 6. YouTube/video gürültülerini ("Official Video", "4K" vb.) siler.
+ * 7. Başlıkta geçen sanatçı adını başlıktan tamamen kaldırır.
+ * 8. "-" (tire) ve benzeri ayırıcıları kaldırır.
+ * 9. Baş/son sarkan "by", "feat" gibi bağlaçları temizler.
+ * 10. Çoklu boşlukları ve gereksiz noktalamaları temizler.
+ * 11. Başlığın boş kalmaması için güvenli geri dönüş (fallback) sağlar.
+ */
+export function cleanDisplayTitle(rawTitle?: string | null, artist?: string | null): string {
+  let s = rawTitle || '';
+
+  // 1. Ses dosyası uzantısını kaldır
+  s = s.replace(AUDIO_EXTENSIONS_REGEX, '');
+
+  // 2. Boru (|) karakterinden sonrasını kes (genelde video meta verisidir)
+  if (s.includes('|')) {
+    s = s.split('|')[0].trim();
+  }
+
+  // 3. Başlangıçtaki şarkı sıralama numaralarını ("01 - ", "01. ", "1 - ") temizle
+  s = s.replace(/^\s*\d{1,3}\s*[\.\-–—―−‐_]\s*/, '');
+
+  // 4. Tırnak işaretlerini temizle
+  s = s.replace(/["'“”‘’]/g, '');
+
+  // 5. Parantez ve köşeli parantez içindeki her şeyi (parantezler dahil) kaldır
+  while (/\([^)]*\)|\[[^\]]*\]|\{[^}]*\}/.test(s)) {
+    s = s.replace(/\([^)]*\)|\[[^\]]*\]|\{[^}]*\}/g, ' ');
+  }
+  // Kapanmamış parantezleri de temizle: örn. "(Official Video"
+  s = s.replace(/\s*[\(\[\{][^\)\]\}]*$/, ' ');
+  s = s.replace(/[()\[\]{}⟨⟩]/g, ' ');
+
+  // 6. YouTube video eklerini temizle
+  for (const pat of YT_NOISE_PATTERNS) {
+    s = s.replace(pat, ' ');
+  }
+
+  // Başlığın sanatçı ayıklaması öncesi temiz hali (self-titled veya boş kalma durumunda fallback)
+  const cleanedBeforeArtist = s
+    .replace(/[-–—―−‐_]/g, ' ')
+    .replace(/^[\s,.:;|\/~+]+|[\s,.:;|\/~+]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // 7. Sanatçı adını başlıktan temizle
+  const cleanArt = cleanYouTubeTitle(artist || '').trim();
+  const hasValidArtist =
+    cleanArt &&
+    cleanArt.toLowerCase() !== 'local audio' &&
+    cleanArt.toLowerCase() !== 'bilinmeyen sanatci' &&
+    cleanArt.toLowerCase() !== 'bilinmeyen sanatçı' &&
+    cleanArt.toLowerCase() !== 'unknown artist';
+
+  if (hasValidArtist) {
+    s = stripArtistFromTitle(s, cleanArt);
+  }
+
+  // 8. "-" (tire) ve benzeri ayırıcı karakterleri tamamen kaldır
+  s = s.replace(/[-–—―−‐_]/g, ' ');
+
+  // 9. Baş veya sonda sarkan bağlaçları temizle
+  s = s.replace(/\s+\b(by|feat\.?|ft\.?|featuring|with)\s*$/iu, '');
+  s = s.replace(/^\s*\b(by|feat\.?|ft\.?|featuring|with)\s+/iu, '');
+
+  // 10. Çoklu boşlukları ve sarkan noktalamaları temizle
+  s = s.replace(/^[\s,.:;|\/~+]+|[\s,.:;|\/~+]+$/g, '').replace(/\s+/g, ' ').trim();
+
+  // 11. Güvenli geri dönüş (Başlık asla boş olmamalı)
+  if (!s || s.length === 0) {
+    s = cleanedBeforeArtist || cleanYouTubeTitle(rawTitle) || (rawTitle || '').trim();
+  }
+
+  return s;
+}
+
+// Alias for backwards compatibility
+export const cleanTrackTitle = cleanDisplayTitle;
 
 /**
  * Extracts and cleans search keywords from a video / audio title.
@@ -420,24 +563,24 @@ export function getSearchKeywords(videoTitle: string, channelName = '') {
     .trim();
 
   // Strip leading track numbers like "01 - ", "01. ", "1 - ", etc.
-  titleBeforePipe = titleBeforePipe.replace(/^\d{1,3}\s*[\.\-–—]\s*/, '');
+  titleBeforePipe = titleBeforePipe.replace(/^\d{1,3}\s*[\.\-–—―−‐_]\s*/, '');
 
   // Parse "Artist - Title" (lazy on artist side to handle "A & B - Song")
-  const dashMatch = titleBeforePipe.match(/^(.+?)\s*[-–—]\s*(.+)$/);
+  const dashMatch = titleBeforePipe.match(/^(.+?)\s*[-–—―−‐]\s*(.+)$/);
 
   // Clean both halves: strip "Official Music Video", "ft. x", "4K", etc.
   const rawArtist = dashMatch ? dashMatch[1].trim() : '';
   const rawTrack = dashMatch ? dashMatch[2].trim() : titleBeforePipe.trim();
 
   let expectedArtist = cleanYouTubeTitle(rawArtist || channelName);
-  let expectedTrack = cleanYouTubeTitle(rawTrack);
+  let expectedTrack = cleanDisplayTitle(rawTrack, expectedArtist || channelName);
 
   // Başlık içinde kalan sanatçı ismini ayıkla (mükerrerliği önler)
   if (expectedArtist) {
-    expectedTrack = stripArtistFromTitle(expectedTrack, expectedArtist);
+    expectedTrack = cleanDisplayTitle(expectedTrack, expectedArtist);
   }
   if (channelName && channelName !== expectedArtist) {
-    expectedTrack = stripArtistFromTitle(expectedTrack, channelName);
+    expectedTrack = cleanDisplayTitle(expectedTrack, channelName);
   }
 
   const cleanChannel = cleanYouTubeTitle(channelName);
