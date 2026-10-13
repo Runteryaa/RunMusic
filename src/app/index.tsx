@@ -22,6 +22,7 @@ import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
+import { EditTrackModal, EditTrackTarget } from '../components/EditTrackModal';
 import { getBatchMetadataAsync, getArtworkAsync } from '../../modules/audio-artwork/src';
 import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
 import {
@@ -80,6 +81,7 @@ export default function LibraryScreen() {
 
   // Track action menu state
   const [selectedTrackForMenu, setSelectedTrackForMenu] = useState<MediaLibrary.Asset | null>(null);
+  const [trackToEdit, setTrackToEdit] = useState<EditTrackTarget | null>(null);
 
   // Added to queue toast indicator
   const [queueToast, setQueueToast] = useState<string | null>(null);
@@ -787,6 +789,25 @@ export default function LibraryScreen() {
                 </TouchableOpacity>
 
                 <TouchableOpacity
+                  style={styles.actionMenuItem}
+                  onPress={() => {
+                    const info = getTrackDisplayInfo(selectedTrackForMenu);
+                    setTrackToEdit({
+                      id: selectedTrackForMenu.id,
+                      uri: selectedTrackForMenu.uri,
+                      title: info.title,
+                      artist: info.artist,
+                      album: metadataMap[selectedTrackForMenu.id]?.album,
+                      artwork: metadataMap[selectedTrackForMenu.id]?.artwork || artworkMap[selectedTrackForMenu.id] || null,
+                      originalArtwork: null,
+                    });
+                    setSelectedTrackForMenu(null);
+                  }}>
+                  <Ionicons name="pencil-outline" size={18} color={theme.primary} style={{ marginRight: 12 }} />
+                  <Text style={styles.actionMenuText}>Bilgileri Düzenle</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
                   style={[styles.actionMenuItem, styles.actionMenuItemDestructive]}
                   onPress={() => {
                     Alert.alert(
@@ -817,6 +838,13 @@ export default function LibraryScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Track Metadata & Artwork Editor Modal */}
+      <EditTrackModal
+        visible={trackToEdit != null}
+        track={trackToEdit}
+        onClose={() => setTrackToEdit(null)}
+      />
     </View>
   );
 }

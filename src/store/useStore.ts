@@ -100,6 +100,7 @@ interface AppState {
   metadataMap: Record<string, TrackMetadata>;
   setTrackMetadata: (id: string, metadata: TrackMetadata) => void;
   setBatchTrackMetadata: (batch: Record<string, TrackMetadata>) => void;
+  resetTrackMetadata: (id: string) => void;
 
   lyricsCache: Record<string, LyricsCacheEntry>;
   setLyrics: (id: string, lyrics: LyricsResult, alternateKeys?: string[]) => void;
@@ -179,6 +180,17 @@ export const useStore = create<AppState>()(
           return {
             metadataMap: { ...state.metadataMap, ...batch },
             artworkMap: { ...state.artworkMap, ...artworkUpdates },
+          };
+        }),
+      resetTrackMetadata: (id) =>
+        set((state) => {
+          const nextMeta = { ...state.metadataMap };
+          delete nextMeta[id];
+          const nextArt = { ...state.artworkMap };
+          delete nextArt[id];
+          return {
+            metadataMap: nextMeta,
+            artworkMap: nextArt,
           };
         }),
 

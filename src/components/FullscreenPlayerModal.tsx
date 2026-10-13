@@ -32,6 +32,7 @@ import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useSleepTimerStore } from '../store/useSleepTimerStore';
 import { TrackArtwork } from './TrackArtwork';
+import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
 import {
   LyricLine,
@@ -177,6 +178,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const [dragTime, setDragTime] = useState(0);
 
   const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
+  const [isEditTrackModalOpen, setIsEditTrackModalOpen] = useState(false);
   const [isSleepTimerModalOpen, setIsSleepTimerModalOpen] = useState(false);
   const [customTimerMinutes, setCustomTimerMinutes] = useState('');
   const [sleepTimerRemaining, setSleepTimerRemaining] = useState<string>('');
@@ -2104,6 +2106,15 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.optionsModalRow}
+                onPress={() => {
+                  setIsOptionsModalOpen(false);
+                  setIsEditTrackModalOpen(true);
+                }}>
+                <Ionicons name="pencil-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
+                <Text style={styles.optionsModalText}>Şarkı Bilgilerini Düzenle</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.optionsModalRow}
                 onPress={handleHideTrack}>
                 <Ionicons name="eye-off-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
                 <Text style={styles.optionsModalText}>Şarkıyı Gizle</Text>
@@ -2210,6 +2221,25 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             </Pressable>
           </Pressable>
         </Modal>
+
+        {/* Şarkı Bilgilerini Düzenleme Modalı */}
+        <EditTrackModal
+          visible={isEditTrackModalOpen && activeTrack != null}
+          track={
+            activeTrack
+              ? {
+                  id: activeTrack.id || activeTrack.url,
+                  uri: activeTrack.url,
+                  title: displayTitle,
+                  artist: displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '',
+                  album: activeMeta?.album,
+                  artwork: currentArtworkUri,
+                  originalArtwork: null,
+                }
+              : null
+          }
+          onClose={() => setIsEditTrackModalOpen(false)}
+        />
 
       </View>
   );
