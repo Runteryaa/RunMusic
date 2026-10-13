@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -71,19 +71,27 @@ export function EditTrackModal({
   const [onlineArtworkList, setOnlineArtworkList] = useState<OnlineArtworkResult[]>([]);
   const [showOnlineResults, setShowOnlineResults] = useState(false);
 
+  const lastOpenedTrackIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (visible && track) {
-      const stored = metadataMap[track.id];
-      const storedArt = artworkMap[track.id];
+      if (lastOpenedTrackIdRef.current !== track.id) {
+        lastOpenedTrackIdRef.current = track.id;
+        const stored = metadataMap[track.id] || (track.uri ? metadataMap[track.uri] : undefined);
+        const storedArt = artworkMap[track.id] || (track.uri ? artworkMap[track.uri] : undefined);
 
-      setTitle(stored?.title ?? track.title ?? '');
-      setArtist(stored?.artist ?? track.artist ?? '');
-      setAlbum(stored?.album ?? track.album ?? '');
-      setArtworkUri(storedArt || stored?.artwork || track.artwork || null);
-      setShowOnlineResults(false);
-      setOnlineArtworkList([]);
+        setTitle(stored?.title ?? track.title ?? '');
+        setArtist(stored?.artist ?? track.artist ?? '');
+        setAlbum(stored?.album ?? track.album ?? '');
+        setArtworkUri(stored?.artwork || storedArt || track.artwork || null);
+        setShowOnlineResults(false);
+        setOnlineArtworkList([]);
+      }
+    } else {
+      lastOpenedTrackIdRef.current = null;
     }
-  }, [visible, track, metadataMap, artworkMap]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, track?.id, track?.uri]);
 
   if (!visible || !track) {
     return null;
@@ -166,8 +174,14 @@ export function EditTrackModal({
               }
             }
             resetTrackMetadata(track.id);
+            if (track.uri && track.uri !== track.id) {
+              resetTrackMetadata(track.uri);
+            }
             if (originalArt) {
               useStore.getState().setArtwork(track.id, originalArt);
+              if (track.uri && track.uri !== track.id) {
+                useStore.getState().setArtwork(track.uri, originalArt);
+              }
             }
             await syncLivePlayback(track.id, {
               title: track.title,
@@ -195,7 +209,7 @@ export function EditTrackModal({
         activeTrack &&
         (activeTrack.id === trackId ||
           activeTrack.url === trackId ||
-          activeTrack.url === track.uri);
+          (track.uri && (activeTrack.url === track.uri || activeTrack.id === track.uri)));
 
       if (isCurrentActive && typeof activeIndex === 'number') {
         const newTitle = updated.title || activeTrack.title || 'RunMusic';
@@ -246,6 +260,9 @@ export function EditTrackModal({
     };
 
     setTrackMetadata(track.id, newMetadata);
+    if (track.uri && track.uri !== track.id) {
+      setTrackMetadata(track.uri, newMetadata);
+    }
     await syncLivePlayback(track.id, newMetadata);
 
     onSaved?.();

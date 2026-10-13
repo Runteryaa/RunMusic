@@ -76,12 +76,12 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
   // Track Meta Helper
   const getTrackMeta = useCallback((track: Track | null) => {
     if (!track) return { title: '', artist: '', artwork: undefined };
-    const meta = track.id ? metadataMap[track.id] : undefined;
+    const meta = (track.id ? metadataMap[track.id] : undefined) || (track.url ? metadataMap[track.url] : undefined);
     const keywords = getSearchKeywords(track.title || '', track.artist || '');
     
     let rawArtist =
       (meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
-        ? cleanYouTubeTitle(meta.artist)
+        ? meta.artist.trim()
         : '') ||
       (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
         ? keywords.expectedArtist
@@ -90,13 +90,15 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
             : 'Bilinmeyen Sanatçı'));
             
     let rawTitle =
-      (meta?.title?.trim() ? cleanYouTubeTitle(meta.title) : '') ||
+      (meta?.title?.trim() ? meta.title.trim() : '') ||
       keywords.expectedTrack ||
       cleanYouTubeTitle(track.title || '') ||
       'Bilinmeyen Parça';
       
     let artworkUri =
-      (track.id ? meta?.artwork || artworkMap[track.id] : undefined) ||
+      meta?.artwork ||
+      (track.id ? artworkMap[track.id] : undefined) ||
+      (track.url ? artworkMap[track.url] : undefined) ||
       (typeof track.artwork === 'string' ? track.artwork : undefined);
       
     return { title: rawTitle, artist: rawArtist, artwork: artworkUri };

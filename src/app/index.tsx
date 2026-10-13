@@ -99,17 +99,17 @@ export default function LibraryScreen() {
 
   const getTrackDisplayInfo = useCallback(
     (asset: MediaLibrary.Asset) => {
-      const meta = metadataMap[asset.id];
+      const meta = metadataMap[asset.id] || metadataMap[asset.uri];
       const keywords = getSearchKeywords(asset.filename);
       const artist =
         (meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
-          ? cleanYouTubeTitle(meta.artist)
+          ? meta.artist.trim()
           : '') ||
         (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
           ? keywords.expectedArtist
           : '');
       const rawTitle =
-        (meta?.title?.trim() ? cleanYouTubeTitle(meta.title) : '') ||
+        (meta?.title?.trim() ? meta.title.trim() : '') ||
         keywords.expectedTrack ||
         cleanYouTubeTitle(asset.filename);
       const title = rawTitle;

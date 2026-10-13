@@ -161,6 +161,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, [expandAnim]);
 
   const isShuffle = useStore((s) => s.isShuffle);
+  const library = useStore((s) => s.library);
   const repeatMode = useStore((s) => s.repeatMode);
   const setRepeatMode = useStore((s) => s.setRepeatMode);
   const artworkMap = useStore((s) => s.artworkMap);
@@ -490,11 +491,27 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     }
   };
 
-  const activeMeta = activeTrack?.id ? metadataMap[activeTrack.id] : undefined;
+  const currentAsset = useMemo(() => {
+    if (!activeTrack) return null;
+    return (
+      library.find(
+        (a) =>
+          (activeTrack.id && a.id === activeTrack.id) ||
+          (activeTrack.url && (a.uri === activeTrack.url || a.id === activeTrack.url))
+      ) || null
+    );
+  }, [library, activeTrack]);
+
+  const resolvedTrackId = currentAsset?.id || activeTrack?.id || activeTrack?.url || '';
+  const activeMeta =
+    (resolvedTrackId ? metadataMap[resolvedTrackId] : undefined) ||
+    (activeTrack?.id ? metadataMap[activeTrack.id] : undefined) ||
+    (activeTrack?.url ? metadataMap[activeTrack.url] : undefined);
+
   const activeKeywords = getSearchKeywords(activeTrack?.title || '', activeTrack?.artist || '');
   const rawArtist =
     (activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
-      ? cleanYouTubeTitle(activeMeta.artist)
+      ? activeMeta.artist.trim()
       : '') ||
     (activeKeywords.expectedArtist && activeKeywords.expectedArtist !== 'Local Audio' && activeKeywords.expectedArtist !== 'Bilinmeyen Sanatçı'
       ? activeKeywords.expectedArtist
@@ -503,7 +520,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           : 'Bilinmeyen Sanatçı'));
 
   const rawTitle =
-    (activeMeta?.title?.trim() ? cleanYouTubeTitle(activeMeta.title) : '') ||
+    (activeMeta?.title?.trim() ? activeMeta.title.trim() : '') ||
     activeKeywords.expectedTrack ||
     cleanYouTubeTitle(activeTrack?.title || '') ||
     'Bilinmeyen Parça';
@@ -512,7 +529,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const displayTitle = rawTitle;
 
   const currentArtworkUri =
-    (activeTrack?.id ? metadataMap[activeTrack.id]?.artwork || artworkMap[activeTrack.id] : undefined) ||
+    activeMeta?.artwork ||
+    (resolvedTrackId ? artworkMap[resolvedTrackId] : undefined) ||
+    (activeTrack?.id ? artworkMap[activeTrack.id] : undefined) ||
     (typeof activeTrack?.artwork === 'string' ? activeTrack.artwork : undefined);
 
   // Önceki ve sonraki şarkıyı belirleme (Kapak geçiş önizlemesi için)
@@ -561,8 +580,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   //
   // Kuyruktaki mevcut değerler yedek olarak kullanılır ki store'da karşılığı
   // olmayan bir alan null'lanmasın.
-  const activeStoreMeta = activeTrack?.id ? metadataMap[activeTrack.id] : undefined;
-  const activeStoreArtwork = activeTrack?.id ? artworkMap[activeTrack.id] : undefined;
+  const activeStoreMeta = activeMeta;
+  const activeStoreArtwork = currentArtworkUri;
 
   const lastWrittenMetadataRef = useRef<{
     trackId: string;
@@ -574,7 +593,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   useEffect(() => {
     if (!activeTrack) return;
 
-    const trackId = activeTrack.id || activeTrack.url;
+    const trackId = resolvedTrackId || activeTrack.id || activeTrack.url;
     const queueTitle = typeof activeTrack.title === 'string' ? activeTrack.title : undefined;
     const queueArtist = typeof activeTrack.artist === 'string' ? activeTrack.artist : undefined;
     const queueArtwork = typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined;
@@ -2228,13 +2247,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           track={
             activeTrack
               ? {
-                  id: activeTrack.id || activeTrack.url,
-                  uri: activeTrack.url,
-                  title: displayTitle,
-                  artist: displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '',
+                  id: resolvedTrackId || activeTrack.id || activeTrack.url,
+                  uri: currentAsset?.uri || activeTrack.url,
+                  title: activeMeta?.title || displayTitle,
+                  artist: activeMeta?.artist || (displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : ''),
                   album: activeMeta?.album,
                   artwork: currentArtworkUri,
-                  originalArtwork: null,
+                  originalArtwork: currentAsset?.id ? artworkMap[currentAsset.id] : null,
                 }
               : null
           }
