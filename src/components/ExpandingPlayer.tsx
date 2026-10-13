@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo } from 'react';
-import { StyleSheet, Dimensions, Animated as RNAnimated } from 'react-native';
+import { StyleSheet, Dimensions, Animated as RNAnimated, Easing as RNEasing } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
+  withTiming,
   interpolate,
   Extrapolation,
+  Easing,
 } from 'react-native-reanimated';
 import { useActiveTrack } from 'react-native-track-player';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
@@ -18,20 +19,20 @@ import { usePlayTracker } from '../hooks/usePlayTracker';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MINI_HEIGHT = 62;
 const MINI_BOTTOM = 55;
-const MINI_MARGIN = 10;
-const MINI_RADIUS = 10;
+const MINI_RADIUS = 12;
+const COLLAPSED_Y = SCREEN_HEIGHT - MINI_BOTTOM - MINI_HEIGHT;
 
 export function ExpandingPlayer() {
   usePlayTracker();
   const activeTrack = useActiveTrack();
   const theme = useThemeStore((s) => s.theme);
   const isFullscreenPlayerOpen = usePlayerUIStore((s) => s.isFullscreenPlayerOpen);
+  const reduceMotion = useStore((s) => s.preferences.reduceMotion);
 
   const expandVal = useSharedValue(0);
   const rnExpandAnim = useMemo(() => new RNAnimated.Value(0), []);
 
-  // "Player açılınca sözleri göster" tercihi: yalnızca player AÇILIRKEN uygulanır,
-  // kullanıcı sonradan sözleri kapatırsa tekrar zorlanmaz.
+  // "Player açılınca sözleri göster" tercihi: yalnızca player AÇILIRKEN uygulanır
   useEffect(() => {
     if (
       isFullscreenPlayerOpen &&
@@ -42,57 +43,75 @@ export function ExpandingPlayer() {
   }, [isFullscreenPlayerOpen]);
 
   useEffect(() => {
-    if (isFullscreenPlayerOpen) {
-      expandVal.value = withSpring(1, {
-        damping: 26,
-        mass: 0.9,
-        stiffness: 240,
-      });
-      RNAnimated.spring(rnExpandAnim, {
-        toValue: 1,
-        damping: 26,
-        mass: 0.9,
-        stiffness: 240,
-        useNativeDriver: true, // We can now use native driver for opacity inside Fullscreen
-      }).start();
-    } else {
-      expandVal.value = withSpring(0, {
-        damping: 26,
-        mass: 0.9,
-        stiffness: 260,
-      });
-      RNAnimated.spring(rnExpandAnim, {
-        toValue: 0,
-        damping: 26,
-        mass: 0.9,
-        stiffness: 260,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [isFullscreenPlayerOpen, expandVal, rnExpandAnim]);
+    const toValue = isFullscreenPlayerOpen ? 1 : 0;
+    const duration = reduceMotion ? 0 : isFullscreenPlayerOpen ? 280 : 240;
+    const easing = Easing.bezier(0.25, 0.1, 0.25, 1);
+    const rnEasing = RNEasing.bezier(0.25, 0.1, 0.25, 1);
 
-  const animatedStyle = useAnimatedStyle(() => {
+    expandVal.value = withTiming(toValue, {
+      duration,
+      easing,
+    });
+
+    RNAnimated.timing(rnExpandAnim, {
+      toValue,
+      duration,
+      easing: rnEasing,
+      useNativeDriver: true,
+    }).start();
+  }, [isFullscreenPlayerOpen, expandVal, rnExpandAnim, reduceMotion]);
+
+  // MiniPlayer: Altta sabit durur, açılırken hızlıca ve pürüzsüzce kaybolur
+  const miniAnimatedStyle = useAnimatedStyle(() => {
+    const opacity = interpolate(expandVal.value, [0, 0.12], [1, 0], Extrapolation.CLAMP);
+    const translateY = interpolate(expandVal.value, [0, 0.12], [0, 6], Extrapolation.CLAMP);
+    const scale = interpolate(expandVal.value, [0, 0.12], [1, 0.97], Extrapolation.CLAMP);
+
     return {
-      bottom: interpolate(expandVal.value, [0, 1], [MINI_BOTTOM, 0]),
-      marginHorizontal: interpolate(expandVal.value, [0, 0.7, 1], [MINI_MARGIN, 3, 0]),
-      height: interpolate(expandVal.value, [0, 1], [MINI_HEIGHT, SCREEN_HEIGHT]),
-      borderTopLeftRadius: interpolate(expandVal.value, [0, 0.45, 1], [MINI_RADIUS, 18, 0]),
-      borderTopRightRadius: interpolate(expandVal.value, [0, 0.45, 1], [MINI_RADIUS, 18, 0]),
-      borderTopWidth: interpolate(expandVal.value, [0, 0.75, 1], [1, 0.5, 0]),
-      borderLeftWidth: interpolate(expandVal.value, [0, 0.75, 1], [1, 0.5, 0]),
-      borderRightWidth: interpolate(expandVal.value, [0, 0.75, 1], [1, 0.5, 0]),
+      opacity,
+      transform: [{ translateY }, { scale }],
     };
   });
 
-  const miniStyle = useAnimatedStyle(() => {
-    return {
-      opacity: interpolate(expandVal.value, [0, 0.16], [1, 0], Extrapolation.CLAMP),
-    };
-  });
+  // FullscreenPlayer: Tam ekran modal, miniplayer hizasından yukarı GPU transform (translateY) ile süzülür.
+  // Layout reflow (height/bottom değişimi) olmadığı için 60-120 FPS pürüzsüz çalışır.
+  const fullscreenAnimatedStyle = useAnimatedStyle(() => {
+    const translateY = interpolate(
+      expandVal.value,
+      [0, 1],
+      [COLLAPSED_Y, 0],
+      Extrapolation.CLAMP
+    );
+    const scaleX = interpolate(
+      expandVal.value,
+      [0, 0.35, 1],
+      [0.95, 0.985, 1],
+      Extrapolation.CLAMP
+    );
+    const opacity = interpolate(
+      expandVal.value,
+      [0, 0.05, 1],
+      [0, 1, 1],
+      Extrapolation.CLAMP
+    );
+    const borderTopLeftRadius = interpolate(
+      expandVal.value,
+      [0, 0.6, 1],
+      [MINI_RADIUS, 18, 0],
+      Extrapolation.CLAMP
+    );
+    const borderTopRightRadius = interpolate(
+      expandVal.value,
+      [0, 0.6, 1],
+      [MINI_RADIUS, 18, 0],
+      Extrapolation.CLAMP
+    );
 
-  const fullStyle = useAnimatedStyle(() => {
     return {
-      opacity: interpolate(expandVal.value, [0.12, 0.45], [0, 1], Extrapolation.CLAMP),
+      opacity,
+      borderTopLeftRadius,
+      borderTopRightRadius,
+      transform: [{ translateY }, { scaleX }],
     };
   });
 
@@ -101,60 +120,56 @@ export function ExpandingPlayer() {
   }
 
   return (
-    <Animated.View
-      style={[
-        styles.expandingCard,
-        {
-          borderColor: theme.border || 'rgba(255, 255, 255, 0.12)',
-          borderBottomWidth: 0,
-        },
-        animatedStyle,
-      ]}
-      pointerEvents="box-none">
+    <>
       {/* 1. MINIPLAYER CONTENT LAYER */}
       <Animated.View
-        style={[styles.miniContentLayer, miniStyle]}
+        style={[
+          styles.miniWrapper,
+          miniAnimatedStyle,
+        ]}
         pointerEvents={isFullscreenPlayerOpen ? 'none' : 'auto'}>
-        <MiniPlayer isEmbedded />
+        <MiniPlayer />
       </Animated.View>
 
-      {/* 2. FULLSCREEN PLAYER CONTENT LAYER */}
+      {/* 2. FULLSCREEN PLAYER CONTENT LAYER (GPU Hızlandırmalı Sheet) */}
       <Animated.View
-        style={[styles.fullscreenContentLayer, fullStyle]}
+        style={[
+          styles.fullscreenContainer,
+          {
+            borderColor: theme.border || 'rgba(255, 255, 255, 0.12)',
+          },
+          fullscreenAnimatedStyle,
+        ]}
         pointerEvents={isFullscreenPlayerOpen ? 'auto' : 'none'}>
         <FullscreenPlayerModal expandAnim={rnExpandAnim} />
       </Animated.View>
-    </Animated.View>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  expandingCard: {
+  miniWrapper: {
     position: 'absolute',
     left: 0,
     right: 0,
-    backgroundColor: '#18181b',
-    overflow: 'hidden',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 16,
-    zIndex: 9999,
-  },
-  miniContentLayer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
+    bottom: MINI_BOTTOM,
     height: MINI_HEIGHT,
+    zIndex: 9998,
   },
-  fullscreenContentLayer: {
+  fullscreenContainer: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
     height: SCREEN_HEIGHT,
+    backgroundColor: '#18181b',
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    elevation: 20,
+    zIndex: 9999,
   },
 });

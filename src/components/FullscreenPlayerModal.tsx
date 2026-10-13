@@ -60,7 +60,7 @@ import {
 import { QueueUpNextList, type UpNextItem } from './QueueUpNextList';
 import { Swipeable } from 'react-native-gesture-handler';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
 
 export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
@@ -77,7 +77,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const theme = useThemeStore((s) => s.theme);
   const activeTrack = useActiveTrack();
   const { playing } = useIsPlaying();
-  const progress = useProgress(120);
+  // Player kapalıyken yüksek frekanslı gereksiz render'ları önle
+  const progress = useProgress(isFullscreenPlayerOpen ? 150 : 2500);
 
   // Android hardware back button listener
   useEffect(() => {
@@ -104,12 +105,12 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     closeFullscreenPlayer,
   ]);
 
-  // Morph transforms synchronized with expanding card
+  // Morph transforms synchronized with expanding card (zarif, akıcı ve GPU dostu)
   const headerMorphY = useMemo(() => {
     if (!expandAnim) return 0;
     return expandAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [-45, 0],
+      outputRange: [-24, 0],
       extrapolate: 'clamp',
     });
   }, [expandAnim]);
@@ -118,25 +119,20 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     if (!expandAnim) return 1;
     return expandAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [44 / ARTWORK_SIZE, 1],
+      outputRange: [0.94, 1],
       extrapolate: 'clamp',
     });
   }, [expandAnim]);
 
   const middleMorphX = useMemo(() => {
-    if (!expandAnim) return 0;
-    return expandAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [44 - (SCREEN_WIDTH / 2), 0],
-      extrapolate: 'clamp',
-    });
-  }, [expandAnim]);
+    return 0;
+  }, []);
 
   const middleMorphY = useMemo(() => {
     if (!expandAnim) return 0;
     return expandAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [(SCREEN_HEIGHT / 2) + 50, 0],
+      outputRange: [18, 0],
       extrapolate: 'clamp',
     });
   }, [expandAnim]);
@@ -145,25 +141,20 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     if (!expandAnim) return 0;
     return expandAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [70, 0],
+      outputRange: [24, 0],
       extrapolate: 'clamp',
     });
   }, [expandAnim]);
 
   const textMorphX = useMemo(() => {
-    if (!expandAnim) return 0;
-    return expandAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [52, 0], // 76 - 24 = 52
-      extrapolate: 'clamp',
-    });
-  }, [expandAnim]);
+    return 0;
+  }, []);
 
   const textMorphY = useMemo(() => {
     if (!expandAnim) return 0;
     return expandAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [200, 0],
+      outputRange: [14, 0],
       extrapolate: 'clamp',
     });
   }, [expandAnim]);
