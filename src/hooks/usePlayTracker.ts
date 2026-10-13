@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { useActiveTrack, useProgress, useIsPlaying } from 'react-native-track-player';
+import { AppState } from 'react-native';
+import TrackPlayer, { useActiveTrack, useProgress, useIsPlaying } from 'react-native-track-player';
 import { recordPlay, addListeningTime } from '../services/statsDatabase';
+import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 
 export function usePlayTracker() {
   const activeTrack = useActiveTrack();
@@ -56,4 +58,82 @@ export function usePlayTracker() {
       }
     };
   }, [playing, activeTrack?.id]);
+
+  const positionBucket = Math.floor(progress.position / 10);
+
+  // Çalma konumu ve parça durumunu periyodik ve duraklatmada kaydet
+  useEffect(() => {
+    if (!activeTrack) return;
+    const trackId = String(activeTrack.id ?? activeTrack.url ?? '');
+    const trackData = {
+      id: trackId,
+      url: String(activeTrack.url ?? ''),
+      title: activeTrack.title,
+      artist: activeTrack.artist,
+      artwork: typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined,
+    };
+
+    if (playing && progress.position > 0) {
+      // Oynatılırken throttled (10s) kayıt
+      TrackPlayer.getActiveTrackIndex().then((idx) => {
+        if (typeof idx === 'number') {
+          saveLastPlayback(
+            {
+              trackId,
+              trackIndex: idx,
+              position: progress.position,
+              track: trackData,
+            },
+            false
+          );
+        }
+      }).catch(() => {});
+    } else if (!playing && progress.position > 0) {
+      // Duraklatıldığında anında kayıt
+      TrackPlayer.getActiveTrackIndex().then((idx) => {
+        if (typeof idx === 'number') {
+          saveLastPlayback(
+            {
+              trackId,
+              trackIndex: idx,
+              position: progress.position,
+              track: trackData,
+            },
+            true
+          );
+          updateQueueSnapshotActiveIndex(idx, progress.position);
+        }
+      }).catch(() => {});
+    }
+  }, [playing, positionBucket, activeTrack, progress.position]);
+
+  // Uygulama arka plana geçtiğinde veya kapatıldığında son durumu anında kaydet
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active' && activeTrack && progress.position > 0) {
+        TrackPlayer.getActiveTrackIndex().then((idx) => {
+          if (typeof idx === 'number') {
+            const trackId = String(activeTrack.id ?? activeTrack.url ?? '');
+            saveLastPlayback(
+              {
+                trackId,
+                trackIndex: idx,
+                position: progress.position,
+                track: {
+                  id: trackId,
+                  url: String(activeTrack.url ?? ''),
+                  title: activeTrack.title,
+                  artist: activeTrack.artist,
+                  artwork: typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined,
+                },
+              },
+              true
+            );
+            updateQueueSnapshotActiveIndex(idx, progress.position);
+          }
+        }).catch(() => {});
+      }
+    });
+    return () => sub.remove();
+  }, [activeTrack, progress.position]);
 }

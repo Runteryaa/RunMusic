@@ -20,6 +20,7 @@ export interface SavedPlaybackState {
 
 let lastSavedTime = 0;
 let pendingSaveTimeout: any = null;
+let pendingSaveData: SavedPlaybackState | null = null;
 
 /**
  * En son dinlenen şarkı ve konumunu bağımsız, çok küçük (~200 bayt) bir JSON olarak kaydeder.
@@ -27,11 +28,14 @@ let pendingSaveTimeout: any = null;
  */
 export async function saveLastPlayback(data: SavedPlaybackState, immediate = false): Promise<void> {
   const now = Date.now();
+  pendingSaveData = data;
 
   const doSave = async () => {
     try {
+      const toSave = pendingSaveData ?? data;
       lastSavedTime = Date.now();
-      await AsyncStorage.setItem(PLAYBACK_STORAGE_KEY, JSON.stringify(data));
+      pendingSaveData = null;
+      await AsyncStorage.setItem(PLAYBACK_STORAGE_KEY, JSON.stringify(toSave));
     } catch {
       // ignore
     }
@@ -47,6 +51,10 @@ export async function saveLastPlayback(data: SavedPlaybackState, immediate = fal
 
   // 10 saniye throttling (çok sık disk yazımını önler, UI'yi sıfır gecikmede tutar)
   if (now - lastSavedTime >= 10000) {
+    if (pendingSaveTimeout) {
+      clearTimeout(pendingSaveTimeout);
+      pendingSaveTimeout = null;
+    }
     return doSave();
   }
 
@@ -159,6 +167,26 @@ export async function getQueueSnapshot(): Promise<SavedQueueState | null> {
 export async function clearQueueSnapshot(): Promise<void> {
   try {
     await AsyncStorage.removeItem(QUEUE_STORAGE_KEY);
+  } catch {
+    // yoksay
+  }
+}
+
+/**
+ * Kuyruk anlık görüntüsündeki aktif parçayı ve konumunu günceller.
+ * Tüm kuyruğu yeniden serileştirmek yerine yalnızca mevcut kaydın indeks ve konumunu tazeler.
+ */
+export async function updateQueueSnapshotActiveIndex(activeIndex: number, position?: number): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(QUEUE_STORAGE_KEY);
+    if (!raw) return;
+    const snapshot = JSON.parse(raw) as SavedQueueState;
+    if (!snapshot || !Array.isArray(snapshot.queue) || snapshot.queue.length === 0) return;
+    snapshot.activeIndex = activeIndex;
+    if (typeof position === 'number') {
+      snapshot.position = Math.max(0, position);
+    }
+    await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(snapshot));
   } catch {
     // yoksay
   }

@@ -99,10 +99,11 @@ export default function StatisticsScreen() {
     return { title, artist, uri: asset?.uri };
   };
 
-  const renderTrackItem = (trackId: string, subtitle: string, rightText?: string) => {
+  const renderTrackItem = (trackId: string, subtitle: string, rightText?: string, keySuffix?: string | number) => {
     const info = getTrackInfo(trackId);
+    const itemKey = keySuffix != null ? `${trackId}-${keySuffix}` : trackId;
     return (
-      <View key={Math.random().toString()} style={styles.trackItem}>
+      <View key={itemKey} style={styles.trackItem}>
         <TrackArtwork
           uri={metadataMap[trackId]?.artwork || artworkMap[trackId]}
           trackId={trackId}
@@ -193,7 +194,7 @@ export default function StatisticsScreen() {
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Bu Ay En Çok Dinlenenler</Text>
                 {mostPlayedMonth.length > 0 ? (
-                  mostPlayedMonth.map((item) => renderTrackItem(item.track_id, getTrackInfo(item.track_id).artist, `${item.play_count} kez`))
+                  mostPlayedMonth.map((item, idx) => renderTrackItem(item.track_id, getTrackInfo(item.track_id).artist, `${item.play_count} kez`, `month-${idx}`))
                 ) : (
                   <Text style={styles.emptyText}>Henüz yeterli veri yok.</Text>
                 )}
@@ -203,7 +204,7 @@ export default function StatisticsScreen() {
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Tüm Zamanların En Çok Dinlenenleri</Text>
                 {mostPlayedAllTime.length > 0 ? (
-                  mostPlayedAllTime.map((item) => renderTrackItem(item.track_id, getTrackInfo(item.track_id).artist, `${item.play_count} kez`))
+                  mostPlayedAllTime.map((item, idx) => renderTrackItem(item.track_id, getTrackInfo(item.track_id).artist, `${item.play_count} kez`, `all-${idx}`))
                 ) : (
                   <Text style={styles.emptyText}>Henüz yeterli veri yok.</Text>
                 )}
@@ -213,10 +214,10 @@ export default function StatisticsScreen() {
             /* History Tab */
             <View style={styles.section}>
               {recentHistory.length > 0 ? (
-                recentHistory.map((item) => {
+                recentHistory.map((item, idx) => {
                   const date = new Date(item.played_at);
                   const dateStr = date.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-                  return renderTrackItem(item.track_id, dateStr);
+                  return renderTrackItem(item.track_id, dateStr, undefined, `hist-${item.played_at}-${idx}`);
                 })
               ) : (
                 <Text style={styles.emptyText}>Dinleme geçmişi boş.</Text>

@@ -30,7 +30,7 @@ import TrackPlayer, {
 import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
-import { useSleepTimerStore, type SleepTimerDuration } from '../store/useSleepTimerStore';
+import { useSleepTimerStore } from '../store/useSleepTimerStore';
 import { TrackArtwork } from './TrackArtwork';
 import { MarqueeText } from './ui/MarqueeText';
 import {
@@ -45,7 +45,7 @@ import {
   cleanYouTubeTitle,
   getSearchKeywords,
 } from '../services/lyricsService';
-import { saveLastPlayback } from '../services/playbackStorage';
+import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import {
   buildQueueRows,
   getQueueSections,
@@ -948,6 +948,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           },
           true
         );
+        updateQueueSnapshotActiveIndex(activeIndex, progress.position);
       }
     } else {
       await TrackPlayer.play();

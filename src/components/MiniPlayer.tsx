@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   StyleSheet,
-  Text,
   View,
   TouchableOpacity,
   PanResponder,
@@ -22,7 +21,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from './TrackArtwork';
 import { MarqueeText } from './ui/MarqueeText';
 import { cleanYouTubeTitle, getSearchKeywords } from '../services/lyricsService';
-import { saveLastPlayback } from '../services/playbackStorage';
+import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -151,10 +150,11 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
       await TrackPlayer.pause();
       if (activeTrack && progress.position > 0) {
         TrackPlayer.getActiveTrackIndex().then((idx) => {
+          const resolvedIdx = idx ?? 0;
           saveLastPlayback(
             {
               trackId: activeTrack.id || activeTrack.url,
-              trackIndex: idx ?? 0,
+              trackIndex: resolvedIdx,
               position: progress.position,
               track: {
                 id: activeTrack.id || activeTrack.url,
@@ -166,6 +166,7 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
             },
             true
           );
+          updateQueueSnapshotActiveIndex(resolvedIdx, progress.position);
         }).catch(() => {});
       }
     } else {

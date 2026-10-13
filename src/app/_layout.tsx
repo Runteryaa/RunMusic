@@ -216,14 +216,72 @@ export default function TabLayout() {
 
           if (restoreQueue && snapshot && snapshot.queue.length > 0) {
             await TrackPlayer.setQueue(snapshot.queue as Track[]);
-            if (snapshot.activeIndex > 0) {
-              await TrackPlayer.skip(snapshot.activeIndex);
+
+            // Kullanıcının en son kaldığı parçanın indeksini bul:
+            // 1. lastPlayback.trackId'ye göre kuyrukta ara
+            // 2. lastPlayback.track nesnesinin id/url'ine göre ara
+            // 3. lastPlayback.trackIndex'i dene (sınırlar içindeyse)
+            // 4. snapshot.activeIndex'i dene
+            let targetIndex = -1;
+            if (lastPlayback?.trackId) {
+              targetIndex = snapshot.queue.findIndex(
+                (t) => (t.id && t.id === lastPlayback.trackId) || (t.url && t.url === lastPlayback.trackId)
+              );
             }
-            // Konum ayrı ve daha sık yazıldığı için önce o tercih edilir.
-            const resumeAt = lastPlayback?.position ?? snapshot.position;
+            if (targetIndex < 0 && lastPlayback?.track) {
+              const pTrack = lastPlayback.track;
+              targetIndex = snapshot.queue.findIndex(
+                (t) => (t.id && t.id === pTrack.id) || (t.url && t.url === pTrack.url)
+              );
+            }
+            if (
+              targetIndex < 0 &&
+              typeof lastPlayback?.trackIndex === 'number' &&
+              lastPlayback.trackIndex >= 0 &&
+              lastPlayback.trackIndex < snapshot.queue.length
+            ) {
+              targetIndex = lastPlayback.trackIndex;
+            }
+            if (
+              targetIndex < 0 &&
+              typeof snapshot.activeIndex === 'number' &&
+              snapshot.activeIndex >= 0 &&
+              snapshot.activeIndex < snapshot.queue.length
+            ) {
+              targetIndex = snapshot.activeIndex;
+            }
+            if (targetIndex < 0) {
+              targetIndex = 0;
+            }
+
+            if (targetIndex > 0 && targetIndex < snapshot.queue.length) {
+              try {
+                await TrackPlayer.skip(targetIndex);
+              } catch (skipErr) {
+                console.warn('Failed to skip to restored index', targetIndex, skipErr);
+              }
+            }
+
+            // Konum: targetIndex lastPlayback ile eşleştiyse onun pozisyonunu kullan,
+            // aksi halde snapshot.position'ı tercih et.
+            const isMatchedWithLastPlayback =
+              targetIndex >= 0 &&
+              lastPlayback?.trackId &&
+              (snapshot.queue[targetIndex]?.id === lastPlayback.trackId ||
+                snapshot.queue[targetIndex]?.url === lastPlayback.trackId);
+
+            const resumeAt = isMatchedWithLastPlayback
+              ? (lastPlayback?.position ?? snapshot.position)
+              : (snapshot.position ?? lastPlayback?.position ?? 0);
+
             if (resumeAt && resumeAt > 0) {
-              await TrackPlayer.seekTo(resumeAt);
+              try {
+                await TrackPlayer.seekTo(resumeAt);
+              } catch (seekErr) {
+                console.warn('Failed to seek to restored position', resumeAt, seekErr);
+              }
             }
+
             // Bağlam sırası kayıtta yoksa (eski kayıtlar) kuyruğun kendi sırasını
             // taban kabul et; aksi halde shuffle kapatılamaz/karıştırılamazdı.
             const restoredContextIds =
@@ -234,7 +292,7 @@ export default function TabLayout() {
             useStore.setState({
               upNextIds: snapshot.upNextIds ?? [],
               contextIds: restoredContextIds,
-              ...(snapshot.isShuffle ? { isShuffle: true } : {}),
+              isShuffle: Boolean(snapshot.isShuffle),
             });
           } else if (lastPlayback && lastPlayback.track) {
             // Tam kuyruk saklanmamışsa (ör. çok büyük kütüphane) eski davranış.
