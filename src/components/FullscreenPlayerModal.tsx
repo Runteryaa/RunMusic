@@ -1897,27 +1897,38 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               </TouchableOpacity>
             </View>
 
-            <ScrollView
-              style={{ flex: 1 }}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.sleepTimerScrollContent}
-              keyboardShouldPersistTaps="handled">
-              {/* Aktif Zamanlayıcı Bilgisi */}
+            <View style={styles.sleepTimerBody}>
+              {/* Aktif Zamanlayıcı Kompakt Bilgi Çubuğu */}
               {isSleepTimerActive ? (
-                <View style={[styles.sleepTimerActiveCard, { backgroundColor: theme.surface }]}>
-                  <View style={[styles.sleepTimerIconGlow, { backgroundColor: `${theme.primary}25` }]}>
-                    <Ionicons name="moon" size={32} color={theme.primary} />
+                <View
+                  style={[
+                    styles.sleepTimerActiveBar,
+                    { backgroundColor: theme.surface, borderColor: `${theme.primary}40` },
+                  ]}>
+                  <View style={styles.sleepTimerActiveBarLeft}>
+                    <View
+                      style={[
+                        styles.sleepTimerIconBubble,
+                        { backgroundColor: `${theme.primary}25` },
+                      ]}>
+                      <Ionicons name="moon" size={14} color={theme.primary} />
+                    </View>
+                    <View style={{ marginLeft: 8 }}>
+                      <Text style={[styles.sleepTimerActiveBarTitle, { color: theme.textAccent }]}>
+                        Kalan Süre
+                      </Text>
+                      <Text style={[styles.sleepTimerActiveBarRemaining, { color: theme.primary }]}>
+                        {sleepTimerRemaining || 'Hesaplanıyor...'}
+                      </Text>
+                    </View>
                   </View>
-                  <Text style={styles.sleepTimerActiveTitle}>Zamanlayıcı Aktif</Text>
-                  <Text style={[styles.sleepTimerActiveRemaining, { color: theme.primary }]}>
-                    {sleepTimerRemaining}
-                  </Text>
                   <TouchableOpacity
-                    style={styles.stopTimerBtn}
-                    activeOpacity={0.8}
+                    style={styles.stopTimerPillBtn}
+                    activeOpacity={0.75}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     onPress={stopTimer}>
-                    <Ionicons name="stop-circle-outline" size={17} color="#ffffff" style={{ marginRight: 6 }} />
-                    <Text style={styles.stopTimerBtnText}>İptal Et</Text>
+                    <Ionicons name="close-circle" size={14} color="#ef4444" style={{ marginRight: 4 }} />
+                    <Text style={styles.stopTimerPillBtnText}>İptal Et</Text>
                   </TouchableOpacity>
                 </View>
               ) : null}
@@ -1928,29 +1939,32 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
               {/* Hızlı Seçenekler Grid (15, 30, 45, 60 dk) */}
               <View style={styles.timerOptionsGrid}>
-                {([15, 30, 45, 60] as const).map((min) => (
-                  <TouchableOpacity
-                    key={min}
-                    style={[
-                      styles.timerOptionBtn,
-                      { backgroundColor: theme.surface },
-                      isSleepTimerActive && sleepTimerDurationOption === min && {
-                        borderColor: theme.primary,
-                        borderWidth: 1.5,
-                        backgroundColor: `${theme.primary}20`,
-                      },
-                    ]}
-                    activeOpacity={0.75}
-                    onPress={() => startTimer(min, min)}>
-                    <Text
+                {([15, 30, 45, 60] as const).map((min) => {
+                  const isSelected = isSleepTimerActive && sleepTimerDurationOption === min;
+                  return (
+                    <TouchableOpacity
+                      key={min}
                       style={[
-                        styles.timerOptionText,
-                        isSleepTimerActive && sleepTimerDurationOption === min && { color: theme.primary },
-                      ]}>
-                      {min} Dakika
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                        styles.timerOptionBtn,
+                        { backgroundColor: theme.surface },
+                        isSelected && {
+                          borderColor: theme.primary,
+                          borderWidth: 1.5,
+                          backgroundColor: `${theme.primary}20`,
+                        },
+                      ]}
+                      activeOpacity={0.75}
+                      onPress={() => startTimer(min, min)}>
+                      <Text
+                        style={[
+                          styles.timerOptionText,
+                          isSelected && { color: theme.primary, fontWeight: '700' },
+                        ]}>
+                        {min} Dakika
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
 
               {/* Şarkı Bitince Durdur */}
@@ -1968,8 +1982,12 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 onPress={startTrackTimer}>
                 <Ionicons
                   name="musical-note"
-                  size={18}
-                  color={isSleepTimerActive && sleepTimerDurationOption === 'track' ? theme.primary : '#ffffff'}
+                  size={16}
+                  color={
+                    isSleepTimerActive && sleepTimerDurationOption === 'track'
+                      ? theme.primary
+                      : '#ffffff'
+                  }
                   style={{ marginRight: 8 }}
                 />
                 <Text
@@ -1977,6 +1995,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     styles.timerOptionText,
                     isSleepTimerActive && sleepTimerDurationOption === 'track' && {
                       color: theme.primary,
+                      fontWeight: '700',
                     },
                   ]}>
                   Şarkı Bitince Durdur
@@ -2015,7 +2034,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   </Text>
                 </TouchableOpacity>
               </View>
-            </ScrollView>
+            </View>
           </Animated.View>
         </Animated.View>
 
@@ -2813,114 +2832,121 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 4,
   },
-  sleepTimerScrollContent: {
-    flexGrow: 1,
+  sleepTimerBody: {
+    flex: 1,
     justifyContent: 'center',
-    paddingTop: 8,
-    paddingBottom: 24,
     paddingHorizontal: 4,
+    paddingVertical: 4,
   },
-  sleepTimerActiveCard: {
+  sleepTimerActiveBar: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 18,
-    paddingHorizontal: 16,
-    borderRadius: 18,
-    marginBottom: 16,
+    justifyContent: 'space-between',
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 8,
   },
-  sleepTimerIconGlow: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+  sleepTimerActiveBarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
+  sleepTimerIconBubble: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
   },
-  sleepTimerActiveTitle: {
-    color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  sleepTimerActiveRemaining: {
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 14,
-  },
-  sleepTimerSectionLabel: {
-    fontSize: 12,
+  sleepTimerActiveBarTitle: {
+    fontSize: 9,
     fontWeight: '700',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
-    marginBottom: 10,
-    marginTop: 4,
-    paddingHorizontal: 4,
   },
-  stopTimerBtn: {
+  sleepTimerActiveBarRemaining: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  stopTimerPillBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ef4444',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 12,
+    backgroundColor: 'rgba(239, 68, 68, 0.16)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
-  stopTimerBtnText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
+  stopTimerPillBtnText: {
+    color: '#ef4444',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  sleepTimerSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+    marginTop: 2,
+    paddingHorizontal: 2,
   },
   timerOptionsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 8,
   },
   timerOptionBtn: {
     flex: 1,
     minWidth: '45%',
     backgroundColor: '#27272a',
-    paddingVertical: 14,
-    borderRadius: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'transparent',
   },
   timerOptionText: {
     color: '#ffffff',
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
   },
   timerFullWidthBtn: {
     flexDirection: 'row',
     backgroundColor: '#27272a',
-    paddingVertical: 14,
-    borderRadius: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: 'transparent',
   },
   customTimerRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 8,
   },
   customTimerInput: {
     flex: 1,
     backgroundColor: '#27272a',
-    borderRadius: 12,
+    borderRadius: 10,
     color: '#ffffff',
-    paddingHorizontal: 16,
-    fontSize: 16,
+    paddingHorizontal: 12,
+    fontSize: 13,
+    height: 38,
   },
   customTimerBtn: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     justifyContent: 'center',
-    borderRadius: 12,
+    alignItems: 'center',
+    borderRadius: 10,
+    height: 38,
   },
   customTimerBtnText: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
   },
   optionsModalBox: {
