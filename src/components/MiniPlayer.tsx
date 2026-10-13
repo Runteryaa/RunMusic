@@ -22,10 +22,12 @@ import { TrackArtwork } from './TrackArtwork';
 import { MarqueeText } from './ui/MarqueeText';
 import { cleanYouTubeTitle, cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
+import { useTranslation } from '../services/i18n';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
+  const { t } = useTranslation();
   const activeTrack = useActiveTrack();
   const { playing } = useIsPlaying();
   const progress = useProgress(500);
@@ -79,6 +81,9 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
     const meta = (track.id ? metadataMap[track.id] : undefined) || (track.url ? metadataMap[track.url] : undefined);
     const keywords = getSearchKeywords(track.title || '', track.artist || '');
     
+    const unknownArtist = t('common.unknown_artist');
+    const unknownTrack = t('common.unknown_track');
+
     let rawArtist =
       (meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
         ? meta.artist.trim()
@@ -87,7 +92,7 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
         ? keywords.expectedArtist
         : (track.artist && track.artist !== 'Local Audio' && track.artist !== 'Bilinmeyen Sanatçı'
             ? cleanYouTubeTitle(track.artist)
-            : 'Bilinmeyen Sanatçı'));
+            : unknownArtist));
             
     let rawTitle =
       (meta?.title?.trim() ? meta.title.trim() : '') ||
@@ -96,8 +101,8 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
       '';
 
     const title =
-      cleanDisplayTitle(rawTitle, rawArtist !== 'Bilinmeyen Sanatçı' ? rawArtist : undefined) ||
-      'Bilinmeyen Parça';
+      cleanDisplayTitle(rawTitle, rawArtist !== unknownArtist && rawArtist !== 'Bilinmeyen Sanatçı' ? rawArtist : undefined) ||
+      unknownTrack;
       
     let artworkUri =
       meta?.artwork ||
@@ -106,7 +111,7 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
       (typeof track.artwork === 'string' ? track.artwork : undefined);
       
     return { title, artist: rawArtist, artwork: artworkUri };
-  }, [metadataMap, artworkMap]);
+  }, [metadataMap, artworkMap, t]);
 
   const activeMeta = useMemo(() => getTrackMeta(activeTrack || null), [activeTrack, getTrackMeta]);
   const prevMeta = useMemo(() => getTrackMeta(prevTrack), [prevTrack, getTrackMeta]);

@@ -24,7 +24,7 @@ export {
   smartShuffleArray,
   trackKey,
 };
-export type { QueueEntry, QueueRow, QueueSections, QueueTrackLike } from './queueMath';
+export type { QueueEntry, QueueRow, QueueSections, QueueTrackLike, QueueSectionLabels } from './queueMath';
 
 /**
  * Kuyruk yönetimi — Apple Music / Spotify semantiği.

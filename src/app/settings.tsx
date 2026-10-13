@@ -101,10 +101,10 @@ export default function SettingsScreen() {
       }
       let title = rawTitle
         ? cleanDisplayTitle(rawTitle, artist || undefined)
-        : `Şarkı (${id})`;
+        : t('settings.track_fallback', { id });
       return { id, asset, title, duration: asset?.duration };
     });
-  }, [allAssets, hiddenTrackIds, metadataMap]);
+  }, [allAssets, hiddenTrackIds, metadataMap, t]);
 
   const cachedLyricsCount = useMemo(() => {
     // Alternatif anahtarlar kanonik kayda işaretçidir ({ ref }). Gerçek kayıtlı
@@ -219,8 +219,8 @@ export default function SettingsScreen() {
   const handleCheckUpdate = async () => {
     if (!Updates.isEnabled) {
       Alert.alert(
-        'OTA Bilgisi',
-        'Bu APK sürümünde dinamik OTA kanalı henüz aktif değil. Lütfen en güncel APK sürümünü GitHub Releases üzerinden yükleyin.'
+        t('settings.alerts.update_config_title'),
+        t('settings.alerts.update_config_msg')
       );
       return;
     }
@@ -421,7 +421,7 @@ export default function SettingsScreen() {
                       },
                     ]}
                     accessibilityRole="button"
-                    accessibilityLabel={item.label}
+                    accessibilityLabel={t(`themes.${item.id}`) || item.label}
                     accessibilityState={{ selected: isSelected }}>
                     <View style={[styles.paletteColorCircle, { backgroundColor: item.color }]}>
                       {isSelected && <Ionicons name="checkmark" size={16} color="#ffffff" />}
@@ -432,7 +432,7 @@ export default function SettingsScreen() {
                         styles.paletteColorName,
                         isSelected && { color: '#ffffff', fontWeight: '700' },
                       ]}>
-                      {item.label}
+                      {t(`themes.${item.id}`) || item.label}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -627,11 +627,11 @@ export default function SettingsScreen() {
         subtitle={`RunMusic v${Constants.expoConfig?.version || '1.0.0'}`}
         theme={theme}>
         <View style={styles.detailsBox}>
-          <DetailRow label={resolvedLanguage === 'tr' ? 'Sürüm' : 'Version'} value={`v${Constants.expoConfig?.version || '1.0.0'}`} />
-          <DetailRow label={resolvedLanguage === 'tr' ? 'Çalışma ortamı' : 'Runtime'} value={Updates.runtimeVersion || '1.0.0'} />
+          <DetailRow label={t('common.version')} value={`v${Constants.expoConfig?.version || '1.0.0'}`} />
+          <DetailRow label={t('common.runtime')} value={Updates.runtimeVersion || '1.0.0'} />
           <DetailRow label={resolvedLanguage === 'tr' ? 'Kanal' : 'Channel'} value={Updates.channel || 'production'} />
           <DetailRow
-            label={resolvedLanguage === 'tr' ? 'Çalışan paket' : 'Active bundle'}
+            label={t('common.active_bundle')}
             value={
               Updates.updateId
                 ? `OTA (${Updates.updateId.slice(0, 8)})`
@@ -642,7 +642,7 @@ export default function SettingsScreen() {
           />
           {Updates.createdAt ? (
             <DetailRow
-              label={resolvedLanguage === 'tr' ? 'Son güncelleme' : 'Last update'}
+              label={t('common.last_update')}
               value={`${new Date(Updates.createdAt).toLocaleDateString(resolvedLanguage === 'tr' ? 'tr-TR' : 'en-US')} ${new Date(
                 Updates.createdAt
               ).toLocaleTimeString(resolvedLanguage === 'tr' ? 'tr-TR' : 'en-US', { hour: '2-digit', minute: '2-digit' })}`}

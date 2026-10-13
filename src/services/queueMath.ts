@@ -328,20 +328,29 @@ export type QueueRow<T> =
  * Kullanıcı yukarı kaydırdığında çalınmış parçaları, aşağı kaydırdığında
  * sıradakileri görür.
  */
+export interface QueueSectionLabels {
+  history?: string;
+  smartShuffle?: string;
+  shuffle?: string;
+  upcoming?: string;
+}
+
 export function buildQueueRows<T extends QueueTrackLike>(
   sections: QueueSections<T> | null,
   upNextCount: number,
   isShuffle: boolean,
-  isSmartShuffle?: boolean
+  isSmartShuffle?: boolean,
+  sectionLabels?: QueueSectionLabels
 ): QueueRow<T>[] {
   if (!sections) return [];
   const rows: QueueRow<T>[] = [];
 
   if (sections.history.length > 0) {
+    const historyPrefix = sectionLabels?.history || 'ÖNCEDEN ÇALINAN';
     rows.push({
       kind: 'section',
       key: 'sec-history',
-      title: `ÖNCEDEN ÇALINAN · ${sections.history.length}`,
+      title: `${historyPrefix} · ${sections.history.length}`,
     });
     for (const entry of sections.history) {
       rows.push({
@@ -363,11 +372,14 @@ export function buildQueueRows<T extends QueueTrackLike>(
   if (sections.context.length > 0) {
     let contextTitle: string;
     if (isShuffle && isSmartShuffle) {
-      contextTitle = `AKILLI KARIŞIK · ${sections.context.length}`;
+      const prefix = sectionLabels?.smartShuffle || 'AKILLI KARIŞIK';
+      contextTitle = `${prefix} · ${sections.context.length}`;
     } else if (isShuffle) {
-      contextTitle = `KÜTÜPHANEDEN · KARIŞIK · ${sections.context.length}`;
+      const prefix = sectionLabels?.shuffle || 'KÜTÜPHANEDEN · KARIŞIK';
+      contextTitle = `${prefix} · ${sections.context.length}`;
     } else {
-      contextTitle = `KÜTÜPHANEDEN SIRADAKİ · ${sections.context.length}`;
+      const prefix = sectionLabels?.upcoming || 'KÜTÜPHANEDEN SIRADAKİ';
+      contextTitle = `${prefix} · ${sections.context.length}`;
     }
 
     rows.push({

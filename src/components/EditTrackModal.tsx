@@ -108,8 +108,8 @@ export function EditTrackModal({
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
         Alert.alert(
-          'İzin Gerekli',
-          'Kapak fotoğrafı seçebilmek için galeri erişim izni vermelisiniz.'
+          t('edit_track.gallery_permission_title'),
+          t('edit_track.gallery_permission_msg')
         );
         return;
       }
@@ -127,7 +127,7 @@ export function EditTrackModal({
       }
     } catch (e) {
       console.warn('Image picker error:', e);
-      Alert.alert('Hata', 'Fotoğraf seçilirken bir hata oluştu.');
+      Alert.alert(t('common.error'), t('edit_track.gallery_pick_error'));
     }
   };
 
@@ -137,7 +137,7 @@ export function EditTrackModal({
     const qArtist = artist.trim() || track.artist;
 
     if (!qTitle) {
-      Alert.alert('Bilgi', 'Arama yapabilmek için lütfen bir şarkı başlığı girin.');
+      Alert.alert(t('common.info'), t('edit_track.search_title_required'));
       return;
     }
 
@@ -162,12 +162,12 @@ export function EditTrackModal({
   // 4. Tüm Bilgileri Orijinale Sıfırlama
   const handleFullReset = () => {
     Alert.alert(
-      'Bilgileri Sıfırla',
-      'Bu şarkı için yapılan tüm özel düzenlemeler silinecek ve orijinal dosya bilgilerine dönülecek. Onaylıyor musunuz?',
+      t('edit_track.reset_confirm_title'),
+      t('edit_track.reset_confirm_msg'),
       [
-        { text: 'İptal', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Sıfırla',
+          text: t('edit_track.reset_btn'),
           style: 'destructive',
           onPress: async () => {
             let originalArt = track.originalArtwork || null;
@@ -348,7 +348,7 @@ export function EditTrackModal({
                   onPress={handleResetArtwork}>
                   <Ionicons name="refresh-outline" size={16} color="#a1a1aa" style={{ marginRight: 4 }} />
                   <Text style={[styles.artActionBtnText, { color: '#a1a1aa' }]}>
-                    {resolvedLanguage === 'tr' ? 'Sıfırla' : 'Reset'}
+                    {t('edit_track.reset_btn')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -358,10 +358,10 @@ export function EditTrackModal({
                 <View style={styles.onlineResultsBox}>
                   <Text style={styles.onlineResultsTitle}>
                     {isSearchingArtwork
-                      ? (resolvedLanguage === 'tr' ? 'İnternetten kapaklar aranıyor...' : 'Searching covers online...')
+                      ? t('edit_track.searching_covers')
                       : onlineArtworkList.length > 0
-                      ? (resolvedLanguage === 'tr' ? 'Bir Kapak Seçin:' : 'Select a Cover:')
-                      : (resolvedLanguage === 'tr' ? 'Eşleşen kapak bulunamadı.' : 'No matching covers found.')}
+                      ? t('edit_track.select_cover')
+                      : t('edit_track.no_covers_found')}
                   </Text>
 
                   <ScrollView
@@ -408,7 +408,7 @@ export function EditTrackModal({
                 style={styles.input}
                 value={title}
                 onChangeText={setTitle}
-                placeholder={resolvedLanguage === 'tr' ? 'Şarkı adını girin' : 'Enter track title'}
+                placeholder={t('edit_track.enter_title_placeholder')}
                 placeholderTextColor="#52525b"
               />
             </View>
@@ -419,7 +419,7 @@ export function EditTrackModal({
                 style={styles.input}
                 value={artist}
                 onChangeText={setArtist}
-                placeholder={resolvedLanguage === 'tr' ? 'Sanatçı adını girin' : 'Enter artist name'}
+                placeholder={t('edit_track.enter_artist_placeholder')}
                 placeholderTextColor="#52525b"
               />
             </View>
@@ -430,7 +430,7 @@ export function EditTrackModal({
                 style={styles.input}
                 value={album}
                 onChangeText={setAlbum}
-                placeholder={resolvedLanguage === 'tr' ? 'Albüm adını girin (isteğe bağlı)' : 'Enter album name (optional)'}
+                placeholder={t('edit_track.enter_album_placeholder')}
                 placeholderTextColor="#52525b"
               />
             </View>

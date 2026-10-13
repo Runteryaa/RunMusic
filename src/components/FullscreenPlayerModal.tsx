@@ -216,11 +216,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     if (isSleepTimerActive) {
       const updateRemaining = () => {
         if (sleepTimerDurationOption === 'track') {
-          setSleepTimerRemaining('Şarkı bitince');
+          setSleepTimerRemaining(t('player.after_track'));
         } else if (sleepTimerEndTime) {
           const diff = Math.max(0, sleepTimerEndTime - Date.now());
           const mins = Math.ceil(diff / 60000);
-          setSleepTimerRemaining(`${mins} dakika kaldı`);
+          setSleepTimerRemaining(`${mins} ${t('player.minutes_left')}`);
         }
       };
       updateRemaining();
@@ -231,7 +231,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isSleepTimerActive, sleepTimerEndTime, sleepTimerDurationOption]);
+  }, [isSleepTimerActive, sleepTimerEndTime, sleepTimerDurationOption, t]);
 
   const [queue, setQueue] = useState<Track[]>([]);
   const [activeIndex, setActiveIndex] = useState<number>(0);
@@ -341,13 +341,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     if (!queueSections) return [];
     return queueSections.upNext.map((entry, i) => ({
       key: `${entry.track.id ?? entry.track.url}-${i}`,
-      title: cleanDisplayTitle(entry.track.title ?? '', entry.track.artist) || 'Bilinmeyen Parça',
+      title: cleanDisplayTitle(entry.track.title ?? '', entry.track.artist) || t('common.unknown_track'),
       artist: entry.track.artist ?? undefined,
       artwork: typeof entry.track.artwork === 'string' ? entry.track.artwork : undefined,
       trackId: entry.track.id ?? null,
       trackUri: entry.track.url ?? null,
     }));
-  }, [queueSections]);
+  }, [queueSections, t]);
 
   const handleMoveUpNext = useCallback(
     async (from: number, to: number) => {
@@ -390,8 +390,24 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     []
   );
 
+  const queueSectionLabels = useMemo(
+    () => ({
+      history: t('queue.history_section'),
+      smartShuffle: t('queue.smart_shuffle_section'),
+      shuffle: t('queue.library_shuffle_section'),
+      upcoming: t('queue.library_upcoming_section'),
+    }),
+    [t]
+  );
+
   // Saf fonksiyonla üretilir; React Compiler kendi memoizasyonunu uygular.
-  const queueRows = buildQueueRows(queueSections, upNextItems.length, isShuffle, isSmartShuffle);
+  const queueRows = buildQueueRows(
+    queueSections,
+    upNextItems.length,
+    isShuffle,
+    isSmartShuffle,
+    queueSectionLabels
+  );
 
   const currentRowIndex = useMemo(
     () => queueRows.findIndex((row) => row.kind === 'current'),
@@ -468,7 +484,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       case 'current':
         return (
           <>
-            <Text style={styles.queueSectionTitle}>ŞU AN ÇALIYOR</Text>
+            <Text style={styles.queueSectionTitle}>{t('queue.now_playing_section')}</Text>
             <View style={[styles.queueItem, { backgroundColor: theme.surface }]}>
               <TrackArtwork
                 uri={typeof item.entry.track.artwork === 'string' ? item.entry.track.artwork : undefined}
@@ -539,7 +555,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     (activeTrack?.id ? metadataMap[activeTrack.id] : undefined) ||
     (activeTrack?.url ? metadataMap[activeTrack.url] : undefined);
 
+  const unknownArtist = t('common.unknown_artist');
+  const unknownTrack = t('common.unknown_track');
   const activeKeywords = getSearchKeywords(activeTrack?.title || '', activeTrack?.artist || '');
+
   const rawArtist =
     (activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
       ? activeMeta.artist.trim()
@@ -548,7 +567,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       ? activeKeywords.expectedArtist
       : (activeTrack?.artist && activeTrack.artist !== 'Local Audio' && activeTrack.artist !== 'Bilinmeyen Sanatçı'
           ? cleanYouTubeTitle(activeTrack.artist)
-          : 'Bilinmeyen Sanatçı'));
+          : unknownArtist));
 
   const rawTitle =
     (activeMeta?.title?.trim() ? activeMeta.title.trim() : '') ||
@@ -558,8 +577,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const displayArtist = rawArtist;
   const displayTitle =
-    cleanDisplayTitle(rawTitle, displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : undefined) ||
-    'Bilinmeyen Parça';
+    cleanDisplayTitle(rawTitle, displayArtist !== unknownArtist && displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : undefined) ||
+    unknownTrack;
 
   const currentArtworkUri =
     activeMeta?.artwork ||
@@ -914,7 +933,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       const results = await searchAllCandidates(manualQuery.trim(), searchArtist);
       setCandidatesList(results);
       if (results.length === 0) {
-        alert('Eşleşen sonuç bulunamadı.');
+        alert(t('player.no_lyrics_results'));
       }
     } catch (e) {
       console.warn('Manual lyrics search failed', e);
@@ -1770,16 +1789,16 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               /* Söz Bulunamadı Durumu */
               <View style={styles.lyricsEmptyState}>
                 <Ionicons name="mic-off-outline" size={38} color="#52525b" />
-                <Text style={styles.lyricsEmptyTitle}>Şarkı sözü bulunamadı</Text>
+                <Text style={styles.lyricsEmptyTitle}>{t('player.no_lyrics_found')}</Text>
                 <Text style={styles.lyricsEmptySubtitle}>
-                  Farklı bir başlık veya sanatçı ile aramak için butona dokunun
+                  {t('player.no_lyrics_subtitle')}
                 </Text>
                 <TouchableOpacity
                   style={[styles.lyricsEmptySearchBtn, { backgroundColor: theme.primary }]}
                   activeOpacity={0.8}
                   onPress={toggleManualSearch}>
                   <Ionicons name="search" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                  <Text style={styles.lyricsEmptySearchBtnText}>Arama Yap</Text>
+                  <Text style={styles.lyricsEmptySearchBtnText}>{t('player.search_lyrics_btn')}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -1807,7 +1826,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <View style={[styles.queueSourceBadge, { backgroundColor: theme.surface }]}>
                 <Ionicons name="list" size={13} color={theme.primary} style={{ marginRight: 6 }} />
                 <Text style={[styles.queueSourceText, { color: theme.textAccent }]}>
-                  Çalma Sırası {queue.length > 0 ? `(${queue.length})` : ''}
+                  {t('player.queue_title')} {queue.length > 0 ? `(${queue.length})` : ''}
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -1825,7 +1844,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       }
                     }}>
                     <Ionicons name="locate-outline" size={13} color={theme.primary} style={{ marginRight: 4 }} />
-                    <Text style={[styles.queueLocateBtnText, { color: theme.primary }]}>Çalana Git</Text>
+                    <Text style={[styles.queueLocateBtnText, { color: theme.primary }]}>{t('player.go_to_current')}</Text>
                   </TouchableOpacity>
                 ) : null}
                 <TouchableOpacity
@@ -1854,7 +1873,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               ListEmptyComponent={
                 queueSections ? (
                   <View style={{ paddingVertical: 32, alignItems: 'center' }}>
-                    <Text style={{ color: '#71717a', fontSize: 14 }}>Kuyruk boş.</Text>
+                    <Text style={{ color: '#71717a', fontSize: 14 }}>{t('player.queue_empty')}</Text>
                   </View>
                 ) : (
                   <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 24 }} />
@@ -2252,7 +2271,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             {...searchModalPanResponder.panHandlers}>
             <Pressable style={styles.searchModalBox} onPress={(e) => e.stopPropagation()}>
               <View style={styles.searchModalHeader}>
-                <Text style={styles.searchModalTitle}>Şarkı Sözü Arama</Text>
+                <Text style={styles.searchModalTitle}>{t('player.search_lyrics_modal_title')}</Text>
                 <TouchableOpacity onPress={() => setIsManualSearchOpen(false)}>
                   <Ionicons name="close" size={22} color="#a1a1aa" />
                 </TouchableOpacity>
@@ -2261,7 +2280,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <View style={styles.searchModalInputRow}>
                 <TextInput
                   style={styles.searchModalInput}
-                  placeholder="Sanatçı Şarkı Adı..."
+                  placeholder={t('player.search_lyrics_placeholder')}
                   placeholderTextColor="#71717a"
                   value={manualQuery}
                   onChangeText={setManualQuery}
@@ -2281,7 +2300,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.candidatesSectionTitle}>Arama Sonuçları:</Text>
+              <Text style={styles.candidatesSectionTitle}>{t('player.search_results_title')}</Text>
 
               {candidatesList.length > 0 ? (
                 <FlatList
@@ -2321,7 +2340,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                             {isSelected ? (
                               <View style={[styles.candidateSelectedBadge, { backgroundColor: theme.primary }]}>
                                 <Ionicons name="checkmark-sharp" size={10} color="#ffffff" style={{ marginRight: 2 }} />
-                                <Text style={styles.candidateSelectedBadgeText}>SEÇİLİ</Text>
+                                <Text style={styles.candidateSelectedBadgeText}>{t('player.candidate_selected')}</Text>
                               </View>
                             ) : null}
                           </View>
@@ -2340,7 +2359,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                             </View>
                           ) : (
                             <View style={[styles.candidateSyncedBadge, { backgroundColor: 'rgba(255, 255, 255, 0.12)' }]}>
-                              <Text style={[styles.candidateSyncedBadgeText, { color: '#a1a1aa' }]}>DÜZ METİN</Text>
+                              <Text style={[styles.candidateSyncedBadgeText, { color: '#a1a1aa' }]}>{t('player.plain_lyrics_badge')}</Text>
                             </View>
                           )}
                           <Text style={styles.candidateSourceText}>
@@ -2361,7 +2380,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               ) : (
                 <View style={{ paddingVertical: 24, alignItems: 'center' }}>
                   <Text style={{ color: '#71717a', fontSize: 14 }}>
-                    {isSearchingCandidates ? 'Sonuçlar aranıyor...' : 'Arama yapmak için yukarıya yazın.'}
+                    {isSearchingCandidates ? t('player.searching_candidates') : t('player.search_candidates_hint')}
                   </Text>
                 </View>
               )}
@@ -2384,10 +2403,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 style={styles.optionsModalRow}
                 onPress={() => {
                   setIsOptionsModalOpen(false);
-                  loadLyricsForTrack(displayTitle, displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '', true);
+                  loadLyricsForTrack(displayTitle, displayArtist !== unknownArtist && displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '', true);
                 }}>
                 <Ionicons name="refresh-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
-                <Text style={styles.optionsModalText}>Şarkı Sözlerini Yeniden Ara</Text>
+                <Text style={styles.optionsModalText}>{t('player.options_refetch_lyrics')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.optionsModalRow}
@@ -2396,19 +2415,19 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   setIsEditTrackModalOpen(true);
                 }}>
                 <Ionicons name="pencil-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
-                <Text style={styles.optionsModalText}>Şarkı Bilgilerini Düzenle</Text>
+                <Text style={styles.optionsModalText}>{t('player.options_edit_info')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.optionsModalRow}
                 onPress={handleHideTrack}>
                 <Ionicons name="eye-off-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
-                <Text style={styles.optionsModalText}>Şarkıyı Gizle</Text>
+                <Text style={styles.optionsModalText}>{t('player.options_hide_track')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.optionsModalRow}
                 onPress={handleDeleteTrack}>
                 <Ionicons name="trash-outline" size={24} color="#ef4444" style={{ marginRight: 16 }} />
-                <Text style={[styles.optionsModalText, { color: '#ef4444' }]}>Şarkıyı Sil</Text>
+                <Text style={[styles.optionsModalText, { color: '#ef4444' }]}>{t('player.options_delete_track')}</Text>
               </TouchableOpacity>
             </Pressable>
           </Pressable>
@@ -2423,7 +2442,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   id: resolvedTrackId || activeTrack.id || activeTrack.url,
                   uri: currentAsset?.uri || activeTrack.url,
                   title: activeMeta?.title || displayTitle,
-                  artist: activeMeta?.artist || (displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : ''),
+                  artist: activeMeta?.artist || (displayArtist !== unknownArtist && displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : ''),
                   album: activeMeta?.album,
                   artwork: currentArtworkUri,
                   originalArtwork: currentAsset?.id ? artworkMap[currentAsset.id] : null,

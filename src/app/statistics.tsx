@@ -85,9 +85,10 @@ export default function StatisticsScreen() {
   const getTrackInfo = (trackId: string) => {
     const asset = allAssets.find((a) => a.id === trackId);
     const meta = metadataMap[trackId];
+    const unknownArtist = t('common.unknown_artist');
 
-    let artist = meta?.artist?.trim() || 'Bilinmeyen Sanatçı';
-    if (artist === 'Local Audio') artist = 'Bilinmeyen Sanatçı';
+    let artist = meta?.artist?.trim() || unknownArtist;
+    if (artist === 'Local Audio' || artist === 'Bilinmeyen Sanatçı') artist = unknownArtist;
 
     let rawTitle = meta?.title?.trim() || '';
     if (!rawTitle && asset) {
@@ -95,8 +96,8 @@ export default function StatisticsScreen() {
     }
 
     let title = rawTitle
-      ? cleanDisplayTitle(rawTitle, artist !== 'Bilinmeyen Sanatçı' ? artist : undefined)
-      : 'Bilinmeyen Şarkı';
+      ? cleanDisplayTitle(rawTitle, artist !== unknownArtist ? artist : undefined)
+      : t('common.unknown_track');
 
     return { title, artist, uri: asset?.uri };
   };
@@ -144,7 +145,7 @@ export default function StatisticsScreen() {
           onPress={() => setActiveTab('overview')}
         >
           <Text style={[styles.tabText, activeTab === 'overview' && { color: theme.primary, fontWeight: '700' }]}>
-            {resolvedLanguage === 'tr' ? 'Genel Bakış' : 'Overview'}
+            {t('stats.overview')}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity 
@@ -152,7 +153,7 @@ export default function StatisticsScreen() {
           onPress={() => setActiveTab('history')}
         >
           <Text style={[styles.tabText, activeTab === 'history' && { color: theme.primary, fontWeight: '700' }]}>
-            {resolvedLanguage === 'tr' ? 'Dinleme Geçmişi' : 'Listening History'}
+            {t('stats.listening_history')}
           </Text>
         </TouchableOpacity>
       </View>
@@ -195,7 +196,7 @@ export default function StatisticsScreen() {
               {/* Most Played This Month */}
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>
-                  {resolvedLanguage === 'tr' ? 'Bu Ay En Çok Dinlenenler' : 'Top Tracks This Month'}
+                  {t('stats.top_tracks_month')}
                 </Text>
                 {mostPlayedMonth.length > 0 ? (
                   mostPlayedMonth.map((item, idx) =>
@@ -214,7 +215,7 @@ export default function StatisticsScreen() {
               {/* Most Played All Time */}
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>
-                  {resolvedLanguage === 'tr' ? 'Tüm Zamanların En Çok Dinlenenleri' : 'Top Tracks All Time'}
+                  {t('stats.top_tracks_all_time')}
                 </Text>
                 {mostPlayedAllTime.length > 0 ? (
                   mostPlayedAllTime.map((item, idx) =>
@@ -246,7 +247,7 @@ export default function StatisticsScreen() {
                 })
               ) : (
                 <Text style={styles.emptyText}>
-                  {resolvedLanguage === 'tr' ? 'Dinleme geçmişi boş.' : 'Listening history is empty.'}
+                  {t('stats.history_empty')}
                 </Text>
               )}
             </View>

@@ -169,12 +169,12 @@ export default function LibraryScreen() {
   const handleDeleteTrack = async (asset: MediaLibrary.Asset) => {
     setSelectedTrackForMenu(null);
     Alert.alert(
-      'Şarkıyı Sil',
-      'Bu şarkıyı cihazınızdan kalıcı olarak silmek istediğinize emin misiniz?',
+      t('library.delete_confirm_title'),
+      t('library.delete_confirm_msg'),
       [
-        { text: 'İptal', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Sil',
+          text: t('common.delete'),
           style: 'destructive',
           onPress: async () => {
             try {
@@ -200,13 +200,13 @@ export default function LibraryScreen() {
                 } catch (e) {
                   console.warn('TrackPlayer update on delete failed', e);
                 }
-                showToast('Şarkı başarıyla silindi');
+                showToast(t('library.delete_success'));
               } else {
-                Alert.alert('Hata', 'Şarkı silinemedi. Lütfen izinlerinizi kontrol edin.');
+                Alert.alert(t('common.error'), t('library.delete_error_permission'));
               }
             } catch (e) {
               console.error('Failed to delete asset', e);
-              Alert.alert('Hata', 'Şarkı silinirken bir hata oluştu.');
+              Alert.alert(t('common.error'), t('library.delete_error_generic'));
             }
           },
         },
@@ -216,7 +216,7 @@ export default function LibraryScreen() {
 
   const scanMedia = useCallback(async () => {
     setIsScanning(true);
-    setStatusMessage('İzinler denetleniyor...');
+    setStatusMessage(t('library.permissions_checking'));
     try {
       let permission = await MediaLibrary.getPermissionsAsync(false, ['audio']);
       if (!permission.granted && permission.status !== 'granted') {
@@ -225,15 +225,15 @@ export default function LibraryScreen() {
 
       if (!permission.granted && permission.status !== 'granted') {
         Alert.alert(
-          'İzin Gerekli',
-          'Müziklerinizi taramak ve oynatmak için lütfen ses dosyalarına erişim izni verin.'
+          t('common.permission_needed'),
+          t('library.permissions_desc')
         );
-        setStatusMessage('İzin verilmedi.');
+        setStatusMessage(t('library.permissions_denied'));
         setIsScanning(false);
         return;
       }
 
-      setStatusMessage('Müzik dosyaları taranıyor...');
+      setStatusMessage(t('library.scanning'));
       let hasNextPage = true;
       let after: string | undefined = undefined;
       const allAudio: MediaLibrary.Asset[] = [];
@@ -298,7 +298,7 @@ export default function LibraryScreen() {
       // Kütüphane listesini güncellemeden önce bekleyen arayüz etkileşimlerine yer aç
       await new Promise((r) => setTimeout(r, 0));
       setLibrary(validAudio);
-      setStatusMessage(`${validAudio.length} şarkı bulundu.`);
+      setStatusMessage(t('library.songs_found', { count: validAudio.length }));
 
       // Background extraction of missing metadata & artworks (nefes payı ve tek seferlik toplu kayıt ile)
       (async () => {
@@ -327,12 +327,12 @@ export default function LibraryScreen() {
       })();
     } catch (e: any) {
       console.error('Scan error:', e);
-      setStatusMessage(`Hata: ${e?.message || e}`);
-      Alert.alert('Tarama Hatası', e?.message || 'Müzikler taranırken bir hata oluştu.');
+      setStatusMessage(`${t('common.error')}: ${e?.message || e}`);
+      Alert.alert(t('library.scan_error_title'), e?.message || t('library.scan_error_msg'));
     } finally {
       setIsScanning(false);
     }
-  }, [settings, setLibrary, setIsScanning, setBatchTrackMetadata]);
+  }, [settings, setLibrary, setIsScanning, setBatchTrackMetadata, t]);
 
   // Yalnızca kütüphane boşken ilk açılışta tara; her renderda veya length değişiminde tekrar tetikleme
   useEffect(() => {
@@ -801,7 +801,7 @@ export default function LibraryScreen() {
                     {getTrackDisplayInfo(selectedTrackForMenu).title}
                   </Text>
                   <Text style={styles.actionMenuSubtitle} numberOfLines={1}>
-                    {getTrackDisplayInfo(selectedTrackForMenu).artist || 'Bilinmeyen Sanatçı'}
+                    {getTrackDisplayInfo(selectedTrackForMenu).artist || t('common.unknown_artist')}
                   </Text>
                 </View>
 
@@ -849,11 +849,11 @@ export default function LibraryScreen() {
                   onPress={() => {
                     Alert.alert(
                       t('library.hide_track'),
-                      'Bu şarkı kütüphane listenizden gizlenecek. Daha sonra Ayarlar menüsünden geri getirebilirsiniz.',
+                      t('library.hide_confirm_msg'),
                       [
-                        { text: 'İptal', style: 'cancel' },
+                        { text: t('common.cancel'), style: 'cancel' },
                         {
-                          text: 'Gizle',
+                          text: t('library.hide_track'),
                           style: 'destructive',
                           onPress: () => handleHideTrack(selectedTrackForMenu),
                         },
@@ -868,7 +868,7 @@ export default function LibraryScreen() {
                   style={[styles.actionMenuItem, styles.actionMenuItemDestructive]}
                   onPress={() => handleDeleteTrack(selectedTrackForMenu)}>
                   <Ionicons name="trash-outline" size={18} color="#ef4444" style={{ marginRight: 12 }} />
-                  <Text style={styles.actionMenuTextDestructive}>Şarkıyı Sil</Text>
+                  <Text style={styles.actionMenuTextDestructive}>{t('library.delete_track')}</Text>
                 </TouchableOpacity>
               </>
             )}
