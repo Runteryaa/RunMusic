@@ -31,6 +31,7 @@ import {
   type QueueTrack,
 } from '../services/queueController';
 import { compareAddedDate, type SortOption } from '../services/librarySort';
+import { normalizeSearchText } from '../services/searchUtils';
 
 interface SortItem {
   id: SortOption;
@@ -319,10 +320,17 @@ export default function LibraryScreen() {
 
   // Compute info once per track to avoid O(N log N) regex operations during sorting
   const libraryWithInfo = useMemo(() => {
-    return library.map(asset => ({
-      asset,
-      info: getTrackDisplayInfo(asset)
-    }));
+    return library.map((asset) => {
+      const info = getTrackDisplayInfo(asset);
+      const searchTarget = normalizeSearchText(
+        `${info.title} ${info.artist} ${cleanTitle(asset.filename)}`
+      );
+      return {
+        asset,
+        info,
+        searchTarget,
+      };
+    });
   }, [library, getTrackDisplayInfo]);
 
   // Sorting comparator
@@ -332,13 +340,13 @@ export default function LibraryScreen() {
       b: { asset: MediaLibrary.Asset; info: { title: string; artist: string } },
       option: SortOption
     ) => {
-      const nameA = a.info.title.toLowerCase();
-      const nameB = b.info.title.toLowerCase();
+      const nameA = a.info.title;
+      const nameB = b.info.title;
       switch (option) {
         case 'name_asc':
-          return nameA.localeCompare(nameB);
+          return nameA.localeCompare(nameB, 'tr', { sensitivity: 'base' });
         case 'name_desc':
-          return nameB.localeCompare(nameA);
+          return nameB.localeCompare(nameA, 'tr', { sensitivity: 'base' });
         case 'duration_asc':
           return (a.asset.duration || 0) - (b.asset.duration || 0);
         case 'duration_desc':
@@ -366,14 +374,15 @@ export default function LibraryScreen() {
   // Displayed list (array of objects with asset and precomputed info)
   const displayedList = useMemo(() => {
     if (!searchQuery.trim()) return fullSortedListWithInfo;
-    const q = searchQuery.toLowerCase().trim();
-    
+    const q = normalizeSearchText(searchQuery);
+    if (!q) return fullSortedListWithInfo;
+
+    const terms = q.split(' ').filter(Boolean);
+
     return fullSortedListWithInfo.filter((item) => {
-      return (
-        item.info.title.toLowerCase().includes(q) ||
-        item.info.artist.toLowerCase().includes(q) ||
-        cleanTitle(item.asset.filename).toLowerCase().includes(q)
-      );
+      if (item.searchTarget.includes(q)) return true;
+      if (terms.length <= 1) return false;
+      return terms.every((term) => item.searchTarget.includes(term));
     });
   }, [fullSortedListWithInfo, searchQuery]);
 
