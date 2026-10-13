@@ -16,8 +16,10 @@ import {
   computeUpcomingOrder,
   deriveQueueSections,
   shuffleArray,
+  smartShuffleArray,
   trackKey,
   type QueueTrackLike,
+  type QueueRow,
 } from '../src/services/queueMath';
 
 let failures = 0;
@@ -441,6 +443,85 @@ section('13) "Karışık çal" — rastgele başlangıç her zaman geçerli');
   check(
     'listede olmayan başlangıç parça kaybettirmez',
     [...unknownStart].sort().join(',') === expected
+  );
+}
+
+section('14) smartShuffleArray — sanatçı ayrıştırması ve ağırlıklandırma');
+
+{
+  const tracks: QueueTrackLike[] = [
+    { id: 't1', artist: 'ArtistA', title: 'Song 1' },
+    { id: 't2', artist: 'ArtistA', title: 'Song 2' },
+    { id: 't3', artist: 'ArtistA', title: 'Song 3' },
+    { id: 't4', artist: 'ArtistB', title: 'Song 4' },
+    { id: 't5', artist: 'ArtistB', title: 'Song 5' },
+    { id: 't6', artist: 'ArtistC', title: 'Song 6' },
+    { id: 't7', artist: 'ArtistC', title: 'Song 7' },
+    { id: 't8', artist: 'ArtistD', title: 'Song 8' },
+  ];
+
+  const playCounts: Record<string, number> = {
+    t1: 50,
+    t4: 30,
+    t6: 0,
+  };
+
+  const result = smartShuffleArray(tracks, {
+    playCounts,
+    getArtist: (tr) => tr.artist,
+  });
+
+  check('uzunluk korunur', result.length === tracks.length);
+  check(
+    'tüm parçalar mevcut (kayıp/tekrar yok)',
+    [...result.map((x) => x.id)].sort().join(',') === [...tracks.map((x) => x.id)].sort().join(',')
+  );
+
+  let consecutiveSameArtist = 0;
+  for (let i = 0; i < result.length - 1; i++) {
+    if (result[i].artist === result[i + 1].artist) {
+      consecutiveSameArtist++;
+    }
+  }
+  check('aynı sanatçının peş peşe gelmesi minimize edilir', consecutiveSameArtist <= 1);
+
+  const singleArtistTracks: QueueTrackLike[] = [
+    { id: 's1', artist: 'Solo', title: 'Solo 1' },
+    { id: 's2', artist: 'Solo', title: 'Solo 2' },
+    { id: 's3', artist: 'Solo', title: 'Solo 3' },
+  ];
+  const singleResult = smartShuffleArray(singleArtistTracks);
+  check('tek sanatçılı kütüphanede çökmez', singleResult.length === 3);
+
+  check('boş dizi güvenli', smartShuffleArray([]).length === 0);
+  check('tek elemanlı dizi güvenli', smartShuffleArray([{ id: 'x' }]).length === 1);
+}
+
+section('15) buildQueueRows — AKILLI KARIŞIK başlığı');
+{
+  const testSections = {
+    history: [],
+    current: { index: 0, track: { id: 'c', title: 'Current' } },
+    upNext: [],
+    context: [{ index: 1, track: { id: 'ctx', title: 'Next' } }],
+  };
+
+  const smartRows = buildQueueRows(testSections, 0, true, true);
+  const contextSection = smartRows.find(
+    (r): r is Extract<QueueRow<any>, { kind: 'section' }> => r.kind === 'section' && r.key === 'sec-context'
+  );
+  check(
+    'akıllı karıştırmada başlık AKILLI KARIŞIK içerir',
+    contextSection !== undefined && contextSection.title.includes('AKILLI KARIŞIK')
+  );
+
+  const classicRows = buildQueueRows(testSections, 0, true, false);
+  const classicSection = classicRows.find(
+    (r): r is Extract<QueueRow<any>, { kind: 'section' }> => r.kind === 'section' && r.key === 'sec-context'
+  );
+  check(
+    'klasik karıştırmada başlık KARIŞIK içerir',
+    classicSection !== undefined && classicSection.title.includes('KARIŞIK') && !classicSection.title.includes('AKILLI')
   );
 }
 

@@ -48,6 +48,115 @@ export function shuffleArray<T>(input: T[]): T[] {
 }
 
 /**
+ * Akıllı Karıştırma (Smart Shuffle):
+ * 1. Sanatçı Ayrıştırması: Aynı sanatçının şarkılarının arka arkaya gelmesini önler
+ *    (araya en az 2 farklı sanatçı yerleştirilmeye çalışılır).
+ * 2. Dinleme Geçmişi Ağırlığı: Çok dinlenen parçalara kontrollü bir öncelik verir.
+ * 3. Keşif Dengesi: Hiç dinlenmemiş veya az dinlenmiş parçaları da aralara serpiştirir.
+ * 4. Kütüphanede tek sanatçı veya az sanatçı varsa sonsuz döngüye girmeden
+ *    kısıtları esnetir (graceful fallback).
+ */
+export function smartShuffleArray<T extends QueueTrackLike>(
+  input: T[],
+  options?: {
+    playCounts?: Record<string, number>;
+    getArtist?: (track: T) => string | undefined;
+  }
+): T[] {
+  if (input.length <= 2) {
+    return shuffleArray(input);
+  }
+
+  const playCounts = options?.playCounts ?? {};
+  const getArtist =
+    options?.getArtist ?? ((t: T) => t.artist || (t as any).artistName || '');
+
+  // 1. Ağırlıklı skorlama ile adayları zenginleştir
+  interface ScoredCandidate {
+    track: T;
+    artist: string;
+    score: number;
+    playCount: number;
+  }
+
+  const scored: ScoredCandidate[] = input.map((track) => {
+    const key = trackKey(track);
+    const count = playCounts[key] || 0;
+    const rawArtist = (getArtist(track) || '').trim().toLowerCase();
+
+    // count > 0 ise dinleme sayısı logaritmik olarak katkı sağlar (1.0 .. 2.2).
+    // count === 0 ise keşif dengesi olarak 1.15 verilir.
+    let weight = 1.0;
+    if (count > 0) {
+      weight = 1.0 + Math.min(Math.log2(count + 1) * 0.35, 1.2);
+    } else {
+      weight = 1.15;
+    }
+
+    const r = Math.max(0.0001, Math.random());
+    const score = Math.pow(r, 1 / weight);
+
+    return {
+      track,
+      artist: rawArtist,
+      score,
+      playCount: count,
+    };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  // 2. Sanatçı Ayrıştırması (Artist De-clustering / Spacing)
+  const result: T[] = [];
+  const pool = [...scored];
+  const recentArtists: string[] = [];
+
+  while (pool.length > 0) {
+    let chosenIndex = -1;
+
+    // Önce son 2 sanatçıyla çakışmayan en yüksek skorlu adayı bul
+    for (let i = 0; i < pool.length; i++) {
+      const candidateArtist = pool[i].artist;
+      if (!candidateArtist || !recentArtists.includes(candidateArtist)) {
+        chosenIndex = i;
+        break;
+      }
+    }
+
+    // Bulunamadıysa son 1 sanatçıyla çakışmayanı dene
+    if (chosenIndex === -1 && recentArtists.length > 0) {
+      const lastArtist = recentArtists[recentArtists.length - 1];
+      for (let i = 0; i < pool.length; i++) {
+        const candidateArtist = pool[i].artist;
+        if (!candidateArtist || candidateArtist !== lastArtist) {
+          chosenIndex = i;
+          break;
+        }
+      }
+    }
+
+    // Kütüphanede tek sanatçı kaldıysa ilk adayı al
+    if (chosenIndex === -1) {
+      chosenIndex = 0;
+    }
+
+    const [selected] = pool.splice(chosenIndex, 1);
+    result.push(selected.track);
+
+    if (selected.artist) {
+      recentArtists.push(selected.artist);
+      if (recentArtists.length > 2) {
+        recentArtists.shift();
+      }
+    } else {
+      recentArtists.length = 0;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Kuyruğu bölümlere ayırır.
  *
  * Aynı parça hem manuel kuyrukta hem bağlamda bulunabilir (kullanıcı, kütüphanede
@@ -104,16 +213,42 @@ export function deriveQueueSections<T extends QueueTrackLike>(
  * ilk sıraya alınır ve KALANI bir kez karıştırılır; böylece sıra sabit kalır
  * (her "sonraki"de yeniden rastgele seçim yapılmaz).
  */
-export function buildPlayOrder(contextIds: string[], startId: string, shuffle: boolean): string[] {
+export function buildPlayOrder(
+  contextIds: string[],
+  startId: string,
+  shuffle: boolean,
+  options?: {
+    smartShuffle?: boolean;
+    playCounts?: Record<string, number>;
+    getArtist?: (id: string) => string | undefined;
+  }
+): string[] {
   // Başlangıç parçası bağlamda yoksa (ya da bağlam boşsa) UYDURMA GİRDİ
   // eklemeyiz; yalnızca bağlamın kendisini döndürürüz. Aksi halde kuyruğa
   // var olmayan bir kimlik (ör. boş string) sızıyordu.
   if (!startId || !contextIds.includes(startId)) {
-    return shuffle ? shuffleArray(contextIds) : contextIds;
+    if (!shuffle) return contextIds;
+    if (options?.smartShuffle) {
+      const items = contextIds.map((id) => ({ id }));
+      return smartShuffleArray(items, {
+        playCounts: options.playCounts,
+        getArtist: (t) => options.getArtist?.(t.id),
+      }).map((t) => t.id);
+    }
+    return shuffleArray(contextIds);
   }
   if (!shuffle) return contextIds;
 
   const rest = contextIds.filter((id) => id !== startId);
+  if (options?.smartShuffle) {
+    const items = rest.map((id) => ({ id }));
+    const shuffledRest = smartShuffleArray(items, {
+      playCounts: options.playCounts,
+      getArtist: (t) => options.getArtist?.(t.id),
+    }).map((t) => t.id);
+    return [startId, ...shuffledRest];
+  }
+
   return [startId, ...shuffleArray(rest)];
 }
 
@@ -136,12 +271,27 @@ export function computeUpcomingOrder<T extends QueueTrackLike>(params: {
   contextIds: string[];
   /** Orijinal sıra yoksa taban kabul edilecek tam kuyruk. */
   fullQueue: T[];
+  smartShuffle?: boolean;
+  playCounts?: Record<string, number>;
+  getArtist?: (track: T) => string | undefined;
 }): { upcoming: T[]; baselineIds: string[] | null } {
-  const { enabled, upNextTracks, upcomingContext, contextIds, fullQueue } = params;
+  const {
+    enabled,
+    upNextTracks,
+    upcomingContext,
+    contextIds,
+    fullQueue,
+    smartShuffle = false,
+    playCounts,
+    getArtist,
+  } = params;
 
   if (enabled) {
     const baselineIds = contextIds.length === 0 ? fullQueue.map((t) => trackKey(t)) : null;
-    return { upcoming: [...upNextTracks, ...shuffleArray(upcomingContext)], baselineIds };
+    const shuffledContext = smartShuffle
+      ? smartShuffleArray(upcomingContext, { playCounts, getArtist })
+      : shuffleArray(upcomingContext);
+    return { upcoming: [...upNextTracks, ...shuffledContext], baselineIds };
   }
 
   if (contextIds.length > 0) {
@@ -181,7 +331,8 @@ export type QueueRow<T> =
 export function buildQueueRows<T extends QueueTrackLike>(
   sections: QueueSections<T> | null,
   upNextCount: number,
-  isShuffle: boolean
+  isShuffle: boolean,
+  isSmartShuffle?: boolean
 ): QueueRow<T>[] {
   if (!sections) return [];
   const rows: QueueRow<T>[] = [];
@@ -210,12 +361,19 @@ export function buildQueueRows<T extends QueueTrackLike>(
   }
 
   if (sections.context.length > 0) {
+    let contextTitle: string;
+    if (isShuffle && isSmartShuffle) {
+      contextTitle = `AKILLI KARIŞIK · ${sections.context.length}`;
+    } else if (isShuffle) {
+      contextTitle = `KÜTÜPHANEDEN · KARIŞIK · ${sections.context.length}`;
+    } else {
+      contextTitle = `KÜTÜPHANEDEN SIRADAKİ · ${sections.context.length}`;
+    }
+
     rows.push({
       kind: 'section',
       key: 'sec-context',
-      title: isShuffle
-        ? `KÜTÜPHANEDEN · KARIŞIK · ${sections.context.length}`
-        : `KÜTÜPHANEDEN SIRADAKİ · ${sections.context.length}`,
+      title: contextTitle,
     });
     for (const entry of sections.context) {
       rows.push({

@@ -80,6 +80,28 @@ export async function getMostPlayed(limit: number = 20, timeframe?: 'month'): Pr
   }
 }
 
+/**
+ * Akıllı karıştırma (Smart Shuffle) için tüm parçaların dinleme sayılarını harita olarak döner.
+ */
+export async function getPlayCountsMap(): Promise<Record<string, number>> {
+  if (!db) await initStatsDB();
+  try {
+    const rows = await db!.getAllAsync<{ track_id: string; play_count: number }>(
+      'SELECT track_id, COUNT(*) as play_count FROM play_history GROUP BY track_id'
+    );
+    const map: Record<string, number> = {};
+    for (const r of rows) {
+      if (r.track_id) {
+        map[r.track_id] = r.play_count;
+      }
+    }
+    return map;
+  } catch (error) {
+    console.warn('Failed to get play counts map:', error);
+    return {};
+  }
+}
+
 export async function addListeningTime(seconds: number) {
   if (!db) await initStatsDB();
   try {

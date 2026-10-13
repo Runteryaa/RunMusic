@@ -68,6 +68,7 @@ export default function LibraryScreen() {
   const metadataMap = useStore((s) => s.metadataMap);
   const setBatchTrackMetadata = useStore((s) => s.setBatchTrackMetadata);
   const isShuffle = useStore((s) => s.isShuffle);
+  const isSmartShuffle = useStore((s) => s.isSmartShuffle);
   const preferences = useStore((s) => s.preferences);
   const updatePreferences = useStore((s) => s.updatePreferences);
 
@@ -461,6 +462,7 @@ export default function LibraryScreen() {
         tracks,
         startId: selectedAsset.id,
         shuffle: isShuffle,
+        smartShuffle: isShuffle ? isSmartShuffle : false,
       });
       openFullscreenPlayer();
 
@@ -499,8 +501,7 @@ export default function LibraryScreen() {
 
   /**
    * "Karışık çal": rastgele bir şarkıdan başlayıp tüm kütüphaneyi karıştırarak
-   * çalar. `startPlaybackFromLibrary(shuffle: true)` seçilen parçayı ilk sıraya
-   * alır ve kalanı bir kez karıştırır.
+   * çalar. Son seçilen modu hatırlar (akıllı veya standart).
    */
   const handleShuffleAll = async () => {
     if (fullSortedList.length === 0) return;
@@ -509,13 +510,16 @@ export default function LibraryScreen() {
       const startTrack = buildQueueTrack(fullSortedList[startIndex]);
       const tracks = fullSortedList.map((asset) => buildQueueTrack(asset));
 
+      const useSmart = isSmartShuffle;
+
       await startPlaybackFromLibrary({
         tracks,
         startId: startTrack.id,
         shuffle: true,
+        smartShuffle: useSmart,
       });
       openFullscreenPlayer();
-      showToast('Karışık çalma başladı');
+      showToast(useSmart ? 'Akıllı karıştırma başladı' : 'Karışık çalma başladı');
     } catch (e) {
       console.warn('Shuffle all failed', e);
     }

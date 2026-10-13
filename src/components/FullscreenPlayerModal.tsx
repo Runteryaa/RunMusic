@@ -50,11 +50,11 @@ import {
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import {
   buildQueueRows,
+  cyclePlaybackMode,
   getQueueSections,
   markUpNextConsumed,
   moveUpNext,
   removeQueueItem,
-  setShuffle,
   type QueueEntry,
   type QueueRow,
   type QueueSections,
@@ -162,9 +162,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, [expandAnim]);
 
   const isShuffle = useStore((s) => s.isShuffle);
+  const isSmartShuffle = useStore((s) => s.isSmartShuffle);
   const library = useStore((s) => s.library);
   const repeatMode = useStore((s) => s.repeatMode);
-  const setRepeatMode = useStore((s) => s.setRepeatMode);
   const artworkMap = useStore((s) => s.artworkMap);
   const metadataMap = useStore((s) => s.metadataMap);
   const lyricsCache = useStore((s) => s.lyricsCache);
@@ -361,7 +361,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   );
 
   // Saf fonksiyonla üretilir; React Compiler kendi memoizasyonunu uygular.
-  const queueRows = buildQueueRows(queueSections, upNextItems.length, isShuffle);
+  const queueRows = buildQueueRows(queueSections, upNextItems.length, isShuffle, isSmartShuffle);
 
   const currentRowIndex = useMemo(
     () => queueRows.findIndex((row) => row.kind === 'current'),
@@ -1140,22 +1140,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, []);
 
   const togglePlaybackMode = useCallback(async () => {
-    if (isShuffle) {
-      // Shuffle -> Tümünü Tekrarla (sıra orijinal kütüphane düzenine döner)
-      await setShuffle(false);
-      setRepeatMode(RepeatMode.Queue);
-      await TrackPlayer.setRepeatMode(RepeatMode.Queue);
-    } else if (repeatMode === RepeatMode.Queue) {
-      // Tümünü Tekrarla -> Tek Şarkı
-      setRepeatMode(RepeatMode.Track);
-      await TrackPlayer.setRepeatMode(RepeatMode.Track);
-    } else {
-      // Kapalı / Tek Şarkı -> Shuffle (sıra bir kez karıştırılır ve sabit kalır)
-      setRepeatMode(RepeatMode.Off);
-      await TrackPlayer.setRepeatMode(RepeatMode.Off);
-      await setShuffle(true);
-    }
-  }, [isShuffle, repeatMode, setRepeatMode]);
+    await cyclePlaybackMode();
+  }, []);
 
   // Gestures: Middle container (Interactive Carousel Artwork / Lyrics)
   const artworkPanResponder = useMemo(
@@ -1931,9 +1917,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 onPress={togglePlaybackMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Ionicons
-                  name={isShuffle ? 'shuffle' : 'repeat'}
+                  name={isShuffle ? (isSmartShuffle ? 'sparkles' : 'shuffle') : 'repeat'}
                   size={20}
-                  color={(isShuffle || repeatMode !== RepeatMode.Off) ? theme.primary : 'rgba(255, 255, 255, 0.5)'}
+                  color={
+                    isShuffle || repeatMode === RepeatMode.Track
+                      ? theme.primary
+                      : 'rgba(255, 255, 255, 0.45)'
+                  }
                 />
                 {repeatMode === RepeatMode.Track ? (
                   <Text style={[styles.repeatBadge, { color: theme.primary }]}>1</Text>

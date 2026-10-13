@@ -1,12 +1,14 @@
-import TrackPlayer, { State, Track } from 'react-native-track-player';
+import TrackPlayer, { State, Track, RepeatMode } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { saveQueueSnapshot } from './playbackStorage';
+import { getPlayCountsMap } from './statsDatabase';
 import {
   buildPlayOrder,
   buildQueueRows,
   computeUpcomingOrder,
   deriveQueueSections,
   shuffleArray,
+  smartShuffleArray,
   trackKey,
   type QueueSections,
 } from './queueMath';
@@ -19,6 +21,7 @@ export {
   computeUpcomingOrder,
   deriveQueueSections,
   shuffleArray,
+  smartShuffleArray,
   trackKey,
 };
 export type { QueueEntry, QueueRow, QueueSections, QueueTrackLike } from './queueMath';
@@ -80,12 +83,27 @@ export async function startPlaybackFromLibrary(params: {
   tracks: QueueTrack[];
   startId: string;
   shuffle: boolean;
+  smartShuffle?: boolean;
 }): Promise<void> {
-  const { tracks, startId, shuffle } = params;
+  const { tracks, startId, shuffle, smartShuffle = false } = params;
   const contextIds = tracks.map((t) => t.id);
   const byId = new Map(tracks.map((t) => [t.id, t]));
+  const metadataMap = useStore.getState().metadataMap;
 
-  const orderIds = buildPlayOrder(contextIds, startId, shuffle);
+  let playCounts: Record<string, number> | undefined;
+  if (shuffle && smartShuffle) {
+    try {
+      playCounts = await getPlayCountsMap();
+    } catch {
+      // ignore
+    }
+  }
+
+  const orderIds = buildPlayOrder(contextIds, startId, shuffle, {
+    smartShuffle,
+    playCounts,
+    getArtist: (id) => metadataMap[id]?.artist || byId.get(id)?.artist,
+  });
   const ordered = orderIds
     .map((id) => byId.get(id))
     .filter((t): t is QueueTrack => Boolean(t));
@@ -100,9 +118,12 @@ export async function startPlaybackFromLibrary(params: {
 
   // TEK `set`: zustand persist her set çağrısında TÜM store'u serileştirip
   // diske yazdığı için iki ayrı action çağırmak gereksiz iki yazım demekti.
-  // `isShuffle` da kurulan sırayla eşitlenir; aksi halde kuyruk karışık olduğu
-  // halde player'daki shuffle göstergesi kapalı görünürdü.
-  useStore.setState({ contextIds, upNextIds: [], isShuffle: shuffle });
+  useStore.setState({
+    contextIds,
+    upNextIds: [],
+    isShuffle: shuffle,
+    isSmartShuffle: shuffle ? smartShuffle : false,
+  });
   await persistQueue();
 }
 
@@ -222,12 +243,13 @@ export async function clearUpNextQueue(): Promise<void> {
  * yüklenir; bu yüzden kısa bir ses kesintisi olur (bilinçli bir kullanıcı
  * eylemi olduğu için kabul edilebilir).
  */
-export async function setShuffle(enabled: boolean): Promise<void> {
+export async function setShuffle(enabled: boolean, smart: boolean = false): Promise<void> {
   const store = useStore.getState();
   const { queue, activeIndex } = await readQueueState();
 
   if (queue.length === 0) {
     store.setIsShuffle(enabled);
+    store.setIsSmartShuffle(enabled ? smart : false);
     return;
   }
 
@@ -241,12 +263,25 @@ export async function setShuffle(enabled: boolean): Promise<void> {
   const sections = deriveQueueSections(queue, activeIndex, store.upNextIds);
   const history = queue.slice(0, activeIndex + 1);
 
+  let playCounts: Record<string, number> | undefined;
+  if (enabled && smart) {
+    try {
+      playCounts = await getPlayCountsMap();
+    } catch {
+      // ignore
+    }
+  }
+  const metadataMap = store.metadataMap;
+
   const { upcoming, baselineIds } = computeUpcomingOrder({
     enabled,
     upNextTracks: sections.upNext.map((e) => e.track),
     upcomingContext: sections.context.map((e) => e.track),
     contextIds: store.contextIds,
     fullQueue: queue,
+    smartShuffle: smart,
+    playCounts,
+    getArtist: (t) => metadataMap[t.id || '']?.artist || t.artist,
   });
 
   const newQueue = [...history, ...upcoming];
@@ -267,9 +302,45 @@ export async function setShuffle(enabled: boolean): Promise<void> {
   // Tek `set`: persist her set'te tüm store'u yazdığı için birleştiriyoruz.
   useStore.setState({
     isShuffle: enabled,
+    isSmartShuffle: enabled ? smart : false,
     ...(baselineIds ? { contextIds: baselineIds } : {}),
   });
   await persistQueue();
+}
+
+/**
+ * 4 Aşamalı Oynatma Modu Döngüsü:
+ * 1. Sırayla (Sequential): isShuffle = false, repeatMode = RepeatMode.Queue (veya Off)
+ * 2. Karıştır (Classic Shuffle): isShuffle = true, isSmartShuffle = false, repeatMode = RepeatMode.Off
+ * 3. Akıllı Karıştır (Smart Shuffle): isShuffle = true, isSmartShuffle = true, repeatMode = RepeatMode.Off
+ * 4. Aynı Şarkıyı Tekrarla (Repeat Track): isShuffle = false, repeatMode = RepeatMode.Track
+ * Tekrar basıldığında -> 1. Sırayla durumuna döner.
+ */
+export async function cyclePlaybackMode(): Promise<void> {
+  const store = useStore.getState();
+  const { isShuffle, isSmartShuffle, repeatMode } = store;
+
+  if (isShuffle && !isSmartShuffle) {
+    // 2 (Karıştır) -> 3 (Akıllı Karıştır)
+    store.setRepeatMode(RepeatMode.Off);
+    await TrackPlayer.setRepeatMode(RepeatMode.Off);
+    await setShuffle(true, true);
+  } else if (isShuffle && isSmartShuffle) {
+    // 3 (Akıllı Karıştır) -> 4 (Tek Şarkı Tekrarla)
+    await setShuffle(false, false);
+    store.setRepeatMode(RepeatMode.Track);
+    await TrackPlayer.setRepeatMode(RepeatMode.Track);
+  } else if (!isShuffle && repeatMode === RepeatMode.Track) {
+    // 4 (Tek Şarkı Tekrarla) -> 1 (Sırayla)
+    await setShuffle(false, false);
+    store.setRepeatMode(RepeatMode.Queue);
+    await TrackPlayer.setRepeatMode(RepeatMode.Queue);
+  } else {
+    // 1 (Sırayla) -> 2 (Klasik Karıştır)
+    store.setRepeatMode(RepeatMode.Off);
+    await TrackPlayer.setRepeatMode(RepeatMode.Off);
+    await setShuffle(true, false);
+  }
 }
 
 /**

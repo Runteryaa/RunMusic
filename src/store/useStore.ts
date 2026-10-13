@@ -140,6 +140,8 @@ interface AppState {
 
   isShuffle: boolean;
   setIsShuffle: (isShuffle: boolean) => void;
+  isSmartShuffle: boolean;
+  setIsSmartShuffle: (isSmartShuffle: boolean) => void;
   repeatMode: RepeatMode;
   setRepeatMode: (mode: RepeatMode) => void;
 
@@ -148,7 +150,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 3;
+const PERSIST_VERSION = 4;
 
 export const useStore = create<AppState>()(
   persist(
@@ -280,6 +282,8 @@ export const useStore = create<AppState>()(
 
       isShuffle: false,
       setIsShuffle: (isShuffle) => set({ isShuffle }),
+      isSmartShuffle: false,
+      setIsSmartShuffle: (isSmartShuffle) => set({ isSmartShuffle }),
       repeatMode: RepeatMode.Off,
       setRepeatMode: (repeatMode) => set({ repeatMode }),
 
@@ -307,6 +311,7 @@ export const useStore = create<AppState>()(
           // Tercihler eksik/yarım olabilir (v1 kayıtlarında hiç yoktu). Varsayılanlarla
           // birleştirilir ki ileride eklenecek yeni anahtarlar da güvenle dolsun.
           preferences: { ...DEFAULT_PREFERENCES, ...(incoming.preferences ?? {}) },
+          isSmartShuffle: Boolean(incoming.isSmartShuffle),
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),
         };
 
@@ -320,6 +325,7 @@ export const useStore = create<AppState>()(
         settings: state.settings,
         preferences: state.preferences,
         isShuffle: state.isShuffle,
+        isSmartShuffle: state.isSmartShuffle,
         repeatMode: state.repeatMode,
         hiddenTrackIds: state.hiddenTrackIds,
         artworkMap: state.artworkMap,
