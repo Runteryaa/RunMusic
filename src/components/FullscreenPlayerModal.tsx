@@ -65,8 +65,14 @@ const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
 
 export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
   const insets = useSafeAreaInsets();
-  const { isFullscreenPlayerOpen, closeFullscreenPlayer, isLyricsMode, toggleLyricsMode } =
-    usePlayerUIStore();
+  const {
+    isFullscreenPlayerOpen,
+    closeFullscreenPlayer,
+    isLyricsMode,
+    toggleLyricsMode,
+    isQueueMode,
+    toggleQueueMode,
+  } = usePlayerUIStore();
 
   const theme = useThemeStore((s) => s.theme);
   const activeTrack = useActiveTrack();
@@ -77,11 +83,26 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   useEffect(() => {
     if (!isFullscreenPlayerOpen) return;
     const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isQueueMode) {
+        toggleQueueMode();
+        return true;
+      }
+      if (isLyricsMode) {
+        toggleLyricsMode();
+        return true;
+      }
       closeFullscreenPlayer();
       return true;
     });
     return () => backSub.remove();
-  }, [isFullscreenPlayerOpen, closeFullscreenPlayer]);
+  }, [
+    isFullscreenPlayerOpen,
+    isQueueMode,
+    isLyricsMode,
+    toggleQueueMode,
+    toggleLyricsMode,
+    closeFullscreenPlayer,
+  ]);
 
   // Morph transforms synchronized with expanding card
   const headerMorphY = useMemo(() => {
@@ -164,8 +185,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const [isDragging, setIsDragging] = useState(false);
   const [dragTime, setDragTime] = useState(0);
 
-  // Queue Sheet state
-  const [isQueueModalOpen, setIsQueueModalOpen] = useState(false);
   const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
   const [isSleepTimerModalOpen, setIsSleepTimerModalOpen] = useState(false);
   const [customTimerMinutes, setCustomTimerMinutes] = useState('');
@@ -222,7 +241,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const searchModalPanResponder = createModalPanResponder(() => setIsManualSearchOpen(false));
   const optionsModalPanResponder = createModalPanResponder(() => setIsOptionsModalOpen(false));
-  const queueModalPanResponder = createModalPanResponder(() => setIsQueueModalOpen(false));
   const sleepTimerModalPanResponder = createModalPanResponder(() => setIsSleepTimerModalOpen(false));
 
   // Manual Lyrics Search state
@@ -280,12 +298,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     }
   }, []);
 
-  // Modal açıldığında ve aktif parça değiştiğinde bölümleri tazele.
+  // Kuyruk modu açıldığında ve aktif parça değiştiğinde bölümleri tazele.
   useEffect(() => {
-    if (isQueueModalOpen) {
+    if (isQueueMode) {
       refreshQueueSections();
+      refreshQueue();
     }
-  }, [isQueueModalOpen, activeTrack?.id, refreshQueueSections]);
+  }, [isQueueMode, activeTrack?.id, refreshQueueSections, refreshQueue]);
 
   // Çalınan parça manuel kuyruktan geldiyse listeden düşür.
   useEffect(() => {
@@ -339,7 +358,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       try {
         await TrackPlayer.skip(queueIndex);
         await TrackPlayer.play();
-        setIsQueueModalOpen(false);
       } catch (e) {
         console.warn('Queue skip failed', e);
       }
@@ -357,19 +375,18 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const queueListRef = useRef<FlatList<QueueRow<Track>>>(null);
 
-  // Kuyruk açılınca mevcut parçaya konumlan: geçmiş yukarıda (yukarı kaydırınca
-  // görünür), sıradakiler aşağıda kalır.
+  // Kuyruk açılınca mevcut parçaya konumlan
   useEffect(() => {
-    if (!isQueueModalOpen || currentRowIndex < 0) return;
+    if (!isQueueMode || currentRowIndex < 0) return;
     const timer = setTimeout(() => {
       queueListRef.current?.scrollToIndex({
         index: currentRowIndex,
-        animated: false,
-        viewPosition: 0,
+        animated: true,
+        viewPosition: 0.15,
       });
-    }, 90);
+    }, 120);
     return () => clearTimeout(timer);
-  }, [isQueueModalOpen, currentRowIndex]);
+  }, [isQueueMode, currentRowIndex]);
 
   const handleScrollToIndexFailed = useCallback(
     (info: { index: number; averageItemLength: number }) => {
@@ -958,6 +975,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const artworkScale = useMemo(() => new Animated.Value(1), []);
   const panX = useMemo(() => new Animated.Value(0), []);
   const lyricsTransition = useMemo(() => new Animated.Value(0), []);
+  const queueTransition = useMemo(() => new Animated.Value(0), []);
+  const coverTransition = useMemo(() => new Animated.Value(1), []);
   const playBtnScale = useMemo(() => new Animated.Value(1), []);
   const [isSkipping, setIsSkipping] = useState(false);
 
@@ -975,19 +994,44 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, [playing, artworkScale, reduceMotion]);
 
   useEffect(() => {
+    const isCover = !isLyricsMode && !isQueueMode;
     if (reduceMotion) {
-      // Anında geçiş: yay animasyonu yok.
       lyricsTransition.setValue(isLyricsMode ? 1 : 0);
+      queueTransition.setValue(isQueueMode ? 1 : 0);
+      coverTransition.setValue(isCover ? 1 : 0);
       return;
     }
-    Animated.spring(lyricsTransition, {
-      toValue: isLyricsMode ? 1 : 0,
-      damping: 20,
-      mass: 0.9,
-      stiffness: 150,
-      useNativeDriver: true,
-    }).start();
-  }, [isLyricsMode, lyricsTransition, reduceMotion]);
+    Animated.parallel([
+      Animated.spring(lyricsTransition, {
+        toValue: isLyricsMode ? 1 : 0,
+        damping: 20,
+        mass: 0.9,
+        stiffness: 150,
+        useNativeDriver: true,
+      }),
+      Animated.spring(queueTransition, {
+        toValue: isQueueMode ? 1 : 0,
+        damping: 20,
+        mass: 0.9,
+        stiffness: 150,
+        useNativeDriver: true,
+      }),
+      Animated.spring(coverTransition, {
+        toValue: isCover ? 1 : 0,
+        damping: 20,
+        mass: 0.9,
+        stiffness: 150,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [
+    isLyricsMode,
+    isQueueMode,
+    lyricsTransition,
+    queueTransition,
+    coverTransition,
+    reduceMotion,
+  ]);
 
   const handlePlayPressIn = useCallback(() => {
     Animated.spring(playBtnScale, {
@@ -1105,11 +1149,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => {
-          if (isLyricsMode || isSkipping) return false;
+          if (isLyricsMode || isQueueMode || isSkipping) return false;
           return Math.abs(gesture.dx) > 12 || gesture.dy > 15;
         },
         onMoveShouldSetPanResponderCapture: (_, gesture) => {
-          if (isLyricsMode || isSkipping) return false;
+          if (isLyricsMode || isQueueMode || isSkipping) return false;
           return Math.abs(gesture.dx) > 12 || gesture.dy > 15;
         },
         onPanResponderMove: (_, gesture) => {
@@ -1190,6 +1234,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       }),
     [
       isLyricsMode,
+      isQueueMode,
       isSkipping,
       nextTrack,
       prevTrack,
@@ -1325,27 +1370,27 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             style={[
               styles.coverCenterBox,
               {
-                opacity: lyricsTransition.interpolate({
+                opacity: coverTransition.interpolate({
                   inputRange: [0, 0.45, 1],
-                  outputRange: [1, 0.2, 0],
+                  outputRange: [0, 0.2, 1],
                 }),
                 transform: [
                   {
-                    scale: lyricsTransition.interpolate({
+                    scale: coverTransition.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [1, 0.55],
+                      outputRange: [0.55, 1],
                     }),
                   },
                   {
-                    translateY: lyricsTransition.interpolate({
+                    translateY: coverTransition.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [0, 90],
+                      outputRange: [90, 0],
                     }),
                   },
                 ],
               },
             ]}
-            pointerEvents={isLyricsMode ? 'none' : 'auto'}>
+            pointerEvents={(!isLyricsMode && !isQueueMode) ? 'auto' : 'none'}>
             {/* Önceki Şarkı Kapağı (Soldan süzülen önizleme) */}
             {prevTrack ? (
               <Animated.View
@@ -1646,6 +1691,83 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               </View>
             )}
           </Animated.View>
+
+          {/* 3. Çalma Sırası (Queue) Görünümü (Kapak yerine aynı boyutta yumuşak geçiş) */}
+          <Animated.View
+            style={[
+              styles.queueCardContainer,
+              {
+                opacity: queueTransition,
+                transform: [
+                  {
+                    scale: queueTransition.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.92, 1],
+                    }),
+                  },
+                  { scale: artworkScale },
+                ],
+              },
+            ]}
+            pointerEvents={isQueueMode ? 'auto' : 'none'}>
+            <View style={styles.queueCardHeader}>
+              <View style={[styles.queueSourceBadge, { backgroundColor: theme.surface }]}>
+                <Ionicons name="list" size={13} color={theme.primary} style={{ marginRight: 6 }} />
+                <Text style={[styles.queueSourceText, { color: theme.textAccent }]}>
+                  Çalma Sırası {queue.length > 0 ? `(${queue.length})` : ''}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {currentRowIndex >= 0 ? (
+                  <TouchableOpacity
+                    style={styles.queueLocateBtn}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      if (currentRowIndex >= 0) {
+                        queueListRef.current?.scrollToIndex({
+                          index: currentRowIndex,
+                          animated: true,
+                          viewPosition: 0.15,
+                        });
+                      }
+                    }}>
+                    <Ionicons name="locate-outline" size={13} color={theme.primary} style={{ marginRight: 4 }} />
+                    <Text style={[styles.queueLocateBtnText, { color: theme.primary }]}>Çalana Git</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.queueCardCloseBtn}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  onPress={toggleQueueMode}>
+                  <Ionicons name="close" size={18} color="rgba(255, 255, 255, 0.7)" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <FlatList
+              ref={queueListRef}
+              data={queueRows}
+              keyExtractor={(row) => row.key}
+              renderItem={renderQueueRow}
+              contentContainerStyle={styles.queueScrollContent}
+              showsVerticalScrollIndicator={false}
+              initialNumToRender={12}
+              maxToRenderPerBatch={12}
+              updateCellsBatchingPeriod={50}
+              windowSize={7}
+              onScrollToIndexFailed={handleScrollToIndexFailed}
+              ListEmptyComponent={
+                queueSections ? (
+                  <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+                    <Text style={{ color: '#71717a', fontSize: 14 }}>Kuyruk boş.</Text>
+                  </View>
+                ) : (
+                  <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 24 }} />
+                )
+              }
+            />
+          </Animated.View>
         </Animated.View>
 
         {/* ALT BÖLÜM: Apple Music Şarkı Bilgileri, Scrubber ve Kontroller */}
@@ -1657,23 +1779,29 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <MarqueeText text={displayArtist || ''} style={styles.trackArtist} />
             </View>
 
-            {/* Şarkı Sözleri Modunda Sağ Tarafa Animasyonla Yerleşen Küçük Kapak */}
+            {/* Sözler veya Çalma Sırası Modundayken Sağ Tarafa Animasyonla Yerleşen Küçük Kapak */}
             <Animated.View
               style={{
-                opacity: lyricsTransition,
+                opacity: coverTransition.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [1, 0],
+                }),
                 transform: [
                   {
-                    scale: lyricsTransition.interpolate({
+                    scale: coverTransition.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [0.4, 1],
+                      outputRange: [1, 0.4],
                     }),
                   },
                 ],
               }}
-              pointerEvents={isLyricsMode ? 'auto' : 'none'}>
+              pointerEvents={(!isLyricsMode && !isQueueMode) ? 'none' : 'auto'}>
               <TouchableOpacity
                 activeOpacity={0.8}
-                onPress={toggleLyricsMode}
+                onPress={() => {
+                  if (isQueueMode) toggleQueueMode();
+                  if (isLyricsMode) toggleLyricsMode();
+                }}
                 style={styles.lyricsMiniCoverBtn}>
                 <TrackArtwork
                   uri={currentArtworkUri}
@@ -1814,14 +1942,21 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
             {/* Çalma Sırası Butonu */}
             <TouchableOpacity
-              style={[styles.appleUtilBtn, isQueueModalOpen && styles.appleUtilBtnActive]}
+              style={[
+                styles.appleUtilBtn,
+                isQueueMode && {
+                  backgroundColor: theme.surface,
+                  borderWidth: 1,
+                  borderColor: theme.border,
+                },
+              ]}
               activeOpacity={0.7}
               hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
-              onPress={() => setIsQueueModalOpen(true)}>
+              onPress={toggleQueueMode}>
               <Ionicons
                 name="list"
                 size={22}
-                color="rgba(255, 255, 255, 0.55)"
+                color={isQueueMode ? theme.primary : 'rgba(255, 255, 255, 0.55)'}
               />
             </TouchableOpacity>
           </View>
@@ -2085,61 +2220,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           </Pressable>
         </Modal>
 
-        {/* Çalma Sırası (Queue) Modalı */}
-        <Modal
-          visible={isQueueModalOpen}
-          animationType="slide"
-          transparent
-          onRequestClose={() => setIsQueueModalOpen(false)}>
-          {/* Dışına dokunmak kapatır. */}
-          <Pressable
-            style={styles.queueModalBackdrop}
-            onPress={() => setIsQueueModalOpen(false)}>
-            {/* Kart içindeki dokunuşlar arkaplana sızmasın. */}
-            <Pressable
-              style={styles.queueModalCard}
-              onPress={(e) => e.stopPropagation()}>
-              {/* Aşağı sürükleyerek kapatma BAŞLIK/tutamaç üzerinden yapılır.
-                  Jest tüm arkaplana bağlıyken liste dikey kaydırmayı sahiplendiği
-                  için sürükleme çalışmıyordu; tutamaç görünür olduğu için burası
-                  hem keşfedilebilir hem de listeyle çakışmaz. */}
-              <View style={styles.queueHeader} {...queueModalPanResponder.panHandlers}>
-                <View style={styles.queueHeaderHandle} />
-                <View style={styles.queueHeaderRow}>
-                  <Text style={styles.queueTitle}>Çalma Sırası</Text>
-                  <TouchableOpacity
-                    style={styles.queueCloseBtn}
-                    onPress={() => setIsQueueModalOpen(false)}>
-                    <Ionicons name="close" size={22} color="#ffffff" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              {/* SANALLAŞTIRILMIŞ liste (FlatList). Kütüphane bağlamı binlerce
-                  parça olabildiği için tüm satırları tek seferde çizmek arayüzü
-                  kilitler; FlatList yalnızca görünen penceredekileri oluşturur. */}
-              <FlatList
-                ref={queueListRef}
-                data={queueRows}
-                keyExtractor={(row) => row.key}
-                renderItem={renderQueueRow}
-                contentContainerStyle={styles.queueScrollContent}
-                showsVerticalScrollIndicator={false}
-                initialNumToRender={12}
-                maxToRenderPerBatch={12}
-                updateCellsBatchingPeriod={50}
-                windowSize={7}
-                onScrollToIndexFailed={handleScrollToIndexFailed}
-                ListEmptyComponent={
-                  queueSections ? (
-                    <View style={{ paddingVertical: 32, alignItems: 'center' }}>
-                      <Text style={{ color: '#71717a', fontSize: 14 }}>Kuyruk boş.</Text>
-                    </View>
-                  ) : null
-                }
-              />
-            </Pressable>
-          </Pressable>
-        </Modal>
       </View>
   );
 }
@@ -2713,46 +2793,59 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
-  queueModalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
+  queueCardContainer: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    left: 8,
+    right: 8,
+    alignSelf: 'stretch',
+    borderRadius: 24,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
-  queueModalCard: {
-    backgroundColor: '#18181b',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: '75%',
-    paddingBottom: 24,
-  },
-  queueHeader: {
-    paddingTop: 12,
-    paddingBottom: 16,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#27272a',
-    alignItems: 'center',
-  },
-  queueHeaderHandle: {
-    width: 40,
-    height: 4,
-    backgroundColor: '#3f3f46',
-    borderRadius: 2,
-    marginBottom: 12,
-  },
-  queueHeaderRow: {
+  queueCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    width: '100%',
+    paddingHorizontal: 4,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 4,
   },
-  queueTitle: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: '700',
+  queueSourceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
   },
-  queueCloseBtn: {
-    padding: 4,
+  queueSourceText: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  queueLocateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  queueLocateBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  queueCardCloseBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   queueScrollContent: {
     paddingBottom: 24,
@@ -2762,22 +2855,24 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.8,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 8,
+    paddingHorizontal: 8,
+    paddingTop: 14,
+    paddingBottom: 6,
   },
   queueRemoveAction: {
     width: 72,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 12,
+    marginVertical: 2,
   },
   queueItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#27272a',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginVertical: 2,
   },
   queueItemActive: {
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
@@ -2790,6 +2885,10 @@ const styles = StyleSheet.create({
   },
   queueIndexActive: {
     color: '#ffffff',
+  },
+  queueTrackInfo: {
+    flex: 1,
+    marginHorizontal: 10,
   },
   queueTrackTitle: {
     color: '#ffffff',
