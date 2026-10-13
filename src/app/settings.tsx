@@ -299,8 +299,7 @@ export default function SettingsScreen() {
             ? 'Türkçe'
             : 'English'
         }
-        theme={theme}
-        defaultOpen={true}>
+        theme={theme}>
         <ChipsRow
           theme={theme}
           label={t('settings.language_label')}
