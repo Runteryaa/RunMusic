@@ -1,44 +1,35 @@
 import { Tabs } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Linking from 'expo-linking';
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import TrackPlayer, {
-  AppKilledPlaybackBehavior,
-  Capability,
-  Track,
-  useActiveTrack,
-} from 'react-native-track-player';
+import TrackPlayer, { State, useActiveTrack } from 'react-native-track-player';
 
 import playbackService from '../service';
 
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
-import { getLastPlayback, getQueueSnapshot } from '../services/playbackStorage';
+import { restoreQueueIfNeeded } from '../services/playerBootstrap';
 import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
 import { initSleepTimerService } from '../store/useSleepTimerStore';
+import { initStatsDB } from '../services/statsDatabase';
+
+let MusicWidgetModule: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  MusicWidgetModule = require('../../modules/music-widget/src/MusicWidgetModule').default;
+} catch {
+  // Ignored
+}
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // Register background service
 TrackPlayer.registerPlaybackService(() => playbackService);
-
-/**
- * Bildirimde (ve medya oturumunda) gösterilecek kontroller.
- *
- * `Capability.Stop` KASITLI OLARAK yok: durdurma düğmesi `TrackPlayer.reset()`
- * çağrısına yol açıp çalma sırasını tamamen siliyordu, yani müziği "öldürüyordu".
- * Duraklatma (`Pause`) zaten var ve konumu korur.
- */
-const PLAYBACK_CAPABILITIES = [
-  Capability.Play,
-  Capability.Pause,
-  Capability.SkipToNext,
-  Capability.SkipToPrevious,
-];
 
 function MainAppLayout() {
   useWidgetUpdater();
@@ -136,8 +127,61 @@ function MainAppLayout() {
   );
 }
 
+async function handleWidgetLaunchUrl(url: string | null) {
+  if (!url) return;
+  try {
+    const parsed = Linking.parse(url);
+    const action =
+      (parsed.queryParams?.action as string) || (parsed.queryParams?.widget_action as string);
+    const autoPlay =
+      parsed.queryParams?.autoPlay === 'true' || parsed.queryParams?.auto_play === 'true';
+    const isBackground =
+      parsed.queryParams?.background === 'true' || parsed.queryParams?.open_background === 'true';
+
+    if (action || autoPlay) {
+      await restoreQueueIfNeeded();
+
+      if (action === 'play_pause' || autoPlay) {
+        const state = await TrackPlayer.getPlaybackState();
+        if (state.state === State.Playing && !autoPlay) {
+          await TrackPlayer.pause();
+        } else {
+          await TrackPlayer.play();
+        }
+      } else if (action === 'next') {
+        await TrackPlayer.skipToNext();
+        await TrackPlayer.play();
+      } else if (action === 'prev') {
+        await TrackPlayer.skipToPrevious();
+        await TrackPlayer.play();
+      }
+
+      if (isBackground && MusicWidgetModule?.moveAppToBack) {
+        setTimeout(() => {
+          try {
+            MusicWidgetModule.moveAppToBack();
+          } catch {
+            // ignore
+          }
+        }, 150);
+      }
+    }
+  } catch (err) {
+    console.warn('[handleWidgetLaunchUrl] error:', err);
+  }
+}
+
 export default function TabLayout() {
   const [isPlayerReady, setIsPlayerReady] = useState(false);
+
+  useEffect(() => {
+    const sub = Linking.addEventListener('url', (event) => {
+      handleWidgetLaunchUrl(event.url);
+    });
+    return () => {
+      sub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -160,149 +204,23 @@ export default function TabLayout() {
     async function setup() {
       try {
         try {
-          const { initStatsDB } = require('../services/statsDatabase');
           await initStatsDB();
           initSleepTimerService();
         } catch (dbErr) {
           console.warn('Stats DB init error:', dbErr);
         }
 
-        try {
-          await TrackPlayer.setupPlayer();
-        } catch (setupErr) {
-          // Zaten başlatılmışsa devam et
-          console.warn('TrackPlayer setupPlayer notice:', setupErr);
-        }
+        // Açılışta tam kuyruğu, çalma konumunu ve durumunu geri yükle
+        await restoreQueueIfNeeded();
 
+        // Widget veya deep link ile arka planda başlatıldıysa
         try {
-          const prefs = useStore.getState().preferences;
-          await TrackPlayer.updateOptions({
-            capabilities: PLAYBACK_CAPABILITIES,
-            // Android'de bildirim düğmeleri yalnızca bu listeden üretilir
-            // (bkz. MusicService.kt). Açıkça veriyoruz ki `capabilities`
-            // ileride değişse bile bildirime durdurma düğmesi sızmasın.
-            notificationCapabilities: PLAYBACK_CAPABILITIES,
-            compactCapabilities: [Capability.Play, Capability.Pause],
-            android: {
-              // Uygulama son kullanılanlardan kaydırılıp kapatıldığında ne olsun.
-              appKilledPlaybackBehavior: prefs.keepPlayingWhenAppKilled
-                ? AppKilledPlaybackBehavior.ContinuePlayback
-                : AppKilledPlaybackBehavior.PausePlayback,
-            },
-          });
-          const savedRepeatMode = useStore.getState().repeatMode;
-          if (savedRepeatMode != null) {
-            await TrackPlayer.setRepeatMode(savedRepeatMode);
+          const initialUrl = await Linking.getInitialURL();
+          if (initialUrl) {
+            await handleWidgetLaunchUrl(initialUrl);
           }
-        } catch (optionsErr) {
-          console.warn('TrackPlayer options notice:', optionsErr);
-        }
-
-        // Açılışta tam kuyruğu, çalma konumunu ve kuyruk modelini geri yükle.
-        // (Apple Music / Spotify davranışı: uygulama kapansa da sıra korunur.)
-        try {
-          const [snapshot, lastPlayback] = await Promise.all([
-            Promise.race([
-              getQueueSnapshot(),
-              new Promise<null>((res) => setTimeout(() => res(null), 1500)),
-            ]),
-            Promise.race([
-              getLastPlayback(),
-              new Promise<null>((res) => setTimeout(() => res(null), 1000)),
-            ]),
-          ]);
-
-          const restoreQueue = useStore.getState().preferences.restoreQueueOnLaunch;
-
-          if (restoreQueue && snapshot && snapshot.queue.length > 0) {
-            await TrackPlayer.setQueue(snapshot.queue as Track[]);
-
-            // Kullanıcının en son kaldığı parçanın indeksini bul:
-            // 1. lastPlayback.trackId'ye göre kuyrukta ara
-            // 2. lastPlayback.track nesnesinin id/url'ine göre ara
-            // 3. lastPlayback.trackIndex'i dene (sınırlar içindeyse)
-            // 4. snapshot.activeIndex'i dene
-            let targetIndex = -1;
-            if (lastPlayback?.trackId) {
-              targetIndex = snapshot.queue.findIndex(
-                (t) => (t.id && t.id === lastPlayback.trackId) || (t.url && t.url === lastPlayback.trackId)
-              );
-            }
-            if (targetIndex < 0 && lastPlayback?.track) {
-              const pTrack = lastPlayback.track;
-              targetIndex = snapshot.queue.findIndex(
-                (t) => (t.id && t.id === pTrack.id) || (t.url && t.url === pTrack.url)
-              );
-            }
-            if (
-              targetIndex < 0 &&
-              typeof lastPlayback?.trackIndex === 'number' &&
-              lastPlayback.trackIndex >= 0 &&
-              lastPlayback.trackIndex < snapshot.queue.length
-            ) {
-              targetIndex = lastPlayback.trackIndex;
-            }
-            if (
-              targetIndex < 0 &&
-              typeof snapshot.activeIndex === 'number' &&
-              snapshot.activeIndex >= 0 &&
-              snapshot.activeIndex < snapshot.queue.length
-            ) {
-              targetIndex = snapshot.activeIndex;
-            }
-            if (targetIndex < 0) {
-              targetIndex = 0;
-            }
-
-            if (targetIndex > 0 && targetIndex < snapshot.queue.length) {
-              try {
-                await TrackPlayer.skip(targetIndex);
-              } catch (skipErr) {
-                console.warn('Failed to skip to restored index', targetIndex, skipErr);
-              }
-            }
-
-            // Konum: targetIndex lastPlayback ile eşleştiyse onun pozisyonunu kullan,
-            // aksi halde snapshot.position'ı tercih et.
-            const isMatchedWithLastPlayback =
-              targetIndex >= 0 &&
-              lastPlayback?.trackId &&
-              (snapshot.queue[targetIndex]?.id === lastPlayback.trackId ||
-                snapshot.queue[targetIndex]?.url === lastPlayback.trackId);
-
-            const resumeAt = isMatchedWithLastPlayback
-              ? (lastPlayback?.position ?? snapshot.position)
-              : (snapshot.position ?? lastPlayback?.position ?? 0);
-
-            if (resumeAt && resumeAt > 0) {
-              try {
-                await TrackPlayer.seekTo(resumeAt);
-              } catch (seekErr) {
-                console.warn('Failed to seek to restored position', resumeAt, seekErr);
-              }
-            }
-
-            // Bağlam sırası kayıtta yoksa (eski kayıtlar) kuyruğun kendi sırasını
-            // taban kabul et; aksi halde shuffle kapatılamaz/karıştırılamazdı.
-            const restoredContextIds =
-              snapshot.contextIds && snapshot.contextIds.length > 0
-                ? snapshot.contextIds
-                : snapshot.queue.map((t) => t.id);
-
-            useStore.setState({
-              upNextIds: snapshot.upNextIds ?? [],
-              contextIds: restoredContextIds,
-              isShuffle: Boolean(snapshot.isShuffle),
-            });
-          } else if (lastPlayback && lastPlayback.track) {
-            // Tam kuyruk saklanmamışsa (ör. çok büyük kütüphane) eski davranış.
-            await TrackPlayer.add([lastPlayback.track]);
-            if (lastPlayback.position && lastPlayback.position > 0) {
-              await TrackPlayer.seekTo(lastPlayback.position);
-            }
-          }
-        } catch (restoreErr) {
-          console.warn('Failed to restore playback state', restoreErr);
+        } catch (linkErr) {
+          console.warn('Initial URL handle notice:', linkErr);
         }
       } catch (e) {
         console.warn('Startup setup error', e);

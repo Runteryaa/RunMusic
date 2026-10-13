@@ -1,10 +1,13 @@
 import TrackPlayer, { Event, State } from 'react-native-track-player';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from './services/playbackStorage';
+import { restoreQueueIfNeeded } from './services/playerBootstrap';
+import { useThemeStore } from './store/useThemeStore';
 
 let MusicWidgetModule: any = null;
 try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   MusicWidgetModule = require('../modules/music-widget/src/MusicWidgetModule').default;
-} catch (e) {
+} catch {
   // Ignored
 }
 
@@ -32,19 +35,33 @@ const persistCurrentPlaybackOnPause = async () => {
       );
       await updateQueueSnapshotActiveIndex(activeIndex, position > 0 ? position : 0);
     }
-  } catch (e) {
+  } catch {
     // ignore
   }
 };
 
 export default async function playbackService() {
-  TrackPlayer.addEventListener(Event.RemotePlay, () => TrackPlayer.play());
+  // Arka planda başlatıldığında (ör. widget veya medya düğmesi) oynatıcının ve kuyruğun hazır olduğundan emin ol
+  restoreQueueIfNeeded().catch(() => {});
+
+  TrackPlayer.addEventListener(Event.RemotePlay, async () => {
+    await restoreQueueIfNeeded();
+    await TrackPlayer.play();
+  });
   TrackPlayer.addEventListener(Event.RemotePause, async () => {
     await TrackPlayer.pause();
     await persistCurrentPlaybackOnPause();
   });
-  TrackPlayer.addEventListener(Event.RemoteNext, () => TrackPlayer.skipToNext());
-  TrackPlayer.addEventListener(Event.RemotePrevious, () => TrackPlayer.skipToPrevious());
+  TrackPlayer.addEventListener(Event.RemoteNext, async () => {
+    await restoreQueueIfNeeded();
+    await TrackPlayer.skipToNext();
+    await TrackPlayer.play();
+  });
+  TrackPlayer.addEventListener(Event.RemotePrevious, async () => {
+    await restoreQueueIfNeeded();
+    await TrackPlayer.skipToPrevious();
+    await TrackPlayer.play();
+  });
 
   // Parça değiştiğinde (otomatik geçiş, next/prev, remote vb.) konumu ve aktif indeksi anında kaydet.
   // Bu sayede uygulama kapatılıp açıldığında karışık (shuffled) veya düz kuyruk kaldığı yerden devam eder.
@@ -68,15 +85,48 @@ export default async function playbackService() {
           true
         );
         await updateQueueSnapshotActiveIndex(event.index, 0);
+
+        if (MusicWidgetModule && MusicWidgetModule.updateWidget) {
+          const isPlaying = (await TrackPlayer.getPlaybackState()).state === State.Playing;
+          const theme = useThemeStore.getState().theme;
+          MusicWidgetModule.updateWidget(
+            event.track.title || 'RunMusic',
+            event.track.artist || 'Müzik Çalar',
+            typeof event.track.artwork === 'string' ? event.track.artwork : null,
+            isPlaying,
+            theme.primary || '#212121'
+          );
+        }
       }
     } catch (e) {
       console.warn('PlaybackActiveTrackChanged listener error in service:', e);
     }
   });
 
+  // Çalma durumu değiştiğinde (play/pause) widget simgesini güncelle
+  TrackPlayer.addEventListener(Event.PlaybackState, async (event) => {
+    if (MusicWidgetModule && MusicWidgetModule.updateWidget) {
+      try {
+        const active = await TrackPlayer.getActiveTrack();
+        const isPlaying = event.state === State.Playing;
+        const theme = useThemeStore.getState().theme;
+        MusicWidgetModule.updateWidget(
+          active?.title || 'RunMusic',
+          active?.artist || 'Müzik Çalar',
+          typeof active?.artwork === 'string' ? active?.artwork : null,
+          isPlaying,
+          theme.primary || '#212121'
+        );
+      } catch {
+        // ignore
+      }
+    }
+  });
+
   if (MusicWidgetModule && MusicWidgetModule.addListener) {
     MusicWidgetModule.addListener('onWidgetAction', async (event: { action: string }) => {
       try {
+        await restoreQueueIfNeeded();
         if (event.action === 'play_pause') {
           const state = await TrackPlayer.getPlaybackState();
           if (state.state === State.Playing) {
@@ -87,8 +137,10 @@ export default async function playbackService() {
           }
         } else if (event.action === 'next') {
           await TrackPlayer.skipToNext();
+          await TrackPlayer.play();
         } else if (event.action === 'prev') {
           await TrackPlayer.skipToPrevious();
+          await TrackPlayer.play();
         }
       } catch (e) {
         console.warn('Widget action error in service:', e);

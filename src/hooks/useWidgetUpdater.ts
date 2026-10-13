@@ -5,8 +5,9 @@ import { useThemeStore } from '../store/useThemeStore';
 
 let MusicWidgetModule: any = null;
 try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   MusicWidgetModule = require('../../modules/music-widget/src/MusicWidgetModule').default;
-} catch (e) {
+} catch {
   // Module might not be linked yet during fast refresh or web
 }
 

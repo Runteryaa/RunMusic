@@ -33,6 +33,11 @@ class MusicWidgetModule : Module() {
       instance = null
     }
 
+    Function("moveAppToBack") {
+      val activity = appContext.currentActivity ?: return@Function false
+      activity.moveTaskToBack(true)
+    }
+
     AsyncFunction("updateWidget") { title: String, artist: String, artworkUri: String?, isPlaying: Boolean, bgColorHex: String? ->
       val context = appContext.reactContext ?: return@AsyncFunction
       val appWidgetManager = AppWidgetManager.getInstance(context)

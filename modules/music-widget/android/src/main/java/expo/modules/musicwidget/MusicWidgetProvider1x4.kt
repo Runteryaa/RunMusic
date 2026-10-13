@@ -41,8 +41,10 @@ class MusicWidgetProvider1x4 : AppWidgetProvider() {
         }
 
         private fun getCustomActionPendingIntent(context: Context, actionName: String): PendingIntent {
-            val intent = Intent(context, WidgetActionReceiver::class.java)
-            intent.putExtra("action", actionName)
+            val intent = Intent(context, WidgetActionReceiver::class.java).apply {
+                action = "expo.modules.musicwidget.ACTION_${actionName.uppercase()}"
+                putExtra("action", actionName)
+            }
             val reqCode = actionName.hashCode()
             return PendingIntent.getBroadcast(context, reqCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
