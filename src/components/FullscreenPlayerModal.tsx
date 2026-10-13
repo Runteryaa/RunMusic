@@ -65,12 +65,6 @@ import { Swipeable } from 'react-native-gesture-handler';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
 
-const TIMER_PRESETS = [
-  { min: 15, label: '15 Dakika' },
-  { min: 30, label: '30 Dakika' },
-  { min: 45, label: '45 Dakika' },
-  { min: 60, label: '1 Saat (60 dk)' },
-] as const;
 
 export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
   const insets = useSafeAreaInsets();
@@ -1904,219 +1898,122 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             </View>
 
             <ScrollView
+              style={{ flex: 1 }}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.sleepTimerScrollContent}
               keyboardShouldPersistTaps="handled">
-              {/* Aktif Zamanlayıcı Bilgi Kartı */}
+              {/* Aktif Zamanlayıcı Bilgisi */}
               {isSleepTimerActive ? (
-                <View style={[styles.timerActiveBanner, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-                  <View style={[styles.timerActiveIconBubble, { backgroundColor: `${theme.primary}22` }]}>
-                    <Ionicons name="moon" size={18} color={theme.primary} />
+                <View style={[styles.sleepTimerActiveCard, { backgroundColor: theme.surface }]}>
+                  <View style={[styles.sleepTimerIconGlow, { backgroundColor: `${theme.primary}25` }]}>
+                    <Ionicons name="moon" size={32} color={theme.primary} />
                   </View>
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={[styles.timerActiveSubtitle, { color: theme.textAccent }]}>
-                      Kapanmaya Kalan Süre
-                    </Text>
-                    <Text style={[styles.timerActiveCountdown, { color: theme.primary }]}>
-                      {sleepTimerRemaining || 'Hesaplanıyor...'}
-                    </Text>
-                  </View>
+                  <Text style={styles.sleepTimerActiveTitle}>Zamanlayıcı Aktif</Text>
+                  <Text style={[styles.sleepTimerActiveRemaining, { color: theme.primary }]}>
+                    {sleepTimerRemaining}
+                  </Text>
                   <TouchableOpacity
-                    style={styles.timerCancelBtn}
-                    activeOpacity={0.7}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={styles.stopTimerBtn}
+                    activeOpacity={0.8}
                     onPress={stopTimer}>
-                    <Ionicons name="close-circle" size={15} color="#ef4444" style={{ marginRight: 4 }} />
-                    <Text style={styles.timerCancelBtnText}>İptal</Text>
+                    <Ionicons name="stop-circle-outline" size={17} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={styles.stopTimerBtnText}>İptal Et</Text>
                   </TouchableOpacity>
                 </View>
               ) : null}
 
-              <Text style={styles.queueSectionTitle}>
-                {isSleepTimerActive ? 'SÜREYİ DEĞİŞTİR' : 'ZAMANLAYICI SEÇENEKLERİ'}
+              <Text style={[styles.sleepTimerSectionLabel, { color: theme.textAccent }]}>
+                {isSleepTimerActive ? 'Süreyi Değiştir' : 'Kapanma Süresi Seçin'}
               </Text>
 
-              {/* Sabit Süreler (15, 30, 45, 60 dk) */}
-              {TIMER_PRESETS.map((preset) => {
-                const isSelected = isSleepTimerActive && sleepTimerDurationOption === preset.min;
-                return (
+              {/* Hızlı Seçenekler Grid (15, 30, 45, 60 dk) */}
+              <View style={styles.timerOptionsGrid}>
+                {([15, 30, 45, 60] as const).map((min) => (
                   <TouchableOpacity
-                    key={preset.min}
+                    key={min}
                     style={[
-                      styles.timerRow,
+                      styles.timerOptionBtn,
                       { backgroundColor: theme.surface },
-                      isSelected && {
+                      isSleepTimerActive && sleepTimerDurationOption === min && {
                         borderColor: theme.primary,
-                        backgroundColor: `${theme.primary}18`,
+                        borderWidth: 1.5,
+                        backgroundColor: `${theme.primary}20`,
                       },
                     ]}
-                    activeOpacity={0.7}
-                    onPress={() => startTimer(preset.min, preset.min)}>
-                    <View
-                      style={[
-                        styles.timerRowIconBubble,
-                        {
-                          backgroundColor: isSelected
-                            ? `${theme.primary}25`
-                            : 'rgba(255, 255, 255, 0.06)',
-                        },
-                      ]}>
-                      <Ionicons
-                        name="time-outline"
-                        size={18}
-                        color={isSelected ? theme.primary : 'rgba(255, 255, 255, 0.7)'}
-                      />
-                    </View>
+                    activeOpacity={0.75}
+                    onPress={() => startTimer(min, min)}>
                     <Text
                       style={[
-                        styles.timerRowLabel,
-                        isSelected && { color: theme.primary, fontWeight: '700' },
+                        styles.timerOptionText,
+                        isSleepTimerActive && sleepTimerDurationOption === min && { color: theme.primary },
                       ]}>
-                      {preset.label}
+                      {min} Dakika
                     </Text>
-                    {isSelected ? (
-                      <Ionicons name="checkmark-circle" size={20} color={theme.primary} />
-                    ) : (
-                      <Ionicons name="chevron-forward" size={16} color="rgba(255, 255, 255, 0.2)" />
-                    )}
                   </TouchableOpacity>
-                );
-              })}
+                ))}
+              </View>
 
               {/* Şarkı Bitince Durdur */}
-              {(() => {
-                const isSelected = isSleepTimerActive && sleepTimerDurationOption === 'track';
-                return (
-                  <TouchableOpacity
-                    style={[
-                      styles.timerRow,
-                      { backgroundColor: theme.surface },
-                      isSelected && {
-                        borderColor: theme.primary,
-                        backgroundColor: `${theme.primary}18`,
-                      },
-                    ]}
-                    activeOpacity={0.7}
-                    onPress={startTrackTimer}>
-                    <View
-                      style={[
-                        styles.timerRowIconBubble,
-                        {
-                          backgroundColor: isSelected
-                            ? `${theme.primary}25`
-                            : 'rgba(255, 255, 255, 0.06)',
-                        },
-                      ]}>
-                      <Ionicons
-                        name="musical-notes-outline"
-                        size={18}
-                        color={isSelected ? theme.primary : 'rgba(255, 255, 255, 0.7)'}
-                      />
-                    </View>
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                      <Text
-                        style={[
-                          styles.timerRowLabel,
-                          isSelected && { color: theme.primary, fontWeight: '700' },
-                        ]}>
-                        Şarkı Bitince Durdur
-                      </Text>
-                      <Text style={[styles.timerRowSublabel, { color: theme.textAccent }]}>
-                        Çalan parça tamamlandığında müziği durdurur
-                      </Text>
-                    </View>
-                    {isSelected ? (
-                      <Ionicons name="checkmark-circle" size={20} color={theme.primary} />
-                    ) : (
-                      <Ionicons name="chevron-forward" size={16} color="rgba(255, 255, 255, 0.2)" />
-                    )}
-                  </TouchableOpacity>
-                );
-              })()}
-
-              {/* Özel Süre Belirleme Kartı */}
-              <View
+              <TouchableOpacity
                 style={[
-                  styles.timerCustomCard,
-                  { backgroundColor: theme.surface, borderColor: theme.border },
-                  isSleepTimerActive && sleepTimerDurationOption === 'custom' && {
+                  styles.timerFullWidthBtn,
+                  { backgroundColor: theme.surface },
+                  isSleepTimerActive && sleepTimerDurationOption === 'track' && {
                     borderColor: theme.primary,
-                    backgroundColor: `${theme.primary}12`,
+                    borderWidth: 1.5,
+                    backgroundColor: `${theme.primary}20`,
                   },
-                ]}>
-                <View style={styles.timerCustomTop}>
-                  <View
-                    style={[
-                      styles.timerRowIconBubble,
-                      {
-                        backgroundColor:
-                          isSleepTimerActive && sleepTimerDurationOption === 'custom'
-                            ? `${theme.primary}25`
-                            : 'rgba(255, 255, 255, 0.06)',
-                      },
-                    ]}>
-                    <Ionicons
-                      name="hourglass-outline"
-                      size={18}
-                      color={
-                        isSleepTimerActive && sleepTimerDurationOption === 'custom'
-                          ? theme.primary
-                          : 'rgba(255, 255, 255, 0.7)'
-                      }
-                    />
-                  </View>
+                ]}
+                activeOpacity={0.75}
+                onPress={startTrackTimer}>
+                <Ionicons
+                  name="musical-note"
+                  size={18}
+                  color={isSleepTimerActive && sleepTimerDurationOption === 'track' ? theme.primary : '#ffffff'}
+                  style={{ marginRight: 8 }}
+                />
+                <Text
+                  style={[
+                    styles.timerOptionText,
+                    isSleepTimerActive && sleepTimerDurationOption === 'track' && {
+                      color: theme.primary,
+                    },
+                  ]}>
+                  Şarkı Bitince Durdur
+                </Text>
+              </TouchableOpacity>
+
+              <View style={styles.customTimerRow}>
+                <TextInput
+                  style={[styles.customTimerInput, { backgroundColor: theme.surface }]}
+                  placeholder="Dakika (örn: 20)"
+                  placeholderTextColor="#71717a"
+                  keyboardType="numeric"
+                  value={customTimerMinutes}
+                  onChangeText={setCustomTimerMinutes}
+                />
+                <TouchableOpacity
+                  style={[
+                    styles.customTimerBtn,
+                    { backgroundColor: customTimerMinutes.trim() ? theme.primary : '#27272a' },
+                  ]}
+                  activeOpacity={0.8}
+                  disabled={!customTimerMinutes.trim()}
+                  onPress={() => {
+                    const mins = parseInt(customTimerMinutes, 10);
+                    if (!isNaN(mins) && mins > 0) {
+                      startTimer(mins, 'custom');
+                      setCustomTimerMinutes('');
+                    }
+                  }}>
                   <Text
                     style={[
-                      styles.timerRowLabel,
-                      isSleepTimerActive && sleepTimerDurationOption === 'custom' && {
-                        color: theme.primary,
-                        fontWeight: '700',
-                      },
+                      styles.customTimerBtnText,
+                      { color: customTimerMinutes.trim() ? '#ffffff' : '#71717a' },
                     ]}>
-                    Özel Süre
+                    Başlat
                   </Text>
-                  {isSleepTimerActive && sleepTimerDurationOption === 'custom' ? (
-                    <Ionicons name="checkmark-circle" size={20} color={theme.primary} />
-                  ) : null}
-                </View>
-
-                <View style={styles.timerCustomInputRow}>
-                  <TextInput
-                    style={[styles.timerCustomInput, { color: '#ffffff', borderColor: theme.border }]}
-                    placeholder="Dakika (örn. 25)"
-                    placeholderTextColor="rgba(255, 255, 255, 0.35)"
-                    keyboardType="number-pad"
-                    maxLength={4}
-                    value={customTimerMinutes}
-                    onChangeText={setCustomTimerMinutes}
-                  />
-                  <TouchableOpacity
-                    style={[
-                      styles.timerCustomApplyBtn,
-                      {
-                        backgroundColor: customTimerMinutes.trim()
-                          ? theme.primary
-                          : 'rgba(255, 255, 255, 0.08)',
-                      },
-                    ]}
-                    activeOpacity={0.7}
-                    disabled={!customTimerMinutes.trim()}
-                    onPress={() => {
-                      const mins = parseInt(customTimerMinutes, 10);
-                      if (!isNaN(mins) && mins > 0) {
-                        startTimer(mins, 'custom');
-                        setCustomTimerMinutes('');
-                      }
-                    }}>
-                    <Text
-                      style={[
-                        styles.timerCustomApplyBtnText,
-                        { color: customTimerMinutes.trim() ? '#ffffff' : 'rgba(255, 255, 255, 0.35)' },
-                      ]}>
-                      Başlat
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                </TouchableOpacity>
               </View>
             </ScrollView>
           </Animated.View>
@@ -2917,115 +2814,113 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   sleepTimerScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
     paddingTop: 8,
     paddingBottom: 24,
     paddingHorizontal: 4,
   },
-  timerActiveBanner: {
-    flexDirection: 'row',
+  sleepTimerActiveCard: {
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 14,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    borderRadius: 18,
+    marginBottom: 16,
     borderWidth: 1,
-    marginBottom: 10,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  timerActiveIconBubble: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+  sleepTimerIconGlow: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
     justifyContent: 'center',
     alignItems: 'center',
+    marginBottom: 10,
   },
-  timerActiveSubtitle: {
-    fontSize: 10,
+  sleepTimerActiveTitle: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  sleepTimerActiveRemaining: {
+    fontSize: 22,
+    fontWeight: '700',
+    marginBottom: 14,
+  },
+  sleepTimerSectionLabel: {
+    fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
-    marginBottom: 2,
+    marginBottom: 10,
+    marginTop: 4,
+    paddingHorizontal: 4,
   },
-  timerActiveCountdown: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  timerCancelBtn: {
+  stopTimerBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(239, 68, 68, 0.14)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 12,
   },
-  timerCancelBtnText: {
-    color: '#ef4444',
-    fontSize: 12,
+  stopTimerBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
     fontWeight: '600',
   },
-  timerRow: {
+  timerOptionsGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 11,
-    paddingHorizontal: 12,
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 12,
+  },
+  timerOptionBtn: {
+    flex: 1,
+    minWidth: '45%',
+    backgroundColor: '#27272a',
+    paddingVertical: 14,
     borderRadius: 12,
-    marginVertical: 3,
+    alignItems: 'center',
     borderWidth: 1,
     borderColor: 'transparent',
   },
-  timerRowIconBubble: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  timerRowLabel: {
-    flex: 1,
+  timerOptionText: {
     color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '600',
   },
-  timerRowSublabel: {
-    fontSize: 11,
-    fontWeight: '400',
-    marginTop: 2,
-  },
-  timerCustomCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 12,
-    marginTop: 4,
-    marginBottom: 12,
-  },
-  timerCustomTop: {
+  timerFullWidthBtn: {
     flexDirection: 'row',
+    backgroundColor: '#27272a',
+    paddingVertical: 14,
+    borderRadius: 12,
     alignItems: 'center',
-    marginBottom: 10,
-  },
-  timerCustomInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  timerCustomInput: {
-    flex: 1,
-    height: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    fontSize: 14,
-    fontWeight: '500',
-    borderWidth: 1,
-  },
-  timerCustomApplyBtn: {
-    height: 40,
-    paddingHorizontal: 18,
-    borderRadius: 10,
     justifyContent: 'center',
-    alignItems: 'center',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
-  timerCustomApplyBtnText: {
-    fontSize: 13,
+  customTimerRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  customTimerInput: {
+    flex: 1,
+    backgroundColor: '#27272a',
+    borderRadius: 12,
+    color: '#ffffff',
+    paddingHorizontal: 16,
+    fontSize: 16,
+  },
+  customTimerBtn: {
+    paddingHorizontal: 20,
+    justifyContent: 'center',
+    borderRadius: 12,
+  },
+  customTimerBtnText: {
+    fontSize: 15,
     fontWeight: '600',
   },
   optionsModalBox: {
