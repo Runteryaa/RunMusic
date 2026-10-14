@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo } from 'react';
-import { StyleSheet, Dimensions, Animated as RNAnimated } from 'react-native';
+import { StyleSheet, Dimensions, Animated as RNAnimated, Easing as RNEasing } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
+  withTiming,
   interpolate,
   Extrapolation,
+  Easing,
 } from 'react-native-reanimated';
 import { useActiveTrack } from 'react-native-track-player';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
@@ -43,24 +44,19 @@ export function ExpandingPlayer() {
 
   useEffect(() => {
     const toValue = isFullscreenPlayerOpen ? 1 : 0;
+    const duration = reduceMotion ? 0 : isFullscreenPlayerOpen ? 280 : 240;
+    const easing = Easing.bezier(0.25, 0.1, 0.25, 1);
+    const rnEasing = RNEasing.bezier(0.25, 0.1, 0.25, 1);
 
-    if (reduceMotion) {
-      expandVal.value = toValue;
-      rnExpandAnim.setValue(toValue);
-      return;
-    }
-
-    expandVal.value = withSpring(toValue, {
-      damping: 20,
-      stiffness: 170,
-      mass: 0.9,
-      overshootClamping: false,
+    expandVal.value = withTiming(toValue, {
+      duration,
+      easing,
     });
 
-    RNAnimated.spring(rnExpandAnim, {
+    RNAnimated.timing(rnExpandAnim, {
       toValue,
-      tension: 50,
-      friction: 8,
+      duration,
+      easing: rnEasing,
       useNativeDriver: true,
     }).start();
   }, [isFullscreenPlayerOpen, expandVal, rnExpandAnim, reduceMotion]);
