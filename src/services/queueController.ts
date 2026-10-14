@@ -67,8 +67,9 @@ export function setIsNavigatingHistory(val: boolean): void {
 }
 
 /**
- * Dinlenen bir parçayı dinleme geçmişine (`playedHistory`) ekler.
- * Mükerrer peş peşe eklemeleri önler ve son 50 parça sınırını korur.
+ * Dinlenen bir parçayı geçerli oturumun kuyruk geçmişine (`playedHistory`) ekler.
+ * Yalnızca o oturumda dinlenen parçaları tutar, mükerrer peş peşe eklemeleri önler
+ * ve son 20 parça ile sınırlıdır (sonsuza dek uzamaz).
  */
 export function recordTrackToHistory(track: Track | QueueTrack | null | undefined): void {
   if (!track) return;
@@ -89,7 +90,6 @@ export function recordTrackToHistory(track: Track | QueueTrack | null | undefine
   };
 
   useStore.getState().addToPlayedHistory(item);
-  persistQueue().catch(() => {});
 }
 
 /**
@@ -192,7 +192,6 @@ async function persistQueue(): Promise<void> {
     upNextIds: s.upNextIds,
     contextIds: s.contextIds,
     isShuffle: s.isShuffle,
-    playedHistory: s.playedHistory,
   });
   s.bumpQueueRevision();
 }

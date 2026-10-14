@@ -101,7 +101,6 @@ export interface SavedQueueModel {
   upNextIds: string[];
   contextIds: string[];
   isShuffle: boolean;
-  playedHistory?: SavedTrackItem[];
 }
 
 export interface SavedQueueState extends SavedQueueModel {
@@ -109,7 +108,6 @@ export interface SavedQueueState extends SavedQueueModel {
   activeIndex: number;
   /** Anlık görüntü alındığı andaki çalma konumu (saniye). */
   position: number;
-  playedHistory?: SavedTrackItem[];
 }
 
 /** Aktif kuyruğu ve kuyruk modelini diske yazar. */
@@ -146,7 +144,6 @@ export async function saveQueueSnapshot(model: SavedQueueModel): Promise<void> {
       upNextIds: model.upNextIds,
       contextIds: model.contextIds,
       isShuffle: model.isShuffle,
-      playedHistory: model.playedHistory,
     };
 
     await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(payload));

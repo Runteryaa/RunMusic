@@ -270,7 +270,7 @@ export const useStore = create<AppState>()(
           if (!track || !track.id) return state;
           const last = state.playedHistory[state.playedHistory.length - 1];
           if (last && (last.id === track.id || last.url === track.url)) return state;
-          return { playedHistory: [...state.playedHistory, track].slice(-50) };
+          return { playedHistory: [...state.playedHistory, track].slice(-20) };
         }),
       setPlayedHistory: (playedHistory) => set({ playedHistory }),
       clearPlayedHistory: () => set({ playedHistory: [] }),
