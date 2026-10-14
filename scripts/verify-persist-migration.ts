@@ -420,6 +420,33 @@ const migratedPrefs = { ...defaultPrefs, ...v4StateWithoutLang.preferences };
 check('appLanguage eksik kayıtlarda varsayılan (system) atanıyor', migratedPrefs.appLanguage === 'system');
 check('mevcut kullanıcı tercihleri korunuyor (defaultSortOption)', migratedPrefs.defaultSortOption === 'name_asc');
 
+section('11) v5 -> v6 migrasyonu ve unlockedThemes güvencesi');
+
+const v5State = {
+  preferences: {
+    presetThemeColor: '#ec4899',
+  },
+};
+
+const incomingPrefsV6 = (v5State.preferences && typeof v5State.preferences === 'object')
+  ? (v5State.preferences as Record<string, any>)
+  : {};
+
+const activePresetV6 = incomingPrefsV6.presetThemeColor || '#3b82f6';
+const existingUnlockedV6 = Array.isArray((incomingPrefsV6 as any).unlockedThemes)
+  ? (incomingPrefsV6 as any).unlockedThemes
+  : [];
+const mergedUnlockedV6 = Array.from(new Set(['#3b82f6', activePresetV6, ...existingUnlockedV6]));
+
+check(
+  'unlockedThemes varsayılan olarak mavi rengi içerir',
+  mergedUnlockedV6.includes('#3b82f6')
+);
+check(
+  'aktif seçili tema rengi otomatik olarak açık temalar listesine eklenir',
+  mergedUnlockedV6.includes('#ec4899')
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 section('Sonuç');

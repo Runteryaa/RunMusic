@@ -27,6 +27,7 @@ import { clearUpNextQueue } from '../services/queueController';
 import { syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
 import { useTranslation, type AppLanguage } from '../services/i18n';
 import { AdBanner } from '../components/AdBanner';
+import { showRewardedAd } from '../services/adService';
 
 const GITHUB_URL = 'https://github.com/Runteryaa/RunMusic';
 
@@ -46,6 +47,7 @@ export default function SettingsScreen() {
   const updateSettings = useStore((s) => s.updateSettings);
   const preferences = useStore((s) => s.preferences);
   const updatePreferences = useStore((s) => s.updatePreferences);
+  const unlockTheme = useStore((s) => s.unlockTheme);
   const resetPreferences = useStore((s) => s.resetPreferences);
   const hiddenTrackIds = useStore((s) => s.hiddenTrackIds);
   const allAssets = useStore((s) => s.allAssets);
@@ -62,6 +64,7 @@ export default function SettingsScreen() {
 
   const [isHiddenExpanded, setIsHiddenExpanded] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isLoadingThemeAd, setIsLoadingThemeAd] = useState(false);
   const [storageKB, setStorageKB] = useState<number | null>(null);
 
   const languageOptions = useMemo(
@@ -272,9 +275,70 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleThemePress = (item: (typeof PRESET_THEME_COLORS)[number]) => {
+    const isDefault = item.color.toLowerCase() === '#3b82f6';
+    const isUnlocked =
+      isDefault ||
+      (preferences.unlockedThemes ?? []).some(
+        (c) => c.toLowerCase() === item.color.toLowerCase()
+      );
+
+    if (isUnlocked) {
+      updatePreferences({ presetThemeColor: item.color });
+      useThemeStore.getState().applyPresetTheme(item.color);
+      return;
+    }
+
+    const themeName = t(`themes.${item.id}`) || item.label;
+    Alert.alert(
+      t('settings.unlock_theme_title'),
+      t('settings.unlock_theme_msg', { themeName }),
+      [
+        { text: t('settings.alerts.cancel'), style: 'cancel' },
+        {
+          text: t('settings.unlock_theme_btn'),
+          onPress: async () => {
+            setIsLoadingThemeAd(true);
+            try {
+              const shown = await showRewardedAd({
+                onRewarded: () => {
+                  unlockTheme(item.color);
+                  updatePreferences({ presetThemeColor: item.color });
+                  useThemeStore.getState().applyPresetTheme(item.color);
+                  setTimeout(() => {
+                    Alert.alert(
+                      '🎉 ' + t('settings.unlock_theme_title'),
+                      t('settings.theme_unlocked_success', { themeName })
+                    );
+                  }, 400);
+                },
+                onError: () => {
+                  setIsLoadingThemeAd(false);
+                  Alert.alert(
+                    t('settings.unlock_theme_title'),
+                    t('settings.theme_ad_failed')
+                  );
+                },
+                onClosed: () => {
+                  setIsLoadingThemeAd(false);
+                },
+              });
+              if (!shown) {
+                setIsLoadingThemeAd(false);
+              }
+            } catch {
+              setIsLoadingThemeAd(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-      {/* ── İSTATİSTİKLER VE GEÇMİŞ (EN BAŞTA BUTON) ────────────────────────── */}
+    <View style={{ flex: 1, backgroundColor: '#09090b' }}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+        {/* ── İSTATİSTİKLER VE GEÇMİŞ (EN BAŞTA BUTON) ────────────────────────── */}
       <TouchableOpacity
         style={[styles.statButtonCard, { borderColor: theme.border || '#27272a' }]}
         activeOpacity={0.7}
@@ -408,26 +472,35 @@ export default function SettingsScreen() {
             <View style={styles.paletteGrid}>
               {PRESET_THEME_COLORS.map((item) => {
                 const isSelected = (preferences.presetThemeColor || '#3b82f6') === item.color;
+                const isDefault = item.color.toLowerCase() === '#3b82f6';
+                const isUnlocked =
+                  isDefault ||
+                  (preferences.unlockedThemes ?? []).some(
+                    (c) => c.toLowerCase() === item.color.toLowerCase()
+                  );
+
                 return (
                   <TouchableOpacity
                     key={item.id}
                     activeOpacity={0.7}
-                    onPress={() => {
-                      updatePreferences({ presetThemeColor: item.color });
-                      useThemeStore.getState().applyPresetTheme(item.color);
-                    }}
+                    onPress={() => handleThemePress(item)}
                     style={[
                       styles.paletteItem,
                       isSelected && {
                         borderColor: item.color,
                         backgroundColor: `${item.color}22`,
                       },
+                      !isUnlocked && styles.paletteItemLocked,
                     ]}
                     accessibilityRole="button"
-                    accessibilityLabel={t(`themes.${item.id}`) || item.label}
+                    accessibilityLabel={`${t(`themes.${item.id}`) || item.label} ${!isUnlocked ? `(${t('settings.theme_locked')})` : ''}`}
                     accessibilityState={{ selected: isSelected }}>
                     <View style={[styles.paletteColorCircle, { backgroundColor: item.color }]}>
-                      {isSelected && <Ionicons name="checkmark" size={16} color="#ffffff" />}
+                      {isSelected ? (
+                        <Ionicons name="checkmark" size={16} color="#ffffff" />
+                      ) : !isUnlocked ? (
+                        <Ionicons name="lock-closed" size={12} color="#ffffff" />
+                      ) : null}
                     </View>
                     <Text
                       numberOfLines={1}
@@ -437,6 +510,14 @@ export default function SettingsScreen() {
                       ]}>
                       {t(`themes.${item.id}`) || item.label}
                     </Text>
+                    {!isUnlocked ? (
+                      <View style={styles.paletteLockBadge}>
+                        <Ionicons name="play" size={8} color="#f59e0b" />
+                        <Text style={styles.paletteLockBadgeText}>AD</Text>
+                      </View>
+                    ) : isDefault ? (
+                      <Text style={styles.paletteFreeText}>{t('settings.theme_free')}</Text>
+                    ) : null}
                   </TouchableOpacity>
                 );
               })}
@@ -687,6 +768,16 @@ export default function SettingsScreen() {
       {/* Ad Banner - Sayfa Sonu */}
       <AdBanner style={{ marginTop: 8 }} />
     </ScrollView>
+
+    {isLoadingThemeAd && (
+      <View style={styles.adLoadingOverlay}>
+        <View style={styles.adLoadingCard}>
+          <ActivityIndicator size="large" color={theme.primary} />
+          <Text style={styles.adLoadingText}>{t('settings.unlock_theme_loading')}</Text>
+        </View>
+      </View>
+    )}
+  </View>
   );
 }
 
@@ -1183,5 +1274,53 @@ const styles = StyleSheet.create({
     color: '#d4d4d8',
     fontWeight: '500',
     flex: 1,
+  },
+  paletteItemLocked: {
+    opacity: 0.9,
+    borderStyle: 'dashed',
+  },
+  paletteLockBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 0.5,
+    borderColor: 'rgba(245, 158, 11, 0.4)',
+  },
+  paletteLockBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#f59e0b',
+  },
+  paletteFreeText: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#71717a',
+  },
+  adLoadingOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+  },
+  adLoadingCard: {
+    backgroundColor: '#18181b',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    maxWidth: 240,
+  },
+  adLoadingText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

@@ -60,6 +60,8 @@ export interface AppPreferences {
   presetThemeColor: string;
   /** Bazı animasyonları (duraklatma ölçeği, söz geçişi) kapatır. */
   reduceMotion: boolean;
+  /** Reklam izlenerek veya varsayılan olarak açılmış hazır tema renkleri (hex kodları). */
+  unlockedThemes: string[];
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
@@ -73,6 +75,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   dynamicColorFromArtwork: true,
   presetThemeColor: '#3b82f6',
   reduceMotion: false,
+  unlockedThemes: ['#3b82f6'],
 };
 
 export interface TrackMetadata {
@@ -88,6 +91,7 @@ interface AppState {
 
   preferences: AppPreferences;
   updatePreferences: (patch: Partial<AppPreferences>) => void;
+  unlockTheme: (colorHex: string) => void;
   resetPreferences: () => void;
 
   /** Kapak önbelleğini (dosyalar + harita) temizler. */
@@ -159,7 +163,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 5;
+const PERSIST_VERSION = 6;
 
 export const useStore = create<AppState>()(
   persist(
@@ -244,7 +248,27 @@ export const useStore = create<AppState>()(
       preferences: { ...DEFAULT_PREFERENCES },
       updatePreferences: (patch) =>
         set((state) => ({ preferences: { ...state.preferences, ...patch } })),
-      resetPreferences: () => set({ preferences: { ...DEFAULT_PREFERENCES } }),
+      unlockTheme: (colorHex) =>
+        set((state) => {
+          const current = state.preferences.unlockedThemes || ['#3b82f6'];
+          const normalized = colorHex.toLowerCase();
+          if (current.some((c) => c.toLowerCase() === normalized)) {
+            return state;
+          }
+          return {
+            preferences: {
+              ...state.preferences,
+              unlockedThemes: [...current, colorHex],
+            },
+          };
+        }),
+      resetPreferences: () =>
+        set((state) => ({
+          preferences: {
+            ...DEFAULT_PREFERENCES,
+            unlockedThemes: state.preferences.unlockedThemes ?? DEFAULT_PREFERENCES.unlockedThemes,
+          },
+        })),
 
       clearArtworkCache: () => set({ artworkMap: {} }),
 
@@ -318,11 +342,25 @@ export const useStore = create<AppState>()(
           ? persistedState
           : {}) as Record<string, any>;
 
+        const incomingPrefs = (incoming.preferences && typeof incoming.preferences === 'object')
+          ? incoming.preferences
+          : {};
+
+        const activePreset = incomingPrefs.presetThemeColor || '#3b82f6';
+        const existingUnlocked = Array.isArray(incomingPrefs.unlockedThemes)
+          ? incomingPrefs.unlockedThemes
+          : [];
+        const mergedUnlocked = Array.from(new Set(['#3b82f6', activePreset, ...existingUnlocked]));
+
         const migrated = {
           ...incoming,
           // Tercihler eksik/yarım olabilir (v1 kayıtlarında hiç yoktu). Varsayılanlarla
           // birleştirilir ki ileride eklenecek yeni anahtarlar da güvenle dolsun.
-          preferences: { ...DEFAULT_PREFERENCES, ...(incoming.preferences ?? {}) },
+          preferences: {
+            ...DEFAULT_PREFERENCES,
+            ...incomingPrefs,
+            unlockedThemes: mergedUnlocked,
+          },
           isSmartShuffle: Boolean(incoming.isSmartShuffle),
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),
         };
