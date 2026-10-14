@@ -15,6 +15,7 @@ import {
   Animated,
   PanResponder,
   BackHandler,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -35,6 +36,7 @@ import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
 import { useTranslation } from '../services/i18n';
+import { showRewardedAd } from '../services/adService';
 import {
   LyricLine,
   LyricsResult,
@@ -188,6 +190,12 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const isHydrated = useStore((s) => s.isHydrated);
   const autoFetchLyrics = useStore((s) => s.preferences.autoFetchLyrics);
   const reduceMotion = useStore((s) => s.preferences.reduceMotion);
+  const isDynamicColorUnlocked = useStore((s) => s.preferences.isDynamicColorUnlocked);
+  const hasDismissedDynamicColorBanner = useStore((s) => s.preferences.hasDismissedDynamicColorBanner);
+  const unlockDynamicColor = useStore((s) => s.unlockDynamicColor);
+  const dismissDynamicColorBanner = useStore((s) => s.dismissDynamicColorBanner);
+
+  const [isLoadingDynamicAd, setIsLoadingDynamicAd] = useState(false);
 
   const [barWidth, setBarWidth] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -237,6 +245,41 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const [activeIndex, setActiveIndex] = useState<number>(0);
   /** Kuyruk bölümleri (şu an / sırada / kütüphaneden) — modal açıkken hesaplanır. */
   const [queueSections, setQueueSections] = useState<QueueSections<Track> | null>(null);
+
+  const handleUnlockDynamicColorFromBanner = async () => {
+    setIsLoadingDynamicAd(true);
+    try {
+      const shown = await showRewardedAd({
+        onRewarded: () => {
+          unlockDynamicColor();
+          if (activeTrack) {
+            useThemeStore.getState().updateThemeFromArtwork(activeTrack.artwork || currentArtworkUri);
+          }
+          setTimeout(() => {
+            Alert.alert(
+              '🎉 ' + t('settings.unlock_dynamic_theme_title'),
+              t('settings.dynamic_theme_unlocked_success')
+            );
+          }, 400);
+        },
+        onError: () => {
+          setIsLoadingDynamicAd(false);
+          Alert.alert(
+            t('settings.unlock_dynamic_theme_title'),
+            t('settings.theme_ad_failed')
+          );
+        },
+        onClosed: () => {
+          setIsLoadingDynamicAd(false);
+        },
+      });
+      if (!shown) {
+        setIsLoadingDynamicAd(false);
+      }
+    } catch {
+      setIsLoadingDynamicAd(false);
+    }
+  };
 
   const createModalPanResponder = useCallback((closeFn: () => void) => {
     return PanResponder.create({
@@ -2455,6 +2498,48 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           onClose={() => setIsEditTrackModalOpen(false)}
         />
 
+        {/* Dinamik Renk Keşif Kartı (Snackbar) */}
+        {!isDynamicColorUnlocked && !hasDismissedDynamicColorBanner && !isLyricsMode && !isQueueMode && !isSleepTimerMode && (
+          <View
+            style={[
+              styles.dynamicThemeBanner,
+              { bottom: Math.max(insets.bottom, 16) + 4 },
+            ]}>
+            <View style={styles.dynamicThemeBannerIconBox}>
+              <Ionicons name="sparkles" size={16} color="#f59e0b" />
+            </View>
+            <View style={styles.dynamicThemeBannerTextBox}>
+              <Text style={styles.dynamicThemeBannerTitle}>
+                {t('settings.dynamic_theme_banner_title')}
+              </Text>
+              <Text style={styles.dynamicThemeBannerDesc} numberOfLines={1}>
+                {t('settings.dynamic_theme_banner_desc')}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.dynamicThemeBannerUnlockBtn}
+              activeOpacity={0.8}
+              onPress={handleUnlockDynamicColorFromBanner}>
+              {isLoadingDynamicAd ? (
+                <ActivityIndicator size="small" color="#000000" />
+              ) : (
+                <>
+                  <Ionicons name="play" size={10} color="#000000" />
+                  <Text style={styles.dynamicThemeBannerUnlockText}>
+                    {t('settings.dynamic_theme_banner_unlock')}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.dynamicThemeBannerCloseBtn}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              onPress={dismissDynamicColorBanner}>
+              <Ionicons name="close" size={18} color="rgba(255, 255, 255, 0.6)" />
+            </TouchableOpacity>
+          </View>
+        )}
+
       </View>
   );
 }
@@ -3196,5 +3281,65 @@ const styles = StyleSheet.create({
     color: '#71717a',
     fontSize: 12,
     marginTop: 2,
+  },
+  dynamicThemeBanner: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    backgroundColor: '#18181b',
+    borderWidth: 1.2,
+    borderColor: 'rgba(245, 158, 11, 0.45)',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 999,
+  },
+  dynamicThemeBannerIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dynamicThemeBannerTextBox: {
+    flex: 1,
+  },
+  dynamicThemeBannerTitle: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  dynamicThemeBannerDesc: {
+    color: '#a1a1aa',
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  dynamicThemeBannerUnlockBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f59e0b',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 4,
+  },
+  dynamicThemeBannerUnlockText: {
+    color: '#000000',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  dynamicThemeBannerCloseBtn: {
+    padding: 4,
+    marginLeft: 2,
   },
 });

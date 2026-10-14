@@ -48,6 +48,7 @@ export default function SettingsScreen() {
   const preferences = useStore((s) => s.preferences);
   const updatePreferences = useStore((s) => s.updatePreferences);
   const unlockTheme = useStore((s) => s.unlockTheme);
+  const unlockDynamicColor = useStore((s) => s.unlockDynamicColor);
   const resetPreferences = useStore((s) => s.resetPreferences);
   const hiddenTrackIds = useStore((s) => s.hiddenTrackIds);
   const allAssets = useStore((s) => s.allAssets);
@@ -335,6 +336,54 @@ export default function SettingsScreen() {
     );
   };
 
+  const handleUnlockDynamicColor = () => {
+    Alert.alert(
+      t('settings.unlock_dynamic_theme_title'),
+      t('settings.unlock_dynamic_theme_msg'),
+      [
+        { text: t('settings.alerts.cancel'), style: 'cancel' },
+        {
+          text: t('settings.unlock_theme_btn'),
+          onPress: async () => {
+            setIsLoadingThemeAd(true);
+            try {
+              const shown = await showRewardedAd({
+                onRewarded: () => {
+                  unlockDynamicColor();
+                  const currentArtwork = useThemeStore.getState().currentArtworkUri;
+                  if (currentArtwork) {
+                    useThemeStore.getState().updateThemeFromArtwork(currentArtwork);
+                  }
+                  setTimeout(() => {
+                    Alert.alert(
+                      '🎉 ' + t('settings.unlock_dynamic_theme_title'),
+                      t('settings.dynamic_theme_unlocked_success')
+                    );
+                  }, 400);
+                },
+                onError: () => {
+                  setIsLoadingThemeAd(false);
+                  Alert.alert(
+                    t('settings.unlock_dynamic_theme_title'),
+                    t('settings.theme_ad_failed')
+                  );
+                },
+                onClosed: () => {
+                  setIsLoadingThemeAd(false);
+                },
+              });
+              if (!shown) {
+                setIsLoadingThemeAd(false);
+              }
+            } catch {
+              setIsLoadingThemeAd(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: '#09090b' }}>
       <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
@@ -449,19 +498,37 @@ export default function SettingsScreen() {
 
       {/* ── GÖRÜNÜM ───────────────────────────────────────────────────────── */}
       <Section icon="color-palette-outline" title={t('settings.appearance_section')} theme={theme}>
-        <ToggleRow
-          theme={theme}
-          label={t('settings.dynamic_color')}
-          hint={t('settings.dynamic_color_hint')}
-          value={preferences.dynamicColorFromArtwork}
-          onChange={(v) => {
-            updatePreferences({ dynamicColorFromArtwork: v });
-            if (!v) {
-              const preset = preferences.presetThemeColor || '#3b82f6';
-              useThemeStore.getState().applyPresetTheme(preset);
-            }
-          }}
-        />
+        {preferences.isDynamicColorUnlocked ? (
+          <ToggleRow
+            theme={theme}
+            label={t('settings.dynamic_color')}
+            hint={t('settings.dynamic_color_hint')}
+            value={preferences.dynamicColorFromArtwork}
+            onChange={(v) => {
+              updatePreferences({ dynamicColorFromArtwork: v });
+              if (!v) {
+                const preset = preferences.presetThemeColor || '#3b82f6';
+                useThemeStore.getState().applyPresetTheme(preset);
+              }
+            }}
+          />
+        ) : (
+          <View style={styles.dynamicColorLockedCard}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>{t('settings.dynamic_color')}</Text>
+              <Text style={styles.rowHint}>{t('settings.dynamic_color_hint')}</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.unlockDynamicBtn}
+              activeOpacity={0.7}
+              onPress={handleUnlockDynamicColor}>
+              <Ionicons name="sparkles" size={15} color="#f59e0b" />
+              <Text style={styles.unlockDynamicBtnText}>
+                {t('settings.unlock_dynamic_theme_btn')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {!preferences.dynamicColorFromArtwork && (
           <View style={styles.paletteSection}>
@@ -1322,5 +1389,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     textAlign: 'center',
+  },
+  dynamicColorLockedCard: {
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+    gap: 12,
+  },
+  unlockDynamicBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    alignSelf: 'flex-start',
+  },
+  unlockDynamicBtnText: {
+    color: '#f59e0b',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

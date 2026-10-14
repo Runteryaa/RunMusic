@@ -447,6 +447,28 @@ check(
   mergedUnlockedV6.includes('#ec4899')
 );
 
+section('12) v6 -> v7 migrasyonu ve isDynamicColorUnlocked güvencesi');
+
+const v6State = {
+  preferences: {
+    presetThemeColor: '#3b82f6',
+    unlockedThemes: ['#3b82f6'],
+    // Eski kayıtta isDynamicColorUnlocked yoktu
+  },
+};
+
+const incomingPrefsV7 = (v6State.preferences && typeof v6State.preferences === 'object')
+  ? (v6State.preferences as Record<string, any>)
+  : {};
+
+const isDynamicUnlockedV7 = Boolean(incomingPrefsV7.isDynamicColorUnlocked);
+const dynamicColorFromArtworkV7 = isDynamicUnlockedV7 ? Boolean(incomingPrefsV7.dynamicColorFromArtwork ?? true) : false;
+const hasDismissedBannerV7 = Boolean(incomingPrefsV7.hasDismissedDynamicColorBanner);
+
+check('eski kayıtlarda dinamik renk kilitli başlar (isDynamicColorUnlocked = false)', isDynamicUnlockedV7 === false);
+check('kilitli olduğunda dynamicColorFromArtwork false olur', dynamicColorFromArtworkV7 === false);
+check('tanıtım kartı kapalı değil olarak başlar (hasDismissedDynamicColorBanner = false)', hasDismissedBannerV7 === false);
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 section('Sonuç');

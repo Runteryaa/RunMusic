@@ -62,6 +62,10 @@ export interface AppPreferences {
   reduceMotion: boolean;
   /** Reklam izlenerek veya varsayılan olarak açılmış hazır tema renkleri (hex kodları). */
   unlockedThemes: string[];
+  /** Reklam izlenerek albüm kapağından dinamik renk türetme özelliği açıldı mı. */
+  isDynamicColorUnlocked: boolean;
+  /** Oynatıcıdaki dinamik renk tanıtım kartı kullanıcı tarafından kapatıldı mı. */
+  hasDismissedDynamicColorBanner: boolean;
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
@@ -72,10 +76,12 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   autoFetchLyrics: true,
   lyricsSourcePreference: 'lrclib_first',
   openPlayerWithLyrics: false,
-  dynamicColorFromArtwork: true,
+  dynamicColorFromArtwork: false,
   presetThemeColor: '#3b82f6',
   reduceMotion: false,
   unlockedThemes: ['#3b82f6'],
+  isDynamicColorUnlocked: false,
+  hasDismissedDynamicColorBanner: false,
 };
 
 export interface TrackMetadata {
@@ -92,6 +98,8 @@ interface AppState {
   preferences: AppPreferences;
   updatePreferences: (patch: Partial<AppPreferences>) => void;
   unlockTheme: (colorHex: string) => void;
+  unlockDynamicColor: () => void;
+  dismissDynamicColorBanner: () => void;
   resetPreferences: () => void;
 
   /** Kapak önbelleğini (dosyalar + harita) temizler. */
@@ -163,7 +171,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 6;
+const PERSIST_VERSION = 7;
 
 export const useStore = create<AppState>()(
   persist(
@@ -262,11 +270,28 @@ export const useStore = create<AppState>()(
             },
           };
         }),
+      unlockDynamicColor: () =>
+        set((state) => ({
+          preferences: {
+            ...state.preferences,
+            isDynamicColorUnlocked: true,
+            dynamicColorFromArtwork: true,
+          },
+        })),
+      dismissDynamicColorBanner: () =>
+        set((state) => ({
+          preferences: {
+            ...state.preferences,
+            hasDismissedDynamicColorBanner: true,
+          },
+        })),
       resetPreferences: () =>
         set((state) => ({
           preferences: {
             ...DEFAULT_PREFERENCES,
             unlockedThemes: state.preferences.unlockedThemes ?? DEFAULT_PREFERENCES.unlockedThemes,
+            isDynamicColorUnlocked: state.preferences.isDynamicColorUnlocked ?? false,
+            dynamicColorFromArtwork: state.preferences.isDynamicColorUnlocked ?? false,
           },
         })),
 
@@ -352,6 +377,8 @@ export const useStore = create<AppState>()(
           : [];
         const mergedUnlocked = Array.from(new Set(['#3b82f6', activePreset, ...existingUnlocked]));
 
+        const isDynamicUnlocked = Boolean(incomingPrefs.isDynamicColorUnlocked);
+
         const migrated = {
           ...incoming,
           // Tercihler eksik/yarım olabilir (v1 kayıtlarında hiç yoktu). Varsayılanlarla
@@ -360,6 +387,9 @@ export const useStore = create<AppState>()(
             ...DEFAULT_PREFERENCES,
             ...incomingPrefs,
             unlockedThemes: mergedUnlocked,
+            isDynamicColorUnlocked: isDynamicUnlocked,
+            dynamicColorFromArtwork: isDynamicUnlocked ? Boolean(incomingPrefs.dynamicColorFromArtwork ?? true) : false,
+            hasDismissedDynamicColorBanner: Boolean(incomingPrefs.hasDismissedDynamicColorBanner),
           },
           isSmartShuffle: Boolean(incoming.isSmartShuffle),
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),
