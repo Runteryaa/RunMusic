@@ -16,6 +16,16 @@
         "buildType": "apk"
       }
     },
+    "beta": {
+      "distribution": "internal",
+      "channel": "beta",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_ANDROID_ARCHS": "arm64-v8a"
+      }
+    },
     "production": {
       "autoIncrement": true,
       "channel": "production",

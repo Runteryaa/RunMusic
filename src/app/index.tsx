@@ -23,6 +23,7 @@ import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { EditTrackModal, EditTrackTarget } from '../components/EditTrackModal';
+import { AdBanner } from '../components/AdBanner';
 import { getBatchMetadataAsync, getArtworkAsync } from '../../modules/audio-artwork/src';
 import { cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import {
@@ -702,6 +703,11 @@ export default function LibraryScreen() {
         keyExtractor={(item) => item.asset.id}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          displayedList.length > 0 ? (
+            <AdBanner style={{ marginBottom: 8 }} />
+          ) : null
+        }
         initialNumToRender={15}
         maxToRenderPerBatch={10}
         windowSize={7}

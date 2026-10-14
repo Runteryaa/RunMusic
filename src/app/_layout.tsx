@@ -18,6 +18,7 @@ import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
 import { initSleepTimerService } from '../store/useSleepTimerStore';
 import { initStatsDB } from '../services/statsDatabase';
 import { useTranslation } from '../services/i18n';
+import { initAdService } from '../services/adService';
 
 let MusicWidgetModule: any = null;
 try {
@@ -215,6 +216,7 @@ export default function TabLayout() {
         try {
           await initStatsDB();
           initSleepTimerService();
+          initAdService().catch((adErr) => console.warn('Ad service init notice:', adErr));
         } catch (dbErr) {
           console.warn('Stats DB init error:', dbErr);
         }

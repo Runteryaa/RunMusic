@@ -26,6 +26,7 @@ import { getPersistedSizeKB } from '../services/persistStorage';
 import { clearUpNextQueue } from '../services/queueController';
 import { syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
 import { useTranslation, type AppLanguage } from '../services/i18n';
+import { showTestInterstitial } from '../services/adService';
 
 const GITHUB_URL = 'https://github.com/Runteryaa/RunMusic';
 
@@ -628,7 +629,14 @@ export default function SettingsScreen() {
         <View style={styles.detailsBox}>
           <DetailRow label={t('common.version')} value={`v${Constants.expoConfig?.version || '1.0.0'}`} />
           <DetailRow label={t('common.runtime')} value={Updates.runtimeVersion || '1.0.0'} />
-          <DetailRow label={resolvedLanguage === 'tr' ? 'Kanal' : 'Channel'} value={Updates.channel || 'production'} />
+          <DetailRow
+            label={resolvedLanguage === 'tr' ? 'Kanal' : 'Channel'}
+            value={Updates.channel || (Constants.expoConfig?.updates as { channel?: string } | undefined)?.channel || 'beta'}
+          />
+          <DetailRow
+            label={resolvedLanguage === 'tr' ? 'Reklamlar' : 'Ads'}
+            value={resolvedLanguage === 'tr' ? 'AdMob Test (Aktif)' : 'AdMob Test (Active)'}
+          />
           <DetailRow
             label={t('common.active_bundle')}
             value={
@@ -648,6 +656,26 @@ export default function SettingsScreen() {
             />
           ) : null}
         </View>
+
+        <TouchableOpacity
+          style={[styles.primaryBtn, { backgroundColor: '#27272a', marginBottom: 10 }]}
+          activeOpacity={0.7}
+          onPress={() => {
+            const shown = showTestInterstitial();
+            if (!shown) {
+              Alert.alert(
+                resolvedLanguage === 'tr' ? 'Test Reklamı' : 'Test Ad',
+                resolvedLanguage === 'tr'
+                  ? 'Geçiş reklamı hazırlanıyor. Birkaç saniye içinde tekrar dokunun.'
+                  : 'Interstitial ad is loading. Tap again in a few seconds.'
+              );
+            }
+          }}>
+          <Ionicons name="megaphone-outline" size={16} color={theme.primary} />
+          <Text style={[styles.primaryBtnText, { color: '#ffffff' }]}>
+            {resolvedLanguage === 'tr' ? 'Test Geçiş Reklamını Göster' : 'Show Test Interstitial'}
+          </Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.primaryBtn, { backgroundColor: theme.primary }]}

@@ -2,7 +2,7 @@ name: Build Android APK & Release
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, beta ]
   workflow_dispatch:
 
 permissions:
@@ -43,7 +43,15 @@ jobs:
         run: npm install --legacy-peer-deps
 
       - name: 🚀 Publish EAS Update (OTA)
-        run: npx eas-cli update --branch production --platform android --environment production --non-interactive -m "Automated OTA update from CI"
+        run: |
+          TARGET_BRANCH="${GITHUB_REF_NAME}"
+          if [ "$TARGET_BRANCH" = "beta" ]; then
+            UPDATE_BRANCH="beta"
+          else
+            UPDATE_BRANCH="production"
+          fi
+          echo "Publishing EAS Update for branch: $UPDATE_BRANCH"
+          npx eas-cli update --branch $UPDATE_BRANCH --platform android --environment production --non-interactive -m "Automated OTA update from CI ($UPDATE_BRANCH)"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EAS_SKIP_AUTO_FINGERPRINT: 1
@@ -59,8 +67,14 @@ jobs:
           sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
           grep -q 'reactNativeArchitectures' android/gradle.properties || echo 'reactNativeArchitectures=arm64-v8a' >> android/gradle.properties
 
-          # Ensure EXPO_UPDATES_CHANNEL is defined in AndroidManifest.xml
-          sed -i 's|</application>|    <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHANNEL" android:value="production"/>\n  </application>|' android/app/src/main/AndroidManifest.xml
+          TARGET_BRANCH="${GITHUB_REF_NAME}"
+          if [ "$TARGET_BRANCH" = "beta" ]; then
+            UPDATE_CHANNEL="beta"
+          else
+            UPDATE_CHANNEL="production"
+          fi
+          echo "Setting EXPO_UPDATES_CHANNEL to $UPDATE_CHANNEL"
+          sed -i "s|</application>|    <meta-data android:name=\"expo.modules.updates.EXPO_UPDATES_CHANNEL\" android:value=\"$UPDATE_CHANNEL\"/>\n  </application>|" android/app/src/main/AndroidManifest.xml
 
           echo "--- Configured gradle.properties & AndroidManifest.xml ---"
           grep -E '(newArch|reactNativeArchitectures)' android/gradle.properties
@@ -83,10 +97,10 @@ jobs:
       - name: 🏷 Create Release & Upload APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: RunMusic v1.0.${{ github.run_number }}
+          tag_name: ${{ github.ref_name == 'beta' && format('v1.0.{0}-beta', github.run_number) || format('v1.0.{0}', github.run_number) }}
+          name: ${{ github.ref_name == 'beta' && format('RunMusic Beta v1.0.{0}', github.run_number) || format('RunMusic v1.0.{0}', github.run_number) }}
           body: |
-            runmusic
+            RunMusic ${{ github.ref_name == 'beta' && 'Beta (AdMob Test Ads & Beta OTA updates)' || 'Production Release' }}
           files: android/app/build/outputs/apk/release/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
