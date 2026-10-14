@@ -36,9 +36,6 @@ export async function initAdService(): Promise<void> {
     await mobileAds().initialize();
     isInitialized = true;
     console.log('[AdService] Google Mobile Ads initialized successfully');
-
-    // Preload first interstitial ad
-    preloadInterstitial();
   } catch (err) {
     console.warn('[AdService] Failed to initialize Mobile Ads:', err);
   }

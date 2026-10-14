@@ -26,7 +26,7 @@ import { getPersistedSizeKB } from '../services/persistStorage';
 import { clearUpNextQueue } from '../services/queueController';
 import { syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
 import { useTranslation, type AppLanguage } from '../services/i18n';
-import { showTestInterstitial } from '../services/adService';
+import { AdBanner } from '../components/AdBanner';
 
 const GITHUB_URL = 'https://github.com/Runteryaa/RunMusic';
 
@@ -288,6 +288,9 @@ export default function SettingsScreen() {
         </View>
         <Ionicons name="chevron-forward" size={20} color="#a1a1aa" style={{ marginLeft: 8 }} />
       </TouchableOpacity>
+
+      {/* Ad Banner - Ayarlar Başı */}
+      <AdBanner style={{ marginBottom: 12 }} />
 
       {/* ── DİL (LANGUAGE) ─────────────────────────────────────────────────── */}
       <Section
@@ -577,6 +580,9 @@ export default function SettingsScreen() {
         ) : null}
       </View>
 
+      {/* Ad Banner - Orta Bölüm */}
+      <AdBanner style={{ marginVertical: 8 }} />
+
       {/* ── VERİ VE BAKIM ─────────────────────────────────────────────────── */}
       <Section icon="server-outline" title={t('settings.data_section')} theme={theme}>
         <View style={styles.row}>
@@ -658,26 +664,6 @@ export default function SettingsScreen() {
         </View>
 
         <TouchableOpacity
-          style={[styles.primaryBtn, { backgroundColor: '#27272a', marginBottom: 10 }]}
-          activeOpacity={0.7}
-          onPress={() => {
-            const shown = showTestInterstitial();
-            if (!shown) {
-              Alert.alert(
-                resolvedLanguage === 'tr' ? 'Test Reklamı' : 'Test Ad',
-                resolvedLanguage === 'tr'
-                  ? 'Geçiş reklamı hazırlanıyor. Birkaç saniye içinde tekrar dokunun.'
-                  : 'Interstitial ad is loading. Tap again in a few seconds.'
-              );
-            }
-          }}>
-          <Ionicons name="megaphone-outline" size={16} color={theme.primary} />
-          <Text style={[styles.primaryBtnText, { color: '#ffffff' }]}>
-            {resolvedLanguage === 'tr' ? 'Test Geçiş Reklamını Göster' : 'Show Test Interstitial'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
           style={[styles.primaryBtn, { backgroundColor: theme.primary }]}
           activeOpacity={0.7}
           onPress={handleCheckUpdate}
@@ -700,6 +686,9 @@ export default function SettingsScreen() {
           onPress={() => Linking.openURL(GITHUB_URL).catch(() => {})}
         />
       </Section>
+
+      {/* Ad Banner - Sayfa Sonu */}
+      <AdBanner style={{ marginTop: 8 }} />
     </ScrollView>
   );
 }

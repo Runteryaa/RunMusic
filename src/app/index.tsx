@@ -537,7 +537,13 @@ export default function LibraryScreen() {
     setIsSearchOpen(false);
   };
 
-  const renderItem = ({ item }: { item: { asset: MediaLibrary.Asset; info: { title: string; artist: string } } }) => {
+  const renderItem = ({
+    item,
+    index,
+  }: {
+    item: { asset: MediaLibrary.Asset; info: { title: string; artist: string } };
+    index: number;
+  }) => {
     const { asset, info } = item;
     const isPlayingCurrent =
       activeTrack && (activeTrack.id === asset.id || activeTrack.url === asset.uri);
@@ -550,75 +556,81 @@ export default function LibraryScreen() {
     );
 
     return (
-      <Swipeable
-        renderLeftActions={renderLeftActions}
-        friction={2}
-        leftThreshold={40}
-        activeOffsetX={[-25, 25]}
-        failOffsetY={[-15, 15]}
-        onSwipeableOpen={(direction) => {
-          if (direction === 'left') {
-            handleAddToQueue(asset);
-          }
-        }}>
-        <View
-          style={[
-            styles.trackItem,
-            isPlayingCurrent && [
-              styles.trackItemPlaying,
-              { borderColor: theme.border, backgroundColor: theme.surface },
-            ],
-          ]}>
-          <TouchableOpacity
-            style={styles.trackMainContent}
-            activeOpacity={0.7}
-            onPress={() => playTrack(asset)}>
-            <View style={{ marginRight: 12 }}>
-              <TrackArtwork
-                uri={metadataMap[asset.id]?.artwork || artworkMap[asset.id]}
-                trackId={asset.id}
-                trackUri={asset.uri}
-                size={44}
-                borderRadius={10}
-                iconSize={20}
-              />
-            </View>
-            <View style={styles.trackInfo}>
-              <View style={styles.titleRow}>
-                {isPlayingCurrent ? (
-                  <Ionicons
-                    name="volume-high"
-                    size={16}
-                    color={theme.primary}
-                    style={{ marginRight: 6 }}
-                  />
-                ) : null}
-                <Text
-                  style={[
-                    styles.trackTitle,
-                    isPlayingCurrent && [styles.trackTitlePlaying, { color: theme.primary }],
-                  ]}
-                  numberOfLines={1}>
-                  {info.title}
+      <View key={`track-row-${asset.id}`}>
+        <Swipeable
+          renderLeftActions={renderLeftActions}
+          friction={2}
+          leftThreshold={40}
+          activeOffsetX={[-25, 25]}
+          failOffsetY={[-15, 15]}
+          onSwipeableOpen={(direction) => {
+            if (direction === 'left') {
+              handleAddToQueue(asset);
+            }
+          }}>
+          <View
+            style={[
+              styles.trackItem,
+              isPlayingCurrent && [
+                styles.trackItemPlaying,
+                { borderColor: theme.border, backgroundColor: theme.surface },
+              ],
+            ]}>
+            <TouchableOpacity
+              style={styles.trackMainContent}
+              activeOpacity={0.7}
+              onPress={() => playTrack(asset)}>
+              <View style={{ marginRight: 12 }}>
+                <TrackArtwork
+                  uri={metadataMap[asset.id]?.artwork || artworkMap[asset.id]}
+                  trackId={asset.id}
+                  trackUri={asset.uri}
+                  size={44}
+                  borderRadius={10}
+                  iconSize={20}
+                />
+              </View>
+              <View style={styles.trackInfo}>
+                <View style={styles.titleRow}>
+                  {isPlayingCurrent ? (
+                    <Ionicons
+                      name="volume-high"
+                      size={16}
+                      color={theme.primary}
+                      style={{ marginRight: 6 }}
+                    />
+                  ) : null}
+                  <Text
+                    style={[
+                      styles.trackTitle,
+                      isPlayingCurrent && [styles.trackTitlePlaying, { color: theme.primary }],
+                    ]}
+                    numberOfLines={1}>
+                    {info.title}
+                  </Text>
+                </View>
+                <Text style={styles.trackDuration} numberOfLines={1}>
+                  {Math.floor(asset.duration / 60)}:
+                  {Math.floor(asset.duration % 60)
+                    .toString()
+                    .padStart(2, '0')}
+                  {info.artist ? ` • ${info.artist}` : ''}
                 </Text>
               </View>
-              <Text style={styles.trackDuration} numberOfLines={1}>
-                {Math.floor(asset.duration / 60)}:
-                {Math.floor(asset.duration % 60)
-                  .toString()
-                  .padStart(2, '0')}
-                {info.artist ? ` • ${info.artist}` : ''}
-              </Text>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.trackMoreBtn}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            onPress={() => setSelectedTrackForMenu(asset)}>
-            <Ionicons name="ellipsis-vertical" size={18} color="#a1a1aa" />
-          </TouchableOpacity>
-        </View>
-      </Swipeable>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.trackMoreBtn}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              onPress={() => setSelectedTrackForMenu(asset)}>
+              <Ionicons name="ellipsis-vertical" size={18} color="#a1a1aa" />
+            </TouchableOpacity>
+          </View>
+        </Swipeable>
+        {/* Her 15 şarkıda bir araya zararsız banner reklam (son şarkı hariç) */}
+        {(index + 1) % 15 === 0 && index !== displayedList.length - 1 ? (
+          <AdBanner style={{ marginVertical: 6 }} />
+        ) : null}
+      </View>
     );
   };
 
@@ -706,6 +718,11 @@ export default function LibraryScreen() {
         ListHeaderComponent={
           displayedList.length > 0 ? (
             <AdBanner style={{ marginBottom: 8 }} />
+          ) : null
+        }
+        ListFooterComponent={
+          displayedList.length > 0 ? (
+            <AdBanner style={{ marginTop: 8 }} />
           ) : null
         }
         initialNumToRender={15}

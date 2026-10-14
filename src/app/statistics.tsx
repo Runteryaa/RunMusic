@@ -7,6 +7,7 @@ import { getRecentHistory, getMostPlayed, getTotalListeningTime, PlayHistoryItem
 import { useThemeStore } from '../store/useThemeStore';
 import { useStore } from '../store/useStore';
 import { TrackArtwork } from '../components/TrackArtwork';
+import { AdBanner } from '../components/AdBanner';
 import { cleanDisplayTitle } from '../services/lyricsService';
 import { useTranslation } from '../services/i18n';
 
@@ -177,6 +178,9 @@ export default function StatisticsScreen() {
         >
           {activeTab === 'overview' ? (
             <>
+              {/* Ad Banner - Sayfa Başı */}
+              <AdBanner style={{ marginBottom: 12 }} />
+
               {/* Total Time Card */}
               <View style={styles.card}>
                 <Ionicons name="time-outline" size={32} color={theme.primary} />
@@ -212,6 +216,9 @@ export default function StatisticsScreen() {
                 )}
               </View>
 
+              {/* Ad Banner - Orta Bölüm */}
+              <AdBanner style={{ marginVertical: 8 }} />
+
               {/* Most Played All Time */}
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>
@@ -230,10 +237,16 @@ export default function StatisticsScreen() {
                   <Text style={styles.emptyText}>{t('stats.no_data')}</Text>
                 )}
               </View>
+
+              {/* Ad Banner - Sayfa Sonu */}
+              <AdBanner style={{ marginTop: 8 }} />
             </>
           ) : (
             /* History Tab */
             <View style={styles.section}>
+              {/* Ad Banner - Geçmiş Başı */}
+              <AdBanner style={{ marginBottom: 12 }} />
+
               {recentHistory.length > 0 ? (
                 recentHistory.map((item, idx) => {
                   const date = new Date(item.played_at);
@@ -243,13 +256,23 @@ export default function StatisticsScreen() {
                     hour: '2-digit',
                     minute: '2-digit',
                   });
-                  return renderTrackItem(item.track_id, dateStr, undefined, `hist-${item.played_at}-${idx}`);
+                  return (
+                    <React.Fragment key={`hist-${item.played_at}-${idx}`}>
+                      {renderTrackItem(item.track_id, dateStr, undefined, `hist-${item.played_at}-${idx}`)}
+                      {(idx + 1) % 15 === 0 && idx !== recentHistory.length - 1 ? (
+                        <AdBanner style={{ marginVertical: 6 }} />
+                      ) : null}
+                    </React.Fragment>
+                  );
                 })
               ) : (
                 <Text style={styles.emptyText}>
                   {t('stats.history_empty')}
                 </Text>
               )}
+
+              {/* Ad Banner - Geçmiş Sonu */}
+              {recentHistory.length > 0 && <AdBanner style={{ marginTop: 8 }} />}
             </View>
           )}
         </ScrollView>
