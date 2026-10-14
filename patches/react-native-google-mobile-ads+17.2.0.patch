@@ -1,0 +1,53 @@
+diff --git a/node_modules/react-native-google-mobile-ads/android/app-json.gradle b/node_modules/react-native-google-mobile-ads/android/app-json.gradle
+index 9ec38fc..654c8fe 100644
+--- a/node_modules/react-native-google-mobile-ads/android/app-json.gradle
++++ b/node_modules/react-native-google-mobile-ads/android/app-json.gradle
+@@ -50,7 +50,7 @@ if (jsonFile != null && jsonFile.exists()) {
+       }
+     }
+   } else {
+-    rootProject.ext.googleAdsJson = false
++    rootProject.ext.googleMobileAdsJson = false
+     rootProject.logger.info ":${project.name} ${fileName} found with no ${jsonRoot} config, skipping"
+     android {
+       defaultConfig {
+diff --git a/node_modules/react-native-google-mobile-ads/android/build.gradle b/node_modules/react-native-google-mobile-ads/android/build.gradle
+index e7fcf93..c2a4fae 100644
+--- a/node_modules/react-native-google-mobile-ads/android/build.gradle
++++ b/node_modules/react-native-google-mobile-ads/android/build.gradle
+@@ -81,16 +81,7 @@ def isNewArchitectureDisabled() {
+     return !isNewArchitectureDisabled()
+ }
+ 
+-if (isNewArchitectureDisabled()) {
+-    throw new GradleException(
+-      "react-native-google-mobile-ads v17 requires React Native's New Architecture. " +
+-      "Remove the explicit old-architecture opt-out or set newArchEnabled=true in android/gradle.properties."
+-    )
+-}
+-
+-if (isNewArchitectureEnabled()) {
+-    apply plugin: "com.facebook.react"
+-}
++apply plugin: "com.facebook.react"
+ 
+ project.ext {
+   set('react-native', [
+@@ -119,7 +110,7 @@ apply from: file("./app-json.gradle")
+ 
+ def requestedAndroidBackend = (
+   project.findProperty("RNGMA_ANDROID_BACKEND") ?:
+-    (rootProject.ext.googleMobileAdsJson
++    ((rootProject.ext.has("googleMobileAdsJson") && rootProject.ext.googleMobileAdsJson)
+       ? rootProject.ext.googleMobileAdsJson.getStringValue("android_sdk", "classic")
+       : "classic")
+ ).toString().toLowerCase()
+@@ -160,6 +151,8 @@ if (!appJSONGoogleMobileAdsAppIDString) {
+ }
+ 
+ android {
++  compileSdk jsonCompileSdk
++
+   defaultConfig {
+     multiDexEnabled true
+     manifestPlaceholders = [
