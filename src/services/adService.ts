@@ -7,6 +7,7 @@ import mobileAds, {
   AdEventType,
 } from 'react-native-google-mobile-ads';
 import TrackPlayer, { State } from 'react-native-track-player';
+import { useStore } from '../store/useStore';
 
 /**
  * AdMob Ad Unit IDs
@@ -97,6 +98,10 @@ export function preloadInterstitial(): void {
  * Returns true if the ad was shown.
  */
 export function showInterstitialIfReady(): boolean {
+  if (useStore.getState().preferences?.isDevModeActive) {
+    return false;
+  }
+
   const now = Date.now();
   if (!isInterstitialLoaded || !interstitialInstance) {
     preloadInterstitial();
@@ -121,6 +126,10 @@ export function showInterstitialIfReady(): boolean {
  * Force shows the preloaded test interstitial ad (ignoring cooldown) for testing purposes
  */
 export function showTestInterstitial(): boolean {
+  if (useStore.getState().preferences?.isDevModeActive) {
+    return false;
+  }
+
   if (interstitialInstance && isInterstitialLoaded) {
     try {
       interstitialInstance.show();
@@ -202,6 +211,12 @@ export interface ShowRewardedOptions {
  */
 export async function showRewardedAd(options: ShowRewardedOptions): Promise<boolean> {
   const { onRewarded, onClosed, onError } = options;
+
+  if (useStore.getState().preferences?.isDevModeActive) {
+    onRewarded();
+    onClosed?.();
+    return true;
+  }
 
   let wasPlaying = false;
   const pausePlayback = async () => {

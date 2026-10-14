@@ -66,6 +66,8 @@ export interface AppPreferences {
   isDynamicColorUnlocked: boolean;
   /** Oynatıcıdaki dinamik renk tanıtım kartı kullanıcı tarafından kapatıldı mı. */
   hasDismissedDynamicColorBanner: boolean;
+  /** Gizli geliştirici modu: Tüm reklamları kapatır ve kilitleri kaldırır. */
+  isDevModeActive: boolean;
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
@@ -82,6 +84,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   unlockedThemes: ['#3b82f6'],
   isDynamicColorUnlocked: false,
   hasDismissedDynamicColorBanner: false,
+  isDevModeActive: false,
 };
 
 export interface TrackMetadata {
@@ -100,6 +103,7 @@ interface AppState {
   unlockTheme: (colorHex: string) => void;
   unlockDynamicColor: () => void;
   dismissDynamicColorBanner: () => void;
+  toggleDevMode: () => boolean;
   resetPreferences: () => void;
 
   /** Kapak önbelleğini (dosyalar + harita) temizler. */
@@ -171,7 +175,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 7;
+const PERSIST_VERSION = 8;
 
 export const useStore = create<AppState>()(
   persist(
@@ -285,6 +289,19 @@ export const useStore = create<AppState>()(
             hasDismissedDynamicColorBanner: true,
           },
         })),
+      toggleDevMode: () => {
+        let next = false;
+        set((state) => {
+          next = !state.preferences.isDevModeActive;
+          return {
+            preferences: {
+              ...state.preferences,
+              isDevModeActive: next,
+            },
+          };
+        });
+        return next;
+      },
       resetPreferences: () =>
         set((state) => ({
           preferences: {
@@ -292,6 +309,7 @@ export const useStore = create<AppState>()(
             unlockedThemes: state.preferences.unlockedThemes ?? DEFAULT_PREFERENCES.unlockedThemes,
             isDynamicColorUnlocked: state.preferences.isDynamicColorUnlocked ?? false,
             dynamicColorFromArtwork: state.preferences.isDynamicColorUnlocked ?? false,
+            isDevModeActive: state.preferences.isDevModeActive ?? false,
           },
         })),
 
@@ -378,6 +396,7 @@ export const useStore = create<AppState>()(
         const mergedUnlocked = Array.from(new Set(['#3b82f6', activePreset, ...existingUnlocked]));
 
         const isDynamicUnlocked = Boolean(incomingPrefs.isDynamicColorUnlocked);
+        const isDevMode = Boolean(incomingPrefs.isDevModeActive);
 
         const migrated = {
           ...incoming,
@@ -390,6 +409,7 @@ export const useStore = create<AppState>()(
             isDynamicColorUnlocked: isDynamicUnlocked,
             dynamicColorFromArtwork: isDynamicUnlocked ? Boolean(incomingPrefs.dynamicColorFromArtwork ?? true) : false,
             hasDismissedDynamicColorBanner: Boolean(incomingPrefs.hasDismissedDynamicColorBanner),
+            isDevModeActive: isDevMode,
           },
           isSmartShuffle: Boolean(incoming.isSmartShuffle),
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),

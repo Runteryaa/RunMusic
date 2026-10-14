@@ -469,6 +469,23 @@ check('eski kayıtlarda dinamik renk kilitli başlar (isDynamicColorUnlocked = f
 check('kilitli olduğunda dynamicColorFromArtwork false olur', dynamicColorFromArtworkV7 === false);
 check('tanıtım kartı kapalı değil olarak başlar (hasDismissedDynamicColorBanner = false)', hasDismissedBannerV7 === false);
 
+section('13) v7 -> v8 migrasyonu ve isDevModeActive güvencesi');
+
+const v7State = {
+  preferences: {
+    presetThemeColor: '#3b82f6',
+    isDynamicColorUnlocked: true,
+    // isDevModeActive eski kayıtlarda yok
+  },
+};
+
+const incomingPrefsV8 = (v7State.preferences && typeof v7State.preferences === 'object')
+  ? (v7State.preferences as Record<string, any>)
+  : {};
+
+const isDevModeV8 = Boolean(incomingPrefsV8.isDevModeActive);
+check('eski kayıtlarda dev mode varsayılan olarak kapalıdır (isDevModeActive = false)', isDevModeV8 === false);
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 section('Sonuç');

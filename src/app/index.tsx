@@ -66,6 +66,7 @@ export default function LibraryScreen() {
   const isSmartShuffle = useStore((s) => s.isSmartShuffle);
   const preferences = useStore((s) => s.preferences);
   const updatePreferences = useStore((s) => s.updatePreferences);
+  const toggleDevMode = useStore((s) => s.toggleDevMode);
 
   const openFullscreenPlayer = usePlayerUIStore((s) => s.openFullscreenPlayer);
   const activeTrack = useActiveTrack();
@@ -537,6 +538,15 @@ export default function LibraryScreen() {
     setIsSearchOpen(false);
   };
 
+  const handleSearchChange = (text: string) => {
+    if (text.trim().toLowerCase() === '#runterya#') {
+      closeSearch();
+      toggleDevMode();
+      return;
+    }
+    setSearchQuery(text);
+  };
+
   const renderItem = ({
     item,
     index,
@@ -649,7 +659,7 @@ export default function LibraryScreen() {
               placeholder={t('library.search_placeholder')}
               placeholderTextColor="#71717a"
               value={searchQuery}
-              onChangeText={setSearchQuery}
+              onChangeText={handleSearchChange}
               autoFocus
             />
             {searchQuery.length > 0 && (

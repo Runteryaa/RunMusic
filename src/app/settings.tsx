@@ -280,6 +280,7 @@ export default function SettingsScreen() {
     const isDefault = item.color.toLowerCase() === '#3b82f6';
     const isUnlocked =
       isDefault ||
+      preferences.isDevModeActive ||
       (preferences.unlockedThemes ?? []).some(
         (c) => c.toLowerCase() === item.color.toLowerCase()
       );
@@ -498,7 +499,7 @@ export default function SettingsScreen() {
 
       {/* ── GÖRÜNÜM ───────────────────────────────────────────────────────── */}
       <Section icon="color-palette-outline" title={t('settings.appearance_section')} theme={theme}>
-        {preferences.isDynamicColorUnlocked ? (
+        {preferences.isDynamicColorUnlocked || preferences.isDevModeActive ? (
           <ToggleRow
             theme={theme}
             label={t('settings.dynamic_color')}
@@ -542,6 +543,7 @@ export default function SettingsScreen() {
                 const isDefault = item.color.toLowerCase() === '#3b82f6';
                 const isUnlocked =
                   isDefault ||
+                  preferences.isDevModeActive ||
                   (preferences.unlockedThemes ?? []).some(
                     (c) => c.toLowerCase() === item.color.toLowerCase()
                   );
@@ -786,7 +788,15 @@ export default function SettingsScreen() {
           />
           <DetailRow
             label={resolvedLanguage === 'tr' ? 'Reklamlar' : 'Ads'}
-            value={resolvedLanguage === 'tr' ? 'AdMob Test (Aktif)' : 'AdMob Test (Active)'}
+            value={
+              preferences.isDevModeActive
+                ? resolvedLanguage === 'tr'
+                  ? 'Dev Modu (Kapalı)'
+                  : 'Dev Mode (Disabled)'
+                : resolvedLanguage === 'tr'
+                ? 'AdMob Test (Aktif)'
+                : 'AdMob Test (Active)'
+            }
           />
           <DetailRow
             label={t('common.active_bundle')}

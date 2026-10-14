@@ -98,7 +98,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   updateThemeFromArtwork: async (uri) => {
     // "Kapaktan renk türet" kapalıysa veya kapak yoksa kullanıcının seçtiği hazır tema rengi kullanılır.
     const prefs = useStore.getState().preferences;
-    const dynamic = Boolean(prefs?.isDynamicColorUnlocked && prefs?.dynamicColorFromArtwork);
+    const dynamic = Boolean((prefs?.isDynamicColorUnlocked || prefs?.isDevModeActive) && prefs?.dynamicColorFromArtwork);
     const activeColor = prefs?.presetThemeColor || '#3b82f6';
     const fallbackTheme = createThemeFromHex(activeColor);
 
@@ -126,7 +126,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       const extractedTheme = await extractThemeFromImageUri(uri);
       // Şarkı veya tercih değişmediyse aktif olana uygula
       const currentPrefs = useStore.getState().preferences;
-      const isDynamicActive = Boolean(currentPrefs?.isDynamicColorUnlocked && currentPrefs?.dynamicColorFromArtwork);
+      const isDynamicActive = Boolean((currentPrefs?.isDynamicColorUnlocked || currentPrefs?.isDevModeActive) && currentPrefs?.dynamicColorFromArtwork);
       if (
         get().currentArtworkUri === uri &&
         isDynamicActive
@@ -154,7 +154,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   applyPresetTheme: (colorHex: string) => {
     const theme = createThemeFromHex(colorHex);
     const prefs = useStore.getState().preferences;
-    const dynamic = Boolean(prefs?.isDynamicColorUnlocked && prefs?.dynamicColorFromArtwork);
+    const dynamic = Boolean((prefs?.isDynamicColorUnlocked || prefs?.isDevModeActive) && prefs?.dynamicColorFromArtwork);
     if (!dynamic || !get().currentArtworkUri) {
       set({ currentArtworkUri: null });
       animateThemeTransition(

@@ -3,6 +3,7 @@ import { StyleSheet, View, Text, StyleProp, ViewStyle } from 'react-native';
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { AD_UNIT_IDS } from '../services/adService';
 import { useThemeStore } from '../store/useThemeStore';
+import { useStore } from '../store/useStore';
 
 interface AdBannerProps {
   style?: StyleProp<ViewStyle>;
@@ -13,8 +14,9 @@ export function AdBanner({ style, size = BannerAdSize.ANCHORED_ADAPTIVE_BANNER }
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
   const theme = useThemeStore((s) => s.theme);
+  const isDevModeActive = useStore((s) => s.preferences.isDevModeActive);
 
-  if (hasError) {
+  if (isDevModeActive || hasError) {
     return null;
   }
 

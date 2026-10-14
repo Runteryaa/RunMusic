@@ -191,6 +191,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const autoFetchLyrics = useStore((s) => s.preferences.autoFetchLyrics);
   const reduceMotion = useStore((s) => s.preferences.reduceMotion);
   const isDynamicColorUnlocked = useStore((s) => s.preferences.isDynamicColorUnlocked);
+  const isDevModeActive = useStore((s) => s.preferences.isDevModeActive);
   const hasDismissedDynamicColorBanner = useStore((s) => s.preferences.hasDismissedDynamicColorBanner);
   const unlockDynamicColor = useStore((s) => s.unlockDynamicColor);
   const dismissDynamicColorBanner = useStore((s) => s.dismissDynamicColorBanner);
@@ -2499,7 +2500,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         />
 
         {/* Dinamik Renk Keşif Kartı (Snackbar) */}
-        {!isDynamicColorUnlocked && !hasDismissedDynamicColorBanner && !isLyricsMode && !isQueueMode && !isSleepTimerMode && (
+        {!isDynamicColorUnlocked && !isDevModeActive && !hasDismissedDynamicColorBanner && !isLyricsMode && !isQueueMode && !isSleepTimerMode && (
           <View
             style={[
               styles.dynamicThemeBanner,
