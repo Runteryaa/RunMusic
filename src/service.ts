@@ -45,22 +45,47 @@ export default async function playbackService() {
   restoreQueueIfNeeded().catch(() => {});
 
   TrackPlayer.addEventListener(Event.RemotePlay, async () => {
-    await restoreQueueIfNeeded();
-    await TrackPlayer.play();
+    try {
+      await restoreQueueIfNeeded();
+      await TrackPlayer.play();
+    } catch (e) {
+      console.warn('RemotePlay error in service:', e);
+    }
   });
   TrackPlayer.addEventListener(Event.RemotePause, async () => {
-    await TrackPlayer.pause();
-    await persistCurrentPlaybackOnPause();
+    try {
+      await TrackPlayer.pause();
+      await persistCurrentPlaybackOnPause();
+    } catch (e) {
+      console.warn('RemotePause error in service:', e);
+    }
   });
   TrackPlayer.addEventListener(Event.RemoteNext, async () => {
-    await restoreQueueIfNeeded();
-    await TrackPlayer.skipToNext();
-    await TrackPlayer.play();
+    try {
+      await restoreQueueIfNeeded();
+      await TrackPlayer.skipToNext();
+      await TrackPlayer.play();
+    } catch (e) {
+      console.warn('RemoteNext error in service:', e);
+    }
   });
   TrackPlayer.addEventListener(Event.RemotePrevious, async () => {
-    await restoreQueueIfNeeded();
-    await TrackPlayer.skipToPrevious();
-    await TrackPlayer.play();
+    try {
+      await restoreQueueIfNeeded();
+      await TrackPlayer.skipToPrevious();
+      await TrackPlayer.play();
+    } catch (e) {
+      console.warn('RemotePrevious error in service:', e);
+    }
+  });
+  TrackPlayer.addEventListener(Event.RemoteSeek, async (event) => {
+    try {
+      if (typeof event.position === 'number') {
+        await TrackPlayer.seekTo(event.position);
+      }
+    } catch (e) {
+      console.warn('RemoteSeek error in service:', e);
+    }
   });
 
   // Parça değiştiğinde (otomatik geçiş, next/prev, remote vb.) konumu ve aktif indeksi anında kaydet.

@@ -15,26 +15,53 @@ try {
   // Ignored
 }
 
-export const PLAYBACK_CAPABILITIES = [
+export const PLAYBACK_CAPABILITIES: Capability[] = [
+  Capability.Play,
+  Capability.Pause,
+  Capability.SkipToNext,
+  Capability.SkipToPrevious,
+  Capability.SeekTo,
+];
+
+export const NOTIFICATION_CAPABILITIES: Capability[] = [
+  Capability.Play,
+  Capability.Pause,
+  Capability.SkipToNext,
+  Capability.SkipToPrevious,
+  Capability.SeekTo,
+];
+
+export const COMPACT_CAPABILITIES: Capability[] = [
   Capability.Play,
   Capability.Pause,
   Capability.SkipToNext,
   Capability.SkipToPrevious,
 ];
 
+export function getTrackPlayerOptions(keepPlaying?: boolean) {
+  const shouldKeepPlaying =
+    keepPlaying !== undefined
+      ? keepPlaying
+      : useStore.getState().preferences?.keepPlayingWhenAppKilled ?? true;
+
+  return {
+    capabilities: PLAYBACK_CAPABILITIES,
+    notificationCapabilities: NOTIFICATION_CAPABILITIES,
+    compactCapabilities: COMPACT_CAPABILITIES,
+    progressUpdateEventInterval: 2,
+    android: {
+      appKilledPlaybackBehavior: shouldKeepPlaying
+        ? AppKilledPlaybackBehavior.ContinuePlayback
+        : AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
+    },
+  };
+}
+
 export async function syncAppKilledPlaybackBehavior(keepPlaying?: boolean): Promise<void> {
   try {
-    const shouldKeepPlaying =
-      keepPlaying !== undefined
-        ? keepPlaying
-        : useStore.getState().preferences?.keepPlayingWhenAppKilled ?? true;
-    await TrackPlayer.updateOptions({
-      android: {
-        appKilledPlaybackBehavior: shouldKeepPlaying
-          ? AppKilledPlaybackBehavior.ContinuePlayback
-          : AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
-      },
-    });
+    const isReady = await setupTrackPlayerIfNeeded();
+    if (!isReady) return;
+    await TrackPlayer.updateOptions(getTrackPlayerOptions(keepPlaying));
   } catch (e) {
     console.warn('[playerBootstrap] syncAppKilledPlaybackBehavior error:', e);
   }
@@ -61,17 +88,7 @@ export async function setupTrackPlayerIfNeeded(): Promise<boolean> {
     }
 
     try {
-      const prefs = useStore.getState().preferences;
-      await TrackPlayer.updateOptions({
-        capabilities: PLAYBACK_CAPABILITIES,
-        notificationCapabilities: PLAYBACK_CAPABILITIES,
-        compactCapabilities: [Capability.Play, Capability.Pause],
-        android: {
-          appKilledPlaybackBehavior: prefs?.keepPlayingWhenAppKilled
-            ? AppKilledPlaybackBehavior.ContinuePlayback
-            : AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
-        },
-      });
+      await TrackPlayer.updateOptions(getTrackPlayerOptions());
 
       const savedRepeatMode = useStore.getState().repeatMode;
       if (savedRepeatMode != null) {
