@@ -19,6 +19,8 @@ import { initSleepTimerService } from '../store/useSleepTimerStore';
 import { initStatsDB } from '../services/statsDatabase';
 import { useTranslation } from '../services/i18n';
 import { initAdService } from '../services/adService';
+import * as Font from 'expo-font';
+import { getCachedLibrary } from '../services/libraryStorage';
 
 let MusicWidgetModule: any = null;
 try {
@@ -213,6 +215,21 @@ export default function TabLayout() {
 
     async function setup() {
       try {
+        try {
+          await Font.loadAsync(Ionicons.font);
+        } catch (fontErr) {
+          console.warn('Font load notice:', fontErr);
+        }
+
+        try {
+          const cached = await getCachedLibrary();
+          if (cached && cached.length > 0 && useStore.getState().library.length === 0) {
+            useStore.getState().setLibrary(cached);
+          }
+        } catch (cacheErr) {
+          console.warn('Library cache pre-hydrate notice:', cacheErr);
+        }
+
         try {
           await initStatsDB();
           initSleepTimerService();

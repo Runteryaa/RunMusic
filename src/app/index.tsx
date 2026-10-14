@@ -73,6 +73,7 @@ export default function LibraryScreen() {
   const activeTrack = useActiveTrack();
 
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [hasScannedOnce, setHasScannedOnce] = useState(library.length > 0);
 
   const sortOptions: SortItem[] = useMemo(
     () => [
@@ -336,6 +337,7 @@ export default function LibraryScreen() {
       Alert.alert(t('library.scan_error_title'), e?.message || t('library.scan_error_msg'));
     } finally {
       setIsScanning(false);
+      setHasScannedOnce(true);
     }
   }, [settings, setLibrary, setIsScanning, setBatchTrackMetadata, t]);
 
@@ -343,15 +345,18 @@ export default function LibraryScreen() {
   useEffect(() => {
     let isMounted = true;
     (async () => {
-      try {
-        const cached = await getCachedLibrary();
-        if (isMounted && cached && cached.length > 0) {
-          if (useStore.getState().library.length === 0) {
+      if (useStore.getState().library.length === 0) {
+        try {
+          const cached = await getCachedLibrary();
+          if (isMounted && cached && cached.length > 0) {
             setLibrary(cached);
+            setHasScannedOnce(true);
           }
+        } catch (err) {
+          console.warn('Initial cached library load error:', err);
         }
-      } catch (err) {
-        console.warn('Initial cached library load error:', err);
+      } else {
+        setHasScannedOnce(true);
       }
       if (isMounted) {
         scanMedia();
@@ -770,10 +775,12 @@ export default function LibraryScreen() {
           />
         }
         ListEmptyComponent={
-          isScanning ? (
+          (isScanning || !hasScannedOnce) ? (
             <View style={styles.centerBox}>
               <ActivityIndicator size="large" color={theme.primary} />
-              <Text style={[styles.statusText, { color: theme.primary }]}>{statusMessage}</Text>
+              <Text style={[styles.statusText, { color: theme.primary }]}>
+                {statusMessage || t('library.scanning')}
+              </Text>
             </View>
           ) : (
             <View style={styles.centerBox}>
