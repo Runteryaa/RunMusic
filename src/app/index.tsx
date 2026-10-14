@@ -35,6 +35,7 @@ import {
 import { compareAddedDate, type SortOption } from '../services/librarySort';
 import { normalizeSearchText } from '../services/searchUtils';
 import { useTranslation } from '../services/i18n';
+import { getCachedLibrary, saveCachedLibrary } from '../services/libraryStorage';
 
 interface SortItem {
   id: SortOption;
@@ -184,6 +185,7 @@ export default function LibraryScreen() {
               if (success) {
                 const updatedLibrary = useStore.getState().library.filter(a => a.id !== asset.id);
                 useStore.getState().setLibrary(updatedLibrary);
+                saveCachedLibrary(updatedLibrary).catch(() => {});
                 
                 try {
                   const currentActive = await TrackPlayer.getActiveTrack();
@@ -255,7 +257,7 @@ export default function LibraryScreen() {
 
         // Olay döngüsüne nefes payı ver (kullanıcı tab değiştirebilsin, playerı açabilsin)
         if (hasNextPage) {
-          await new Promise((r) => setTimeout(r, 0));
+          await new Promise((r) => setTimeout(r, 16));
         }
       }
 
@@ -291,15 +293,16 @@ export default function LibraryScreen() {
 
         validAudio.push(asset);
 
-        // Her 250 dosyada bir JS thread'ini rahatlat
-        if (i % 250 === 0 && i > 0) {
-          await new Promise((r) => setTimeout(r, 0));
+        // Her 100 dosyada bir JS thread'ini rahatlat
+        if (i % 100 === 0 && i > 0) {
+          await new Promise((r) => setTimeout(r, 10));
         }
       }
 
       // Kütüphane listesini güncellemeden önce bekleyen arayüz etkileşimlerine yer aç
       await new Promise((r) => setTimeout(r, 0));
       setLibrary(validAudio);
+      saveCachedLibrary(validAudio).catch(() => {});
       setStatusMessage(t('library.songs_found', { count: validAudio.length }));
 
       // Background extraction of missing metadata & artworks (nefes payı ve tek seferlik toplu kayıt ile)
@@ -336,11 +339,28 @@ export default function LibraryScreen() {
     }
   }, [settings, setLibrary, setIsScanning, setBatchTrackMetadata, t]);
 
-  // Yalnızca kütüphane boşken ilk açılışta tara; her renderda veya length değişiminde tekrar tetikleme
+  // İlk açılışta önbellekten anında oku (0ms), ardından kütüphaneyi arka planda tara ve güncelle
   useEffect(() => {
-    if (library.length === 0) {
-      scanMedia();
-    }
+    let isMounted = true;
+    (async () => {
+      try {
+        const cached = await getCachedLibrary();
+        if (isMounted && cached && cached.length > 0) {
+          if (useStore.getState().library.length === 0) {
+            setLibrary(cached);
+          }
+        }
+      } catch (err) {
+        console.warn('Initial cached library load error:', err);
+      }
+      if (isMounted) {
+        scanMedia();
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -674,7 +694,9 @@ export default function LibraryScreen() {
           <View>
             <Text style={styles.headerTitle}>{t('library.title')}</Text>
             <Text style={styles.headerSubtitle}>
-              {library.length} {t('library.songs_registered')}
+              {isScanning && library.length > 0
+                ? t('library.updating_library')
+                : `${library.length} ${t('library.songs_registered')}`}
             </Text>
           </View>
           <View style={styles.headerRightActions}>

@@ -146,7 +146,7 @@ export async function restoreQueueIfNeeded(): Promise<boolean> {
         targetIndex = 0;
       }
 
-      if (targetIndex > 0 && targetIndex < snapshot.queue.length) {
+      if (targetIndex >= 0 && targetIndex < snapshot.queue.length) {
         try {
           await TrackPlayer.skip(targetIndex);
         } catch (skipErr) {
@@ -203,6 +203,11 @@ export async function restoreQueueIfNeeded(): Promise<boolean> {
       return true;
     } else if (lastPlayback && lastPlayback.track) {
       await TrackPlayer.add([lastPlayback.track]);
+      try {
+        await TrackPlayer.skip(0);
+      } catch {
+        // ignore
+      }
       if (lastPlayback.position && lastPlayback.position > 0) {
         await TrackPlayer.seekTo(lastPlayback.position);
       }
