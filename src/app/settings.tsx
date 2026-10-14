@@ -580,9 +580,6 @@ export default function SettingsScreen() {
         ) : null}
       </View>
 
-      {/* Ad Banner - Orta Bölüm */}
-      <AdBanner style={{ marginVertical: 8 }} />
-
       {/* ── VERİ VE BAKIM ─────────────────────────────────────────────────── */}
       <Section icon="server-outline" title={t('settings.data_section')} theme={theme}>
         <View style={styles.row}>

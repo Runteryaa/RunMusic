@@ -721,8 +721,8 @@ export default function LibraryScreen() {
           ) : null
         }
         ListFooterComponent={
-          displayedList.length > 0 ? (
-            <AdBanner style={{ marginTop: 8 }} />
+          displayedList.length >= 20 ? (
+            <AdBanner style={{ marginTop: 8, marginBottom: 16 }} />
           ) : null
         }
         initialNumToRender={15}

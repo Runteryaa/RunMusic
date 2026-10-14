@@ -216,9 +216,6 @@ export default function StatisticsScreen() {
                 )}
               </View>
 
-              {/* Ad Banner - Orta Bölüm */}
-              <AdBanner style={{ marginVertical: 8 }} />
-
               {/* Most Played All Time */}
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>
@@ -271,8 +268,8 @@ export default function StatisticsScreen() {
                 </Text>
               )}
 
-              {/* Ad Banner - Geçmiş Sonu */}
-              {recentHistory.length > 0 && <AdBanner style={{ marginTop: 8 }} />}
+              {/* Ad Banner - Geçmiş Sonu (Yalnızca 20 ve üzeri geçmiş kaydı varsa) */}
+              {recentHistory.length >= 20 && <AdBanner style={{ marginTop: 8 }} />}
             </View>
           )}
         </ScrollView>
