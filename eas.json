@@ -14,8 +14,11 @@
       "channel": "preview"
     },
     "production": {
-      "autoIncrement": false,
-      "channel": "production"
+      "autoIncrement": true,
+      "channel": "production",
+      "android": {
+        "buildType": "app-bundle"
+      }
     }
   }
 }
