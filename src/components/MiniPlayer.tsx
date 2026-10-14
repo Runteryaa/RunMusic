@@ -22,6 +22,7 @@ import { TrackArtwork } from './TrackArtwork';
 import { MarqueeText } from './ui/MarqueeText';
 import { cleanYouTubeTitle, cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
+import { skipToPreviousTrack } from '../services/queueController';
 import { useTranslation } from '../services/i18n';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -142,8 +143,7 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
 
   const gestureSkipPrev = useCallback(async () => {
     try {
-      await TrackPlayer.skipToPrevious();
-      await TrackPlayer.play();
+      await skipToPreviousTrack();
     } catch (e) {
       console.warn('Gesture skip prev failed', e);
     } finally {

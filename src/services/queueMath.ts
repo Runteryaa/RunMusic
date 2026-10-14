@@ -171,7 +171,8 @@ export function smartShuffleArray<T extends QueueTrackLike>(
 export function deriveQueueSections<T extends QueueTrackLike>(
   queue: T[],
   activeIndex: number,
-  upNextIds: string[]
+  upNextIds: string[],
+  playedHistory?: T[]
 ): QueueSections<T> {
   const pending = new Set(upNextIds);
 
@@ -180,11 +181,28 @@ export function deriveQueueSections<T extends QueueTrackLike>(
       ? { index: activeIndex, track: queue[activeIndex] }
       : null;
 
-  // Geçmiş: en eskiden en yeniye. Kullanıcı yukarı kaydırdığında hemen üstünde
-  // bir önceki parçayı görsün diye artan indeks sırasında tutulur.
-  // Mevcut parça geçerli değilse (indeks aralık dışı) geçmiş de boş kalır.
+  // Geçmiş: Gerçek dinleme geçmişi sağlandıysa, dinlenme sırasına göre (eskiden yeniye).
+  // Sağlanmadıysa (fallback), geriye dönük uyumluluk için activeIndex'ten önceki parçalar.
   const history: QueueEntry<T>[] = [];
-  if (current) {
+  if (Array.isArray(playedHistory)) {
+    const queueIndexMap = new Map<string, number>();
+    queue.forEach((t, i) => {
+      const k = trackKey(t);
+      if (k && !queueIndexMap.has(k)) {
+        queueIndexMap.set(k, i);
+      }
+    });
+
+    const currentKey = current ? trackKey(current.track) : '';
+
+    for (let i = 0; i < playedHistory.length; i++) {
+      const t = playedHistory[i];
+      const k = trackKey(t);
+      if (k && k === currentKey) continue;
+      const idx = queueIndexMap.get(k) ?? i;
+      history.push({ index: idx, track: t });
+    }
+  } else if (current) {
     for (let i = 0; i < activeIndex; i++) {
       history.push({ index: i, track: queue[i] });
     }
@@ -316,7 +334,7 @@ export function computeUpcomingOrder<T extends QueueTrackLike>(params: {
  */
 export type QueueRow<T> =
   | { kind: 'section'; key: string; title: string }
-  | { kind: 'history'; key: string; entry: QueueEntry<T> }
+  | { kind: 'history'; key: string; entry: QueueEntry<T>; historyIndex: number }
   | { kind: 'current'; key: string; entry: QueueEntry<T> }
   | { kind: 'upnext'; key: string }
   | { kind: 'context'; key: string; entry: QueueEntry<T> };
@@ -352,11 +370,13 @@ export function buildQueueRows<T extends QueueTrackLike>(
       key: 'sec-history',
       title: `${historyPrefix} · ${sections.history.length}`,
     });
-    for (const entry of sections.history) {
+    for (let i = 0; i < sections.history.length; i++) {
+      const entry = sections.history[i];
       rows.push({
         kind: 'history',
-        key: `hist-${entry.index}-${trackKey(entry.track)}`,
+        key: `hist-${i}-${trackKey(entry.track)}`,
         entry,
+        historyIndex: i,
       });
     }
   }

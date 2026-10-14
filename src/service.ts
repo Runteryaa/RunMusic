@@ -1,6 +1,11 @@
 import TrackPlayer, { Event, State } from 'react-native-track-player';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from './services/playbackStorage';
 import { restoreQueueIfNeeded } from './services/playerBootstrap';
+import {
+  recordTrackToHistory,
+  skipToPreviousTrack,
+  getIsNavigatingHistory,
+} from './services/queueController';
 import { useThemeStore } from './store/useThemeStore';
 
 let MusicWidgetModule: any = null;
@@ -72,8 +77,7 @@ export default async function playbackService() {
   TrackPlayer.addEventListener(Event.RemotePrevious, async () => {
     try {
       await restoreQueueIfNeeded();
-      await TrackPlayer.skipToPrevious();
-      await TrackPlayer.play();
+      await skipToPreviousTrack();
     } catch (e) {
       console.warn('RemotePrevious error in service:', e);
     }
@@ -92,6 +96,9 @@ export default async function playbackService() {
   // Bu sayede uygulama kapatılıp açıldığında karışık (shuffled) veya düz kuyruk kaldığı yerden devam eder.
   TrackPlayer.addEventListener(Event.PlaybackActiveTrackChanged, async (event) => {
     try {
+      if (event.lastTrack && !getIsNavigatingHistory()) {
+        recordTrackToHistory(event.lastTrack);
+      }
       if (event.track && typeof event.index === 'number') {
         const trackId = String(event.track.id ?? event.track.url ?? '');
         await saveLastPlayback(
@@ -164,8 +171,7 @@ export default async function playbackService() {
           await TrackPlayer.skipToNext();
           await TrackPlayer.play();
         } else if (event.action === 'prev') {
-          await TrackPlayer.skipToPrevious();
-          await TrackPlayer.play();
+          await skipToPreviousTrack();
         }
       } catch (e) {
         console.warn('Widget action error in service:', e);

@@ -94,6 +94,14 @@ export interface TrackMetadata {
   artwork?: string;
 }
 
+export interface PlayedHistoryItem {
+  id: string;
+  url: string;
+  title?: string;
+  artist?: string;
+  artwork?: string;
+}
+
 interface AppState {
   settings: FilterSettings;
   updateSettings: (settings: Partial<FilterSettings>) => void;
@@ -150,9 +158,18 @@ interface AppState {
    */
   contextIds: string[];
 
+  /**
+   * Gerçekten dinlenmiş parçaların kronolojik sırası (eskiden yeniye).
+   * Kuyruk sırası veya shuffle değişse bile korunur.
+   */
+  playedHistory: PlayedHistoryItem[];
+
   setUpNextIds: (ids: string[]) => void;
   setContextIds: (ids: string[]) => void;
   clearUpNext: () => void;
+  addToPlayedHistory: (track: PlayedHistoryItem) => void;
+  setPlayedHistory: (history: PlayedHistoryItem[]) => void;
+  clearPlayedHistory: () => void;
 
   library: MediaLibrary.Asset[];
   setLibrary: (assets: MediaLibrary.Asset[]) => void;
@@ -244,9 +261,19 @@ export const useStore = create<AppState>()(
 
       upNextIds: [],
       contextIds: [],
+      playedHistory: [],
       setUpNextIds: (upNextIds) => set({ upNextIds }),
       setContextIds: (contextIds) => set({ contextIds }),
       clearUpNext: () => set({ upNextIds: [] }),
+      addToPlayedHistory: (track) =>
+        set((state) => {
+          if (!track || !track.id) return state;
+          const last = state.playedHistory[state.playedHistory.length - 1];
+          if (last && (last.id === track.id || last.url === track.url)) return state;
+          return { playedHistory: [...state.playedHistory, track].slice(-50) };
+        }),
+      setPlayedHistory: (playedHistory) => set({ playedHistory }),
+      clearPlayedHistory: () => set({ playedHistory: [] }),
 
       settings: {
         minLengthSec: null,

@@ -149,6 +149,27 @@ section('4b) Geçmiş (çalınmış parçalar) bölümü');
   check('bölümler kuyruğu tam böler', JSON.stringify(all) === JSON.stringify(['C1', 'C2', 'C3', 'C4']));
 }
 
+section('4c) Gerçek dinleme geçmişi (playedHistory) — kuyruk sırasından bağımsız');
+
+{
+  // Kullanıcı C3 dinledi, sonra C1 dinledi, şu an C4 çalıyor.
+  // Kuyruk sırası: [C1, C2, C3, C4] olsa bile, dinleme geçmişi tam olarak [C3, C1] olmalı.
+  const played = [t('C3'), t('C1')];
+  const s = deriveQueueSections(q1, 3, [], played);
+  check('dinleme geçmişi dinlenme sırasını (C3 -> C1) korur', JSON.stringify(ids(s.history)) === JSON.stringify(['C3', 'C1']));
+  check('mevcut parça geçmişte gösterilmez', !ids(s.history).includes('C4'));
+  check('kuyruk indeksi doğru çözümlenir', s.history[0].index === 2 && s.history[1].index === 0);
+
+  // Kuyruk karıştırılsa bile (ör. [C4, C2, C1, C3]) geçmiş sırası DEĞİŞMEZ
+  const shuffledQ = [t('C4'), t('C2'), t('C1'), t('C3')];
+  const sShuffled = deriveQueueSections(shuffledQ, 0, [], played);
+  check('kuyruk sırası değişse bile geçmiş sırası [C3, C1] olarak kalır', JSON.stringify(ids(sShuffled.history)) === JSON.stringify(['C3', 'C1']));
+
+  // Yeni parça başlatıldığında geçmiş boşsa geçmiş bölümü boştur (0 parça)
+  const fresh = deriveQueueSections(q1, 2, [], []);
+  check('yeni başlatılan oturumda geçmiş boş başlar (activeIndex 2 olsa bile)', fresh.history.length === 0);
+}
+
 section('5) deriveQueueSections — manuel öğeler araya girince');
 
 const q2 = [t('C1'), t('C2'), t('M1'), t('C3'), t('M2'), t('C4')];

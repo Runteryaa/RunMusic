@@ -58,6 +58,8 @@ import {
   markUpNextConsumed,
   moveUpNext,
   removeQueueItem,
+  skipToPreviousTrack,
+  playHistoryTrack,
   type QueueEntry,
   type QueueRow,
   type QueueSections,
@@ -180,6 +182,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const repeatMode = useStore((s) => s.repeatMode);
   const upNextIds = useStore((s) => s.upNextIds);
   const contextIds = useStore((s) => s.contextIds);
+  const playedHistory = useStore((s) => s.playedHistory);
   const queueRevision = useStore((s) => s.queueRevision);
   const artworkMap = useStore((s) => s.artworkMap);
   const metadataMap = useStore((s) => s.metadataMap);
@@ -372,6 +375,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     repeatMode,
     upNextIds,
     contextIds,
+    playedHistory,
     queueRevision,
     refreshQueueSections,
     refreshQueue,
@@ -495,13 +499,24 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   );
 
   /** Sıradaki/geçmiş bir parça satırı (dokununca o parçaya atlar). */
-  const renderQueueTrackRow = (entry: QueueEntry<Track>, isCurrent = false) => (
+  const renderQueueTrackRow = (
+    entry: QueueEntry<Track>,
+    isCurrent = false,
+    isHistory = false,
+    historyIndex?: number
+  ) => (
     <TouchableOpacity
       style={[styles.queueItem, isCurrent && { backgroundColor: theme.surface }]}
       activeOpacity={0.7}
-      onPress={() => handleQueueItemPress(entry.index)}>
+      onPress={() => {
+        if (isHistory && typeof historyIndex === 'number') {
+          playHistoryTrack(historyIndex, entry.track);
+        } else {
+          handleQueueItemPress(entry.index);
+        }
+      }}>
       <Text style={[styles.queueIndex, isCurrent && { color: theme.primary }]}>
-        {entry.index + 1}
+        {isHistory && typeof historyIndex === 'number' ? historyIndex + 1 : entry.index + 1}
       </Text>
       <View style={{ flex: 1 }}>
         <Text
@@ -524,8 +539,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
       case 'history':
         // Geçmiş salt görüntülenir; dokununca o parçaya geri döner.
-        // (Çalınmış bir satırı silmek aktif indeksi kaydıracağı için kapalı.)
-        return renderQueueTrackRow(item.entry);
+        return renderQueueTrackRow(item.entry, false, true, item.historyIndex);
 
       case 'current':
         return (
@@ -634,11 +648,14 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   // Önceki ve sonraki şarkıyı belirleme (Kapak geçiş önizlemesi için)
   const prevTrack = useMemo(() => {
+    if (playedHistory.length > 0) {
+      return playedHistory[playedHistory.length - 1];
+    }
     if (queue.length <= 1) return null;
     if (activeIndex > 0) return queue[activeIndex - 1];
     if (repeatMode === RepeatMode.Queue) return queue[queue.length - 1];
     return null;
-  }, [queue, activeIndex, repeatMode]);
+  }, [playedHistory, queue, activeIndex, repeatMode]);
 
   const nextTrack = useMemo(() => {
     if (queue.length <= 1) return null;
@@ -1206,14 +1223,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const skipPrev = useCallback(async () => {
     try {
-      const { position } = await TrackPlayer.getProgress();
-      if (position > 3) {
-        // Spotify davranışı: 3 sn'den sonra "geri" başa sarar.
-        await TrackPlayer.seekTo(0);
-      } else {
-        await TrackPlayer.skipToPrevious();
-        await TrackPlayer.play();
-      }
+      await skipToPreviousTrack();
     } catch (e) {
       console.warn('Skip prev failed', e);
     }
@@ -1241,8 +1251,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const gestureSkipPrev = useCallback(async () => {
     try {
-      await TrackPlayer.skipToPrevious();
-      await TrackPlayer.play();
+      await skipToPreviousTrack();
     } catch (e) {
       console.warn('Gesture skip prev failed', e);
     }

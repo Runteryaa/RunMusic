@@ -198,6 +198,7 @@ export async function restoreQueueIfNeeded(): Promise<boolean> {
         upNextIds: snapshot.upNextIds ?? [],
         contextIds: restoredContextIds,
         isShuffle: Boolean(snapshot.isShuffle),
+        playedHistory: (snapshot.playedHistory as any) ?? [],
       });
 
       // Widget'ı geri yüklenen parçayla güncelle

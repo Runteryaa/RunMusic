@@ -56,6 +56,135 @@ export interface QueueTrack {
   artwork?: string;
 }
 
+let isNavigatingHistory = false;
+
+export function getIsNavigatingHistory(): boolean {
+  return isNavigatingHistory;
+}
+
+export function setIsNavigatingHistory(val: boolean): void {
+  isNavigatingHistory = val;
+}
+
+/**
+ * Dinlenen bir parçayı dinleme geçmişine (`playedHistory`) ekler.
+ * Mükerrer peş peşe eklemeleri önler ve son 50 parça sınırını korur.
+ */
+export function recordTrackToHistory(track: Track | QueueTrack | null | undefined): void {
+  if (!track) return;
+  const key = trackKey(track);
+  if (!key) return;
+
+  const current = useStore.getState().playedHistory;
+  if (current.length > 0 && trackKey(current[current.length - 1]) === key) {
+    return;
+  }
+
+  const item = {
+    id: String(track.id ?? track.url ?? ''),
+    url: String(track.url ?? ''),
+    title: track.title,
+    artist: track.artist,
+    artwork: typeof track.artwork === 'string' ? track.artwork : undefined,
+  };
+
+  useStore.getState().addToPlayedHistory(item);
+  persistQueue().catch(() => {});
+}
+
+/**
+ * Gerçek dinleme geçmişine göre önceki parçaya döner ("Previous" butonu).
+ * - Eğer parça 3 saniyeden fazla çalmışsa başa sarar (Spotify standardı).
+ * - Dinleme geçmişinde parça varsa en son dinlenene geri döner.
+ * - Geçmiş boşsa başa sarar (sıradaki alakasız bir parçaya atlamaz).
+ */
+export async function skipToPreviousTrack(): Promise<void> {
+  try {
+    const { position } = await TrackPlayer.getProgress();
+    if (position > 3) {
+      await TrackPlayer.seekTo(0);
+      return;
+    }
+
+    const playedHistory = useStore.getState().playedHistory;
+    if (playedHistory.length === 0) {
+      await TrackPlayer.seekTo(0);
+      return;
+    }
+
+    const targetTrack = playedHistory[playedHistory.length - 1];
+    const newHistory = playedHistory.slice(0, -1);
+
+    isNavigatingHistory = true;
+    useStore.getState().setPlayedHistory(newHistory);
+
+    const queue = await TrackPlayer.getQueue();
+    const targetKey = trackKey(targetTrack);
+    const targetIndex = queue.findIndex((t) => trackKey(t) === targetKey);
+
+    if (targetIndex >= 0) {
+      await TrackPlayer.skip(targetIndex);
+    } else {
+      const rawActive = await TrackPlayer.getActiveTrackIndex();
+      const active = typeof rawActive === 'number' && rawActive >= 0 ? rawActive : 0;
+      await TrackPlayer.add(targetTrack as Track, active);
+      await TrackPlayer.skip(active);
+    }
+    await TrackPlayer.play();
+    await persistQueue();
+  } catch (e) {
+    console.warn('[queueController] skipToPreviousTrack error:', e);
+    try {
+      await TrackPlayer.skipToPrevious();
+      await TrackPlayer.play();
+    } catch {
+      // ignore
+    }
+  } finally {
+    setTimeout(() => {
+      isNavigatingHistory = false;
+    }, 600);
+  }
+}
+
+/**
+ * Kuyruk ekranındaki "ÖNCEDEN ÇALINAN" bölümünden bir parçaya dokunulduğunda çalışır.
+ * Tıklanan parçaya döner ve geçmişi o noktaya kadar geri sarar.
+ */
+export async function playHistoryTrack(historyIndex: number, track?: Track | QueueTrack): Promise<void> {
+  try {
+    const currentHistory = useStore.getState().playedHistory;
+    const targetTrack = track || currentHistory[historyIndex];
+    if (!targetTrack) return;
+
+    const newHistory = currentHistory.slice(0, historyIndex);
+
+    isNavigatingHistory = true;
+    useStore.getState().setPlayedHistory(newHistory);
+
+    const queue = await TrackPlayer.getQueue();
+    const targetKey = trackKey(targetTrack);
+    const targetIndex = queue.findIndex((t) => trackKey(t) === targetKey);
+
+    if (targetIndex >= 0) {
+      await TrackPlayer.skip(targetIndex);
+    } else {
+      const rawActive = await TrackPlayer.getActiveTrackIndex();
+      const active = typeof rawActive === 'number' && rawActive >= 0 ? rawActive : 0;
+      await TrackPlayer.add(targetTrack as Track, active);
+      await TrackPlayer.skip(active);
+    }
+    await TrackPlayer.play();
+    await persistQueue();
+  } catch (e) {
+    console.warn('[queueController] playHistoryTrack error:', e);
+  } finally {
+    setTimeout(() => {
+      isNavigatingHistory = false;
+    }, 600);
+  }
+}
+
 /** Kuyruk modelini diske yazar (yapısal değişikliklerden sonra çağrılır). */
 async function persistQueue(): Promise<void> {
   const s = useStore.getState();
@@ -63,6 +192,7 @@ async function persistQueue(): Promise<void> {
     upNextIds: s.upNextIds,
     contextIds: s.contextIds,
     isShuffle: s.isShuffle,
+    playedHistory: s.playedHistory,
   });
   s.bumpQueueRevision();
 }
@@ -76,7 +206,13 @@ async function readQueueState(): Promise<{ queue: Track[]; activeIndex: number }
 
 export async function getQueueSections(): Promise<QueueSections<Track>> {
   const { queue, activeIndex } = await readQueueState();
-  return deriveQueueSections(queue, activeIndex, useStore.getState().upNextIds);
+  const playedHistory = useStore.getState().playedHistory;
+  return deriveQueueSections(
+    queue,
+    activeIndex,
+    useStore.getState().upNextIds,
+    playedHistory as any
+  );
 }
 
 /** Kullanıcı kütüphaneden bir parçaya dokunduğunda kuyruğu kurar ve çalar. */
@@ -122,6 +258,7 @@ export async function startPlaybackFromLibrary(params: {
   useStore.setState({
     contextIds,
     upNextIds: [],
+    playedHistory: [],
     isShuffle: shuffle,
     isSmartShuffle: shuffle ? smartShuffle : false,
   });
