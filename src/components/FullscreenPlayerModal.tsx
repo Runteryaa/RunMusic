@@ -297,12 +297,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     }
   }, []);
 
-  useEffect(() => {
-    if (activeTrack) {
-      refreshQueue();
-    }
-  }, [activeTrack, refreshQueue]);
-
   /** Kuyruk bölümlerini native kuyruktan yeniden türetir. */
   const refreshQueueSections = useCallback(async () => {
     try {
@@ -311,6 +305,14 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       console.warn('Failed to derive queue sections', e);
     }
   }, []);
+
+  // Oynatıcı açıkken veya aktif parça değiştiğinde kuyruğu ve bölümleri önceden hazırla (pre-warm)
+  useEffect(() => {
+    if (activeTrack || isFullscreenPlayerOpen) {
+      refreshQueue();
+      refreshQueueSections();
+    }
+  }, [activeTrack, isFullscreenPlayerOpen, refreshQueue, refreshQueueSections]);
 
   // Kuyruk modu açıkken veya aktif parça / kuyruk / modlar değiştiğinde bölümleri tazele.
   useEffect(() => {
@@ -416,23 +418,23 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const queueListRef = useRef<FlatList<QueueRow<Track>>>(null);
 
-  // Kuyruk açılınca mevcut parçaya konumlan
+  // Kuyruk açılınca mevcut parçaya zıplamasız ve kaymasız doğrudan konumlan
   useEffect(() => {
     if (!isQueueMode || currentRowIndex < 0) return;
     const timer = setTimeout(() => {
       queueListRef.current?.scrollToIndex({
         index: currentRowIndex,
-        animated: true,
+        animated: false,
         viewPosition: 0.15,
       });
-    }, 120);
+    }, 0);
     return () => clearTimeout(timer);
   }, [isQueueMode, currentRowIndex]);
 
   const handleScrollToIndexFailed = useCallback(
     (info: { index: number; averageItemLength: number }) => {
       // Satır yükseklikleri değişken olduğu için (bölüm başlığı / parça / kapaklı
-      // satır) ilk deneme başarısız olabilir: ortalamayla konumlan, sonra tekrar dene.
+      // satır) ilk deneme başarısız olabilir: ortalamayla hemen konumlan, sonra tekrar dene.
       queueListRef.current?.scrollToOffset({
         offset: info.averageItemLength * info.index,
         animated: false,
@@ -441,9 +443,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         queueListRef.current?.scrollToIndex({
           index: info.index,
           animated: false,
-          viewPosition: 0,
+          viewPosition: 0.15,
         });
-      }, 120);
+      }, 50);
     },
     []
   );
@@ -1860,13 +1862,14 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             <FlatList
               ref={queueListRef}
               data={queueRows}
+              initialScrollIndex={currentRowIndex >= 0 ? currentRowIndex : undefined}
               extraData={`${isShuffle}-${isSmartShuffle}-${repeatMode}-${queueRevision}`}
               keyExtractor={(row) => row.key}
               renderItem={renderQueueRow}
               contentContainerStyle={styles.queueScrollContent}
               showsVerticalScrollIndicator={false}
-              initialNumToRender={12}
-              maxToRenderPerBatch={12}
+              initialNumToRender={16}
+              maxToRenderPerBatch={16}
               updateCellsBatchingPeriod={50}
               windowSize={7}
               onScrollToIndexFailed={handleScrollToIndexFailed}
