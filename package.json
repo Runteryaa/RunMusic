@@ -55,7 +55,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package && node ./scripts/ensure-ble-plx-codegen.js"
   },
   "private": true
 }
