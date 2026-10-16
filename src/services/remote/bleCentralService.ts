@@ -128,6 +128,11 @@ class BleCentralService {
     this.setStatus('connecting');
 
     try {
+      const hasPermissions = await requestBlePermissions();
+      if (!hasPermissions) {
+        throw new Error('Bluetooth izinleri verilmedi');
+      }
+
       // Connect to device
       const device = await manager.connectToDevice(peer.id, {
         autoConnect: false,
@@ -174,6 +179,11 @@ class BleCentralService {
       this.setupMonitors(device);
 
       this.setStatus('connected');
+
+      // Request fresh initial state from Host now that monitors are active
+      setTimeout(() => {
+        this.sendCommand({ type: 'COMMAND_GET_STATE' } as any).catch(() => {});
+      }, 150);
     } catch (err: any) {
       console.error('[BleCentralService] Connection error:', err);
       this.cleanup();

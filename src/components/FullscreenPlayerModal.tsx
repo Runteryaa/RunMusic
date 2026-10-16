@@ -156,7 +156,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, [remoteMode, toggleConnectMode]);
 
   const handleSelectRemoteHost = useCallback(async (host: DiscoveredHost | DiscoveredPeer) => {
-    await remoteSyncManager.connectToHost(host);
+    try {
+      await remoteSyncManager.connectToHost(host);
+    } catch (err: any) {
+      Alert.alert('Bağlantı Hatası', err?.message || 'Cihaza bağlanılamadı');
+    }
   }, []);
 
   const handleManualConnect = useCallback(async () => {
@@ -513,7 +517,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     const historyEntries: QueueEntry<Track>[] = [];
     const contextEntries: QueueEntry<Track>[] = [];
 
-    remoteState.queue.forEach((t, idx) => {
+    (remoteState.queue || []).forEach((t, idx) => {
+      if (!t) return;
       if (currentIndex >= 0 && idx < currentIndex) {
         historyEntries.push(toTrack(t, idx));
       } else if (currentIndex >= 0 && idx > currentIndex) {
@@ -521,7 +526,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       }
     });
 
-    const upNextEntries: QueueEntry<Track>[] = remoteState.upNext.map((t, idx) => toTrack(t, idx));
+    const upNextEntries: QueueEntry<Track>[] = (remoteState.upNext || [])
+      .filter(Boolean)
+      .map((t, idx) => toTrack(t, idx));
 
     return {
       history: historyEntries,
@@ -535,15 +542,17 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   /** Manuel "Sırada" listesi (görsel model). */
   const upNextItems: UpNextItem[] = useMemo(() => {
-    if (!effectiveQueueSections) return [];
-    return effectiveQueueSections.upNext.map((entry, i) => ({
-      key: `${entry.track.id ?? entry.track.url}-${i}`,
-      title: cleanDisplayTitle(entry.track.title ?? '', entry.track.artist) || t('common.unknown_track'),
-      artist: entry.track.artist ?? undefined,
-      artwork: typeof entry.track.artwork === 'string' ? entry.track.artwork : undefined,
-      trackId: entry.track.id ?? null,
-      trackUri: entry.track.url ?? null,
-    }));
+    if (!effectiveQueueSections || !effectiveQueueSections.upNext) return [];
+    return effectiveQueueSections.upNext
+      .filter((entry) => entry && entry.track)
+      .map((entry, i) => ({
+        key: `${entry.track.id ?? entry.track.url}-${i}`,
+        title: cleanDisplayTitle(entry.track.title ?? '', entry.track.artist) || t('common.unknown_track'),
+        artist: entry.track.artist ?? undefined,
+        artwork: typeof entry.track.artwork === 'string' ? entry.track.artwork : undefined,
+        trackId: entry.track.id ?? null,
+        trackUri: entry.track.url ?? null,
+      }));
   }, [effectiveQueueSections, t]);
 
   const handleMoveUpNext = useCallback(
@@ -633,32 +642,48 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   useEffect(() => {
     if (!isQueueMode || currentRowIndex < 0) return;
     const timer = setTimeout(() => {
-      queueListRef.current?.scrollToIndex({
-        index: currentRowIndex,
-        animated: false,
-        viewPosition: 0.15,
-      });
+      try {
+        if (currentRowIndex >= 0 && currentRowIndex < queueRows.length) {
+          queueListRef.current?.scrollToIndex({
+            index: currentRowIndex,
+            animated: false,
+            viewPosition: 0.15,
+          });
+        }
+      } catch {
+        // ignore
+      }
     }, 0);
     return () => clearTimeout(timer);
-  }, [isQueueMode, currentRowIndex]);
+  }, [isQueueMode, currentRowIndex, queueRows.length]);
 
   const handleScrollToIndexFailed = useCallback(
     (info: { index: number; averageItemLength: number }) => {
       // Satır yükseklikleri değişken olduğu için (bölüm başlığı / parça / kapaklı
       // satır) ilk deneme başarısız olabilir: ortalamayla hemen konumlan, sonra tekrar dene.
-      queueListRef.current?.scrollToOffset({
-        offset: info.averageItemLength * info.index,
-        animated: false,
-      });
-      setTimeout(() => {
-        queueListRef.current?.scrollToIndex({
-          index: info.index,
+      try {
+        queueListRef.current?.scrollToOffset({
+          offset: info.averageItemLength * info.index,
           animated: false,
-          viewPosition: 0.15,
         });
+      } catch {
+        // ignore
+      }
+      setTimeout(() => {
+        try {
+          if (info.index >= 0 && info.index < queueRows.length) {
+            queueListRef.current?.scrollToIndex({
+              index: info.index,
+              animated: false,
+              viewPosition: 0.15,
+            });
+          }
+        } catch {
+          // ignore
+        }
       }, 50);
     },
-    []
+    [queueRows.length]
   );
 
   /** Sıradaki/geçmiş bir parça satırı (dokununca o parçaya atlar). */
@@ -2619,7 +2644,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     player.isRemote && connectedDeviceName === item.deviceName;
                   const isConnecting =
                     remoteMode === 'client' &&
-                    remoteConnectionStatus === 'pairing' &&
+                    (remoteConnectionStatus === 'connecting' || remoteConnectionStatus === 'pairing') &&
                     connectedDeviceName === item.deviceName;
 
                   return (
@@ -2665,9 +2690,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                         <Text style={styles.connectDeviceSubtext}>
                           {isThisConnected
                             ? 'Bağlandı'
-                            : item.transport === 'ble' || activeTransportTab === 'ble'
-                              ? 'Bluetooth Düşük Enerji (BLE)'
-                              : `${item.hostIp}:${item.port}`}
+                            : isConnecting
+                              ? 'Bağlanıyor...'
+                              : item.transport === 'ble' || activeTransportTab === 'ble'
+                                ? 'Bluetooth Düşük Enerji (BLE)'
+                                : `${item.hostIp}:${item.port}`}
                         </Text>
                       </View>
                       {isConnecting ? (

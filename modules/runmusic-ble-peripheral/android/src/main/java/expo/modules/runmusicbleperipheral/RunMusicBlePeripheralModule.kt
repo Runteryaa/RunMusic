@@ -105,7 +105,7 @@ class RunMusicBlePeripheralModule : Module() {
       }
 
       try {
-        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, responseData)
+        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, responseData)
       } catch (e: SecurityException) {
         // Permission fallback
       }
@@ -155,6 +155,20 @@ class RunMusicBlePeripheralModule : Module() {
     ) {
       if (device == null || descriptor == null) return
 
+      // Update descriptor value in GATT server so Android internal BLE stack recognizes subscriptions
+      if (descriptor.uuid == CCCD_UUID && value != null) {
+        descriptor.value = value
+        if (value.isNotEmpty() && (value[0].toInt() and 1) != 0) {
+          sendEvent(
+            "onClientSubscribed",
+            mapOf(
+              "deviceAddress" to device.address,
+              "charUuid" to (descriptor.characteristic?.uuid?.toString() ?: "")
+            )
+          )
+        }
+      }
+
       // Rule 1: Always send response inside onDescriptorWriteRequest
       if (responseNeeded) {
         try {
@@ -180,7 +194,7 @@ class RunMusicBlePeripheralModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("RunMusicBlePeripheral")
 
-    Events("onClientConnected", "onClientDisconnected", "onCharacteristicWrite", "onNotificationSent")
+    Events("onClientConnected", "onClientDisconnected", "onCharacteristicWrite", "onNotificationSent", "onClientSubscribed")
 
     OnCreate {
       val context = appContext.reactContext ?: return@OnCreate
@@ -289,16 +303,33 @@ class RunMusicBlePeripheralModule : Module() {
       val promiseId = UUID.randomUUID().toString()
       pendingNotificationPromises[promiseId] = promise
 
+      // Safety timeout: resolve false if onNotificationSent never arrives within 1200ms
+      android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+        pendingNotificationPromises.remove(promiseId)?.resolve(false)
+      }, 1200)
+
       try {
+        var notifyTriggered = false
         for (device in connectedDevices) {
           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            server.notifyCharacteristicChanged(device, targetChar, false, rawBytes)
+            val res = server.notifyCharacteristicChanged(device, targetChar, false, rawBytes)
+            if (res == android.bluetooth.BluetoothStatusCodes.SUCCESS) {
+              notifyTriggered = true
+            }
           } else {
             @Suppress("DEPRECATION")
             targetChar.value = rawBytes
             @Suppress("DEPRECATION")
-            server.notifyCharacteristicChanged(device, targetChar, false)
+            val res = server.notifyCharacteristicChanged(device, targetChar, false)
+            if (res) {
+              notifyTriggered = true
+            }
           }
+        }
+
+        if (!notifyTriggered) {
+          // If BLE stack did not accept the notification, onNotificationSent will never fire
+          pendingNotificationPromises.remove(promiseId)?.resolve(false)
         }
       } catch (e: Exception) {
         pendingNotificationPromises.remove(promiseId)

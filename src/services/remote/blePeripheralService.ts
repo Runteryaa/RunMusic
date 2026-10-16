@@ -16,6 +16,7 @@ const BLE_SAFE_NOTIFY_CHUNK_SIZE = 180;
 export interface BlePeripheralHandlers {
   onCommand: (message: RemoteMessage, clientInfo: { deviceId: string; deviceName: string }) => void;
   onClientConnected?: (clientInfo: { deviceId: string; deviceName: string }) => void;
+  onClientSubscribed?: (clientInfo: { deviceId: string; deviceName: string; charUuid: string }) => void;
   onClientDisconnected?: (deviceId: string) => void;
 }
 
@@ -115,7 +116,9 @@ class BlePeripheralService {
       const base64Chunk = chunk.toString('base64');
       this.enqueueSend(async () => {
         try {
-          await RunMusicBlePeripheralModule?.sendNotification(charUuid, base64Chunk);
+          const sendPromise = RunMusicBlePeripheralModule?.sendNotification(charUuid, base64Chunk);
+          const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), 1500));
+          await Promise.race([sendPromise, timeoutPromise]);
         } catch (err) {
           console.warn('[BlePeripheralService] Notification chunk failed:', err);
         }
@@ -159,6 +162,17 @@ class BlePeripheralService {
       }
     );
 
+    const subSubscribed = RunMusicBlePeripheralModule.addListener(
+      'onClientSubscribed',
+      (event: { deviceAddress: string; charUuid: string }) => {
+        this.handlers?.onClientSubscribed?.({
+          deviceId: event.deviceAddress,
+          deviceName: `BLE Client (${event.deviceAddress.slice(-5)})`,
+          charUuid: event.charUuid,
+        });
+      }
+    );
+
     const subDisconnect = RunMusicBlePeripheralModule.addListener(
       'onClientDisconnected',
       (event: { deviceAddress: string }) => {
@@ -188,6 +202,7 @@ class BlePeripheralService {
 
     this.listenerSubscriptions.push(
       () => subConnect.remove(),
+      () => subSubscribed.remove(),
       () => subDisconnect.remove(),
       () => subWrite.remove()
     );

@@ -20,7 +20,7 @@ import {
   type LyricLine,
 } from '../lyricsService';
 import { remoteMediaNotification } from './remoteMediaNotification';
-import { blePeripheralService } from './blePeripheralService';
+import { blePeripheralService, BLE_CHAR_STATE_NOTIFY_UUID } from './blePeripheralService';
 import { bleCentralService } from './bleCentralService';
 import type { DiscoveredPeer } from './IRemoteTransport';
 import type {
@@ -128,9 +128,11 @@ class RemoteSyncManager {
       onCommand: (msg) => {
         this.handleHostCommand(msg, null);
       },
-      onClientConnected: async () => {
-        const initialState = await this.buildHostInitialState();
-        blePeripheralService.broadcast(initialState).catch(() => {});
+      onClientSubscribed: async (info) => {
+        if (info.charUuid.toLowerCase() === BLE_CHAR_STATE_NOTIFY_UUID.toLowerCase()) {
+          const initialState = await this.buildHostInitialState();
+          blePeripheralService.broadcast(initialState).catch(() => {});
+        }
       },
     });
 
@@ -423,6 +425,16 @@ class RemoteSyncManager {
       case 'COMMAND_SELECT_LYRICS':
         this.handleClientSelectLyrics(msg);
         break;
+
+      case 'COMMAND_GET_STATE':
+        this.buildHostInitialState().then((state) => {
+          if (clientSocket) {
+            tcpHostServer.sendToClient(clientSocket, state);
+          } else {
+            blePeripheralService.broadcast(state).catch(() => {});
+          }
+        });
+        break;
     }
   }
 
@@ -518,6 +530,7 @@ class RemoteSyncManager {
 
     useRemoteConnectStore.getState().setMode('client');
     useRemoteConnectStore.getState().setConnectedDeviceName(host.deviceName);
+    useRemoteConnectStore.getState().setConnectionStatus('connecting');
 
     // Bluetooth Low Energy (BLE) Client connection
     if ((host as DiscoveredPeer).transport === 'ble') {
@@ -591,6 +604,8 @@ class RemoteSyncManager {
       tcpClient.disconnect();
     }
     useRemoteConnectStore.getState().resetRemoteState();
+    // Send an immediate probe on disconnect so other available hosts immediately reappear in discovery
+    udpDiscoveryService.sendProbe(null);
   }
 
   public sendClientCommand(message: RemoteMessage): void {

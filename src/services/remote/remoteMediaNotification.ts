@@ -38,7 +38,7 @@ class RemoteMediaNotificationService {
       // ignore
     }
 
-    const sampleRate = 8000;
+    const sampleRate = 1000;
     const numChannels = 1;
     const bitsPerSample = 8;
     const dataSize = sampleRate * numChannels * (bitsPerSample / 8) * safeDuration;

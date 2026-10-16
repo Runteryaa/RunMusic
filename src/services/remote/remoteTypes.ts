@@ -232,6 +232,10 @@ export interface ArtworkResponseMessage {
   base64?: string | null;
 }
 
+export interface CommandGetStateMessage {
+  type: 'COMMAND_GET_STATE';
+}
+
 export type RemoteMessage =
   | BeaconMessage
   | PairInitMessage
@@ -261,4 +265,5 @@ export type RemoteMessage =
   | CommandPlayLibraryTrackMessage
   | CommandSelectLyricsMessage
   | RequestArtworkMessage
-  | ArtworkResponseMessage;
+  | ArtworkResponseMessage
+  | CommandGetStateMessage;
