@@ -61,6 +61,10 @@ class TCPClient {
     this.callbacks = callbacks;
   }
 
+  public getStatus(): ClientConnectionStatus {
+    return this.status;
+  }
+
   private updateStatus(status: ClientConnectionStatus, error?: string): void {
     this.status = status;
     this.callbacks?.onStatusChange(status, error);

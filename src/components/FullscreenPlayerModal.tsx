@@ -36,6 +36,8 @@ import { useActivePlayer } from '../hooks/useActivePlayer';
 import { useActiveProgress } from '../hooks/useActiveProgress';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import { udpDiscoveryService } from '../services/remote/udpDiscovery';
+import { bleCentralService } from '../services/remote/bleCentralService';
+import type { DiscoveredPeer } from '../services/remote/IRemoteTransport';
 import { RUNMUSIC_TCP_PORT, type RemoteTrackSummary, type DiscoveredHost } from '../services/remote/remoteTypes';
 import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
@@ -102,6 +104,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const remoteState = useRemoteConnectStore((s) => s.remoteState);
   const discoveredHosts = useRemoteConnectStore((s) => s.discoveredHosts);
   const setDiscoveredHosts = useRemoteConnectStore((s) => s.setDiscoveredHosts);
+  const discoveredBlePeers = useRemoteConnectStore((s) => s.discoveredBlePeers);
+  const setDiscoveredBlePeers = useRemoteConnectStore((s) => s.setDiscoveredBlePeers);
+  const activeTransportTab = useRemoteConnectStore((s) => s.activeTransportTab);
+  const setActiveTransportTab = useRemoteConnectStore((s) => s.setActiveTransportTab);
   const isRemoteServiceEnabled = useRemoteConnectStore((s) => s.isServiceEnabled);
   const setRemoteServiceEnabled = useRemoteConnectStore((s) => s.setServiceEnabled);
   const remoteMode = useRemoteConnectStore((s) => s.mode);
@@ -115,17 +121,32 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   useEffect(() => {
     if (!isConnectMode || !isRemoteServiceEnabled) {
       setDiscoveredHosts([]);
+      setDiscoveredBlePeers([]);
       return;
     }
 
-    const unsubscribe = udpDiscoveryService.startClientListener((hosts) => {
-      setDiscoveredHosts(hosts);
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [isConnectMode, isRemoteServiceEnabled, setDiscoveredHosts]);
+    if (activeTransportTab === 'ble') {
+      const unsubscribe = bleCentralService.startDiscovery((peers) => {
+        setDiscoveredBlePeers(peers);
+      });
+      return () => {
+        unsubscribe();
+      };
+    } else {
+      const unsubscribe = udpDiscoveryService.startClientListener((hosts) => {
+        setDiscoveredHosts(hosts);
+      });
+      return () => {
+        unsubscribe();
+      };
+    }
+  }, [
+    isConnectMode,
+    isRemoteServiceEnabled,
+    activeTransportTab,
+    setDiscoveredHosts,
+    setDiscoveredBlePeers,
+  ]);
 
   const handleSelectLocalDevice = useCallback(() => {
     if (remoteMode === 'client') {
@@ -134,7 +155,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     toggleConnectMode();
   }, [remoteMode, toggleConnectMode]);
 
-  const handleSelectRemoteHost = useCallback(async (host: DiscoveredHost) => {
+  const handleSelectRemoteHost = useCallback(async (host: DiscoveredHost | DiscoveredPeer) => {
     await remoteSyncManager.connectToHost(host);
   }, []);
 
@@ -2436,7 +2457,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   { backgroundColor: theme.surface },
                 ]}>
                 <View style={{ flex: 1, marginRight: 12 }}>
-                  <Text style={styles.connectToggleTitle}>Wi-Fi Kumandası</Text>
+                  <Text style={styles.connectToggleTitle}>
+                    {activeTransportTab === 'ble' ? 'Bluetooth Kumandası' : 'Wi-Fi Kumandası'}
+                  </Text>
                   <Text style={styles.connectToggleHint}>
                     {isRemoteServiceEnabled
                       ? 'Cihazlar bu telefonu görebilir ve bağlanabilir'
@@ -2451,6 +2474,57 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   trackColor={{ false: '#3f3f46', true: theme.primary }}
                   thumbColor="#ffffff"
                 />
+              </View>
+
+              {/* Segment Kontrolü: Wi-Fi | Bluetooth */}
+              <View style={[styles.connectSegmentContainer, { backgroundColor: theme.surface }]}>
+                <TouchableOpacity
+                  style={[
+                    styles.connectSegmentTab,
+                    activeTransportTab === 'wifi' && {
+                      backgroundColor: theme.primary,
+                    },
+                  ]}
+                  activeOpacity={0.8}
+                  onPress={() => setActiveTransportTab('wifi')}>
+                  <Ionicons
+                    name="wifi-outline"
+                    size={14}
+                    color={activeTransportTab === 'wifi' ? '#ffffff' : 'rgba(255, 255, 255, 0.6)'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    style={[
+                      styles.connectSegmentText,
+                      activeTransportTab === 'wifi' && { color: '#ffffff', fontWeight: '700' },
+                    ]}>
+                    Wi-Fi
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.connectSegmentTab,
+                    activeTransportTab === 'ble' && {
+                      backgroundColor: theme.primary,
+                    },
+                  ]}
+                  activeOpacity={0.8}
+                  onPress={() => setActiveTransportTab('ble')}>
+                  <Ionicons
+                    name="bluetooth-outline"
+                    size={14}
+                    color={activeTransportTab === 'ble' ? '#ffffff' : 'rgba(255, 255, 255, 0.6)'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    style={[
+                      styles.connectSegmentText,
+                      activeTransportTab === 'ble' && { color: '#ffffff', fontWeight: '700' },
+                    ]}>
+                    Bluetooth
+                  </Text>
+                </TouchableOpacity>
               </View>
 
               {/* Bu Telefon (Yerel Cihaz) */}
@@ -2494,14 +2568,20 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               {/* Bölüm Başlığı */}
               <View style={styles.connectSectionHeader}>
                 <Text style={[styles.connectSectionLabel, { color: theme.textAccent }]}>
-                  AYNI Wİ-Fİ AĞINDAKİ CİHAZLAR
+                  {activeTransportTab === 'ble'
+                    ? 'YAKINDAKİ BLUETOOTH CİHAZLARI'
+                    : 'AYNI Wİ-Fİ AĞINDAKİ CİHAZLAR'}
                 </Text>
               </View>
 
               {/* Cihazlar Listesi */}
               <FlatList
-                data={discoveredHosts}
-                keyExtractor={(item) => item.deviceId}
+                data={
+                  activeTransportTab === 'ble'
+                    ? (discoveredBlePeers as any)
+                    : (discoveredHosts as any)
+                }
+                keyExtractor={(item) => item.id || item.deviceId}
                 style={styles.connectList}
                 showsVerticalScrollIndicator={false}
                 ListEmptyComponent={
@@ -2521,15 +2601,22 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   ) : (
                     <View style={styles.connectEmptyContainer}>
                       <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 6 }} />
-                      <Text style={styles.connectEmptyTitle}>Cihazlar aranıyor...</Text>
+                      <Text style={styles.connectEmptyTitle}>
+                        {activeTransportTab === 'ble'
+                          ? 'Bluetooth cihazları aranıyor...'
+                          : 'Cihazlar aranıyor...'}
+                      </Text>
                       <Text style={styles.connectEmptySubtext}>
-                        {"Diğer cihazda da RunMusic'i açın. Aynı Wi-Fi ağına bağlı olmalıdır."}
+                        {activeTransportTab === 'ble'
+                          ? "Diğer cihazda da RunMusic'i açın ve Bluetooth sekmesini seçin."
+                          : "Diğer cihazda da RunMusic'i açın. Aynı Wi-Fi ağına bağlı olmalıdır."}
                       </Text>
                     </View>
                   )
                 }
                 renderItem={({ item }) => {
-                  const isThisConnected = player.isRemote && connectedDeviceName === item.deviceName;
+                  const isThisConnected =
+                    player.isRemote && connectedDeviceName === item.deviceName;
                   const isConnecting =
                     remoteMode === 'client' &&
                     remoteConnectionStatus === 'pairing' &&
@@ -2557,7 +2644,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           },
                         ]}>
                         <Ionicons
-                          name="laptop-outline"
+                          name={
+                            item.transport === 'ble' || activeTransportTab === 'ble'
+                              ? 'bluetooth-outline'
+                              : 'laptop-outline'
+                          }
                           size={20}
                           color={isThisConnected ? theme.primary : 'rgba(255, 255, 255, 0.7)'}
                         />
@@ -2572,7 +2663,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           {item.deviceName}
                         </Text>
                         <Text style={styles.connectDeviceSubtext}>
-                          {isThisConnected ? 'Bağlandı' : `${item.hostIp}:${item.port}`}
+                          {isThisConnected
+                            ? 'Bağlandı'
+                            : item.transport === 'ble' || activeTransportTab === 'ble'
+                              ? 'Bluetooth Düşük Enerji (BLE)'
+                              : `${item.hostIp}:${item.port}`}
                         </Text>
                       </View>
                       {isConnecting ? (
@@ -2587,8 +2682,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 }}
               />
 
-              {/* Manuel IP Toggle / Giriş */}
-              {isRemoteServiceEnabled && (
+              {/* Manuel IP Toggle / Giriş (Sadece Wi-Fi modunda gösterilir) */}
+              {isRemoteServiceEnabled && activeTransportTab === 'wifi' && (
                 showManualIp ? (
                   <View style={[styles.connectManualBox, { backgroundColor: theme.surface }]}>
                     <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
@@ -3985,6 +4080,25 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: 'rgba(255, 255, 255, 0.5)',
     marginTop: 1,
+  },
+  connectSegmentContainer: {
+    flexDirection: 'row',
+    borderRadius: 12,
+    padding: 3,
+    marginBottom: 8,
+  },
+  connectSegmentTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
+  connectSegmentText: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontWeight: '600',
   },
   connectDeviceItem: {
     flexDirection: 'row',

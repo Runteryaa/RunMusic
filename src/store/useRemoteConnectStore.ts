@@ -16,6 +16,7 @@ import type {
 } from '../services/remote/remoteTypes';
 import type { ClientConnectionStatus } from '../services/remote/tcpClient';
 import type { PendingPairChallenge } from '../services/remote/tcpHostServer';
+import type { DiscoveredPeer } from '../services/remote/IRemoteTransport';
 
 export interface RemotePlaybackState {
   activeTrack: RemoteTrackSummary | null;
@@ -43,6 +44,8 @@ interface RemoteConnectStoreState {
   errorMessage: string | null;
   connectedDeviceName: string | null;
   discoveredHosts: DiscoveredHost[];
+  discoveredBlePeers: DiscoveredPeer[];
+  activeTransportTab: 'wifi' | 'ble';
 
   // Pairing Modals
   pendingPairChallenge: PendingPairChallenge | null;
@@ -62,6 +65,8 @@ interface RemoteConnectStoreState {
   addTrustedDevice: (client: TrustedClient) => void;
   removeTrustedDevice: (deviceId: string) => void;
   setDiscoveredHosts: (hosts: DiscoveredHost[]) => void;
+  setDiscoveredBlePeers: (peers: DiscoveredPeer[]) => void;
+  setActiveTransportTab: (tab: 'wifi' | 'ble') => void;
   setMode: (mode: 'idle' | 'host' | 'client') => void;
   setConnectionStatus: (status: ClientConnectionStatus, error?: string) => void;
   setConnectedDeviceName: (name: string | null) => void;
@@ -149,6 +154,8 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       errorMessage: null,
       connectedDeviceName: null,
       discoveredHosts: [],
+      discoveredBlePeers: [],
+      activeTransportTab: 'wifi',
       pendingPairChallenge: null,
       pendingPinVerification: null,
       remoteState: { ...initialRemotePlaybackState },
@@ -164,7 +171,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       setServiceEnabled: (enabled) => {
         set({ isServiceEnabled: enabled });
         if (!enabled) {
-          set({ discoveredHosts: [] });
+          set({ discoveredHosts: [], discoveredBlePeers: [] });
         }
       },
       setCustomDeviceName: (name) => set({ customDeviceName: name }),
@@ -179,6 +186,8 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       },
 
       setDiscoveredHosts: (hosts) => set({ discoveredHosts: hosts }),
+      setDiscoveredBlePeers: (peers) => set({ discoveredBlePeers: peers }),
+      setActiveTransportTab: (tab) => set({ activeTransportTab: tab }),
       setMode: (mode) => set({ mode }),
       setConnectedDeviceName: (name) => set({ connectedDeviceName: name }),
 

@@ -29,7 +29,13 @@
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_AUDIO",
-        "android.permission.READ_MEDIA_IMAGES"
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_ADVERTISE",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION"
       ],
       "package": "com.runterya.music"
     },
@@ -56,6 +62,14 @@
         "react-native-google-mobile-ads",
         {
           "androidAppId": "ca-app-pub-3940256099942544~3347511713"
+        }
+      ],
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": ["peripheral", "central"],
+          "bluetoothAlwaysPermission": "RunMusic diğer cihazları kontrol etmek ve bağlanmak için Bluetooth kullanır."
         }
       ]
     ],

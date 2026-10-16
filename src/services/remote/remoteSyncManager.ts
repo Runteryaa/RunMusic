@@ -20,6 +20,9 @@ import {
   type LyricLine,
 } from '../lyricsService';
 import { remoteMediaNotification } from './remoteMediaNotification';
+import { blePeripheralService } from './blePeripheralService';
+import { bleCentralService } from './bleCentralService';
+import type { DiscoveredPeer } from './IRemoteTransport';
 import type {
   RemoteMessage,
   RemoteTrackSummary,
@@ -40,12 +43,20 @@ import type {
 
 class RemoteSyncManager {
   private isHostActive = false;
+  private activeClientTransport: 'wifi' | 'ble' = 'wifi';
   private hostSubscriptions: (() => void)[] = [];
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private pendingLibraryQueries: Map<
     string,
     { resolve: (res: LibraryResultMessage) => void; reject: (err: any) => void; timer: ReturnType<typeof setTimeout> }
   > = new Map();
+
+  private broadcastToAll(message: RemoteMessage): void {
+    tcpHostServer.broadcast(message);
+    if (message.type !== 'ACTIVE_ARTWORK_SYNC') {
+      blePeripheralService.broadcast(message).catch(() => {});
+    }
+  }
 
   // ==========================================
   // HOST MANAGEMENT
@@ -109,9 +120,23 @@ class RemoteSyncManager {
       },
     });
 
-    // Start TCP server & UDP beacon
+    // Start TCP server & UDP beacon & BLE peripheral
     tcpHostServer.startServer();
     udpDiscoveryService.startHostBeacon(deviceId, deviceName);
+
+    blePeripheralService.setHandlers({
+      onCommand: (msg) => {
+        this.handleHostCommand(msg, null);
+      },
+      onClientConnected: async () => {
+        const initialState = await this.buildHostInitialState();
+        blePeripheralService.broadcast(initialState).catch(() => {});
+      },
+    });
+
+    blePeripheralService.startHost(deviceName).catch((err) => {
+      console.warn('[RemoteSyncManager] BLE peripheral startHost failed:', err);
+    });
 
     useRemoteConnectStore.getState().setMode('host');
     this.isHostActive = true;
@@ -126,6 +151,7 @@ class RemoteSyncManager {
     this.detachHostListeners();
     tcpHostServer.stopServer();
     udpDiscoveryService.stopHostBeacon();
+    blePeripheralService.stopHost().catch(() => {});
 
     useRemoteConnectStore.getState().setMode('idle');
     this.isHostActive = false;
@@ -146,7 +172,7 @@ class RemoteSyncManager {
         track: trackSummary,
         lyrics: lyricsSummary,
       };
-      tcpHostServer.broadcast(trackChangeMsg);
+      this.broadcastToAll(trackChangeMsg);
 
       if (track) {
         // If lyrics not in cache and autoFetchLyrics is enabled, fetch in background and broadcast
@@ -173,7 +199,7 @@ class RemoteSyncManager {
                       trackId: track.id,
                       lyrics: updated,
                     };
-                    tcpHostServer.broadcast(lyricsMsg);
+                    this.broadcastToAll(lyricsMsg);
                   }
                 }
               })
@@ -190,7 +216,7 @@ class RemoteSyncManager {
             trackId: track.id,
             base64: artworkBase64,
           };
-          tcpHostServer.broadcast(artMsg);
+          this.broadcastToAll(artMsg);
         }
       }
     });
@@ -209,7 +235,7 @@ class RemoteSyncManager {
         repeatMode,
         isShuffle,
       };
-      tcpHostServer.broadcast(stateMsg);
+      this.broadcastToAll(stateMsg);
 
       const posMsg: PositionSyncMessage = {
         type: 'POSITION_SYNC',
@@ -217,7 +243,7 @@ class RemoteSyncManager {
         isPlaying,
         playbackRate: 1.0,
       };
-      tcpHostServer.broadcast(posMsg);
+      this.broadcastToAll(posMsg);
     });
 
     this.hostSubscriptions = [
@@ -239,7 +265,7 @@ class RemoteSyncManager {
             isPlaying: true,
             playbackRate: 1.0,
           };
-          tcpHostServer.broadcast(posMsg);
+          this.broadcastToAll(posMsg);
         }
       } catch {
         // ignore
@@ -322,7 +348,7 @@ class RemoteSyncManager {
         queue: queueSummaries,
         upNext: upNextSummaries,
       };
-      tcpHostServer.broadcast(queueSync);
+      this.broadcastToAll(queueSync);
     });
   }
 
@@ -482,7 +508,7 @@ class RemoteSyncManager {
   // CLIENT MANAGEMENT
   // ==========================================
 
-  public async connectToHost(host: DiscoveredHost): Promise<void> {
+  public async connectToHost(host: DiscoveredHost | DiscoveredPeer): Promise<void> {
     // 1. Local Audio Suppression: Pause local TrackPlayer if playing
     try {
       await TrackPlayer.pause();
@@ -492,6 +518,32 @@ class RemoteSyncManager {
 
     useRemoteConnectStore.getState().setMode('client');
     useRemoteConnectStore.getState().setConnectedDeviceName(host.deviceName);
+
+    // Bluetooth Low Energy (BLE) Client connection
+    if ((host as DiscoveredPeer).transport === 'ble') {
+      this.activeClientTransport = 'ble';
+      tcpClient.disconnect();
+
+      bleCentralService.setCallbacks({
+        onStatusChange: (status: ClientConnectionStatus, error?: string) => {
+          useRemoteConnectStore.getState().setConnectionStatus(status, error);
+          if (status === 'disconnected' || status === 'error') {
+            remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
+            useRemoteConnectStore.getState().setMode('idle');
+          }
+        },
+        onMessage: (message: RemoteMessage) => {
+          this.handleClientIncomingMessage(message);
+        },
+      });
+
+      await bleCentralService.connect(host as DiscoveredPeer);
+      return;
+    }
+
+    // Wi-Fi (TCP) Client connection
+    this.activeClientTransport = 'wifi';
+    bleCentralService.disconnect().catch(() => {});
 
     const clientDeviceId = `client_${Platform.OS}_${Date.now()}`;
     const clientDeviceName = useRemoteConnectStore.getState().customDeviceName;
@@ -512,7 +564,7 @@ class RemoteSyncManager {
 
       onPairSuccess: (token: string) => {
         useRemoteConnectStore.setState({
-          lastConnectedHostIp: host.hostIp,
+          lastConnectedHostIp: (host as DiscoveredHost).hostIp,
           lastConnectedToken: token,
         });
       },
@@ -523,8 +575,8 @@ class RemoteSyncManager {
     });
 
     tcpClient.connect({
-      hostIp: host.hostIp,
-      port: host.port,
+      hostIp: (host as DiscoveredHost).hostIp,
+      port: (host as DiscoveredHost).port,
       clientDeviceId,
       clientDeviceName,
       token: savedToken,
@@ -533,12 +585,22 @@ class RemoteSyncManager {
 
   public disconnectClient(): void {
     remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
-    tcpClient.disconnect();
+    if (this.activeClientTransport === 'ble') {
+      bleCentralService.disconnect().catch(() => {});
+    } else {
+      tcpClient.disconnect();
+    }
     useRemoteConnectStore.getState().resetRemoteState();
   }
 
   public sendClientCommand(message: RemoteMessage): void {
-    tcpClient.sendMessage(message);
+    if (this.activeClientTransport === 'ble') {
+      bleCentralService.sendCommand(message).catch((err) => {
+        console.warn('[RemoteSyncManager] BLE sendCommand failed:', err);
+      });
+    } else {
+      tcpClient.sendMessage(message);
+    }
   }
 
   public sendPlay(): void {
@@ -753,7 +815,7 @@ class RemoteSyncManager {
             trackId,
             lyrics: updated,
           };
-          tcpHostServer.broadcast(lyricsMsg);
+          this.broadcastToAll(lyricsMsg);
         }
       }
     });
