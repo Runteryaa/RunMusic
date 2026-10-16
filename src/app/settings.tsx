@@ -28,7 +28,7 @@ import { syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
 import { useTranslation, type AppLanguage } from '../services/i18n';
 import { AdBanner } from '../components/AdBanner';
 import { showRewardedAd } from '../services/adService';
-import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
+import { useRemoteConnectStore, DEFAULT_DEVICE_NAME } from '../store/useRemoteConnectStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 
 const GITHUB_URL = 'https://github.com/Runteryaa/RunMusic';
@@ -472,7 +472,15 @@ export default function SettingsScreen() {
             style={[styles.smallInput, { width: 140, textAlign: 'left', paddingHorizontal: 10 }]}
             value={customDeviceName}
             onChangeText={setCustomDeviceName}
-            placeholder="Cihaz Adı"
+            onBlur={() => {
+              const trimmed = customDeviceName.trim();
+              if (!trimmed) {
+                setCustomDeviceName(DEFAULT_DEVICE_NAME);
+              } else if (trimmed !== customDeviceName) {
+                setCustomDeviceName(trimmed);
+              }
+            }}
+            placeholder={DEFAULT_DEVICE_NAME}
             placeholderTextColor="#71717a"
             maxLength={30}
           />

@@ -86,7 +86,7 @@ interface RemoteConnectStoreState {
   resetRemoteState: () => void;
 }
 
-const DEFAULT_DEVICE_NAME = Device.modelName || Device.deviceName || 'RunMusic Device';
+export const DEFAULT_DEVICE_NAME = Device.modelName || Device.deviceName || 'RunMusic Device';
 
 const initialRemotePlaybackState: RemotePlaybackState = {
   activeTrack: null,
@@ -162,7 +162,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
         return s.mode === 'client' && s.connectionStatus === 'connected';
       },
       setServiceEnabled: (enabled) => set({ isServiceEnabled: enabled }),
-      setCustomDeviceName: (name) => set({ customDeviceName: name.trim() || DEFAULT_DEVICE_NAME }),
+      setCustomDeviceName: (name) => set({ customDeviceName: name }),
 
       addTrustedDevice: (client) => {
         const filtered = get().trustedDevices.filter((c) => c.deviceId !== client.deviceId);
@@ -371,7 +371,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       },
       partialize: (state) => ({
         isServiceEnabled: state.isServiceEnabled,
-        customDeviceName: state.customDeviceName,
+        customDeviceName: state.customDeviceName.trim() || DEFAULT_DEVICE_NAME,
         trustedDevices: state.trustedDevices,
         lastConnectedHostIp: state.lastConnectedHostIp,
         lastConnectedToken: state.lastConnectedToken,
