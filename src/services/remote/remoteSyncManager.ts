@@ -177,6 +177,7 @@ class RemoteSyncManager {
         lyrics: lyricsSummary,
       };
       this.broadcastToAll(trackChangeMsg);
+      this.broadcastQueueSync();
 
       if (track) {
         // If lyrics not in cache and autoFetchLyrics is enabled, fetch in background and broadcast
@@ -250,9 +251,23 @@ class RemoteSyncManager {
       this.broadcastToAll(posMsg);
     });
 
+    // 3. Store change listener for isShuffle & repeatMode on Host
+    let lastShuffle = useStore.getState().isShuffle;
+    let lastRepeat = useStore.getState().repeatMode;
+    const unsubStore = useStore.subscribe((state) => {
+      if (!this.isHostActive) return;
+      if (state.isShuffle !== lastShuffle || state.repeatMode !== lastRepeat) {
+        lastShuffle = state.isShuffle;
+        lastRepeat = state.repeatMode;
+        this.broadcastStateChange();
+        this.broadcastQueueSync();
+      }
+    });
+
     this.hostSubscriptions = [
       () => subTrack.remove(),
       () => subState.remove(),
+      () => unsubStore(),
     ];
 
     // 3. Low-frequency position heartbeat (every 5000ms while active)
@@ -315,6 +330,11 @@ class RemoteSyncManager {
       const asset = allAssets.find((a) => a.id === id);
       if (asset) {
         upNextSummaries.push(this.formatAssetSummary(asset));
+      } else {
+        const qTrack = queueTracks.find((t) => t.id === id);
+        if (qTrack) {
+          upNextSummaries.push(this.formatTrackSummary(qTrack));
+        }
       }
     }
 
@@ -332,6 +352,26 @@ class RemoteSyncManager {
     };
   }
 
+  public async broadcastStateChange(): Promise<void> {
+    if (!this.isHostActive) return;
+    try {
+      const playback = await TrackPlayer.getPlaybackState();
+      const isPlaying = playback.state === State.Playing;
+      const repeatMode = await TrackPlayer.getRepeatMode();
+      const isShuffle = useStore.getState().isShuffle;
+
+      const stateMsg: StateChangeMessage = {
+        type: 'STATE_CHANGE',
+        isPlaying,
+        repeatMode,
+        isShuffle,
+      };
+      this.broadcastToAll(stateMsg);
+    } catch (e) {
+      console.warn('[RemoteSyncManager] broadcastStateChange error:', e);
+    }
+  }
+
   public broadcastQueueSync(): void {
     if (!this.isHostActive) return;
     TrackPlayer.getQueue().then((queueTracks) => {
@@ -344,6 +384,11 @@ class RemoteSyncManager {
         const asset = allAssets.find((a) => a.id === id);
         if (asset) {
           upNextSummaries.push(this.formatAssetSummary(asset));
+        } else {
+          const qTrack = queueTracks.find((t) => t.id === id);
+          if (qTrack) {
+            upNextSummaries.push(this.formatTrackSummary(qTrack));
+          }
         }
       }
 
@@ -387,31 +432,51 @@ class RemoteSyncManager {
         break;
 
       case 'COMMAND_SET_SHUFFLE':
-        setShuffle(msg.enabled);
+        setShuffle(msg.enabled)
+          .then(() => {
+            this.broadcastStateChange();
+            this.broadcastQueueSync();
+          })
+          .catch((err) => {
+            console.warn('[RemoteSyncManager] Host setShuffle error:', err);
+          });
         break;
 
       case 'COMMAND_SET_REPEAT':
-        TrackPlayer.setRepeatMode(msg.mode);
+        TrackPlayer.setRepeatMode(msg.mode)
+          .then(() => {
+            useStore.getState().setRepeatMode(msg.mode);
+            this.broadcastStateChange();
+          })
+          .catch((err) => {
+            console.warn('[RemoteSyncManager] Host setRepeatMode error:', err);
+          });
         break;
 
       case 'COMMAND_QUEUE_MOVE':
-        moveUpNext(msg.fromIndex, msg.toIndex);
-        this.broadcastQueueSync();
+        moveUpNext(msg.fromIndex, msg.toIndex)
+          .then(() => {
+            this.broadcastQueueSync();
+          })
+          .catch((err) => {
+            console.warn('[RemoteSyncManager] Host moveUpNext error:', err);
+          });
         break;
 
       case 'COMMAND_QUEUE_REMOVE':
-        if (typeof msg.trackIndex === 'number') {
+        if (msg.trackId) {
+          TrackPlayer.getQueue().then(async (queueTracks) => {
+            const index = queueTracks.findIndex(
+              (t) => t.id === msg.trackId || (t as any).url === msg.trackId
+            );
+            if (index !== -1) {
+              await removeQueueItem(index);
+              this.broadcastQueueSync();
+            }
+          });
+        } else if (typeof msg.trackIndex === 'number') {
           removeQueueItem(msg.trackIndex).then(() => {
             this.broadcastQueueSync();
-          });
-        } else if (msg.trackId) {
-          TrackPlayer.getQueue().then((queueTracks) => {
-            const index = queueTracks.findIndex((t) => t.id === msg.trackId);
-            if (index !== -1) {
-              removeQueueItem(index).then(() => {
-                this.broadcastQueueSync();
-              });
-            }
           });
         }
         break;
@@ -581,6 +646,7 @@ class RemoteSyncManager {
       duration: asset.duration,
     });
     await TrackPlayer.play();
+    this.broadcastQueueSync();
   }
 
   private async handleArtworkRequest(trackId: string, clientSocket: any): Promise<void> {

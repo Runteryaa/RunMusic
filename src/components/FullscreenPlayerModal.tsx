@@ -38,7 +38,7 @@ import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import { udpDiscoveryService } from '../services/remote/udpDiscovery';
 import { bleCentralService } from '../services/remote/bleCentralService';
 import type { DiscoveredPeer } from '../services/remote/IRemoteTransport';
-import { RUNMUSIC_TCP_PORT, type RemoteTrackSummary, type DiscoveredHost } from '../services/remote/remoteTypes';
+import { RUNMUSIC_TCP_PORT, type DiscoveredHost } from '../services/remote/remoteTypes';
 import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
@@ -63,6 +63,7 @@ import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/pl
 import {
   buildQueueRows,
   cyclePlaybackMode,
+  deriveQueueSections,
   getQueueSections,
   markUpNextConsumed,
   moveUpNext,
@@ -432,6 +433,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   };
 
   const refreshQueue = useCallback(async () => {
+    if (player.isRemote) return;
     try {
       const q = await TrackPlayer.getQueue();
       const idx = await TrackPlayer.getActiveTrackIndex();
@@ -440,16 +442,17 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     } catch (e) {
       console.warn('Failed to load queue', e);
     }
-  }, []);
+  }, [player.isRemote]);
 
   /** Kuyruk bölümlerini native kuyruktan yeniden türetir. */
   const refreshQueueSections = useCallback(async () => {
+    if (player.isRemote) return;
     try {
       setQueueSections(await getQueueSections());
     } catch (e) {
       console.warn('Failed to derive queue sections', e);
     }
-  }, []);
+  }, [player.isRemote]);
 
   // Oynatıcı açıkken veya aktif parça değiştiğinde kuyruğu ve bölümleri önceden hazırla (pre-warm)
   useEffect(() => {
@@ -489,56 +492,43 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const derivedRemoteQueueSections = useMemo((): QueueSections<Track> | null => {
     if (!player.isRemote) return null;
     const currentTrackSummary = player.activeTrack;
-    const queueList = Array.isArray(remoteState.queue) ? remoteState.queue : [];
-    const currentIndex = queueList.findIndex((t) => t && t.id === currentTrackSummary?.id);
-
-    const toTrack = (t: RemoteTrackSummary, idx: number): QueueEntry<Track> => ({
-      index: idx,
-      track: {
+    const queueList: Track[] = (Array.isArray(remoteState.queue) ? remoteState.queue : [])
+      .filter(Boolean)
+      .map((t) => ({
         id: t.id,
         url: t.id,
         title: t.title,
         artist: t.artist,
         duration: t.duration,
-      } as Track,
-    });
+      } as Track));
 
-    const currentEntry: QueueEntry<Track> | null = currentTrackSummary
-      ? {
-          index: currentIndex >= 0 ? currentIndex : 0,
-          track: {
-            id: currentTrackSummary.id,
-            url: currentTrackSummary.id,
-            title: currentTrackSummary.title,
-            artist: currentTrackSummary.artist,
-            duration: currentTrackSummary.duration,
-            artwork: player.artworkUri || undefined,
-          } as Track,
-        }
-      : null;
+    let currentIndex = queueList.findIndex((t) => t && t.id === currentTrackSummary?.id);
+    if (currentIndex === -1 && currentTrackSummary) {
+      const normTitle = (currentTrackSummary.title || '').trim().toLowerCase();
+      const normArtist = (currentTrackSummary.artist || '').trim().toLowerCase();
+      currentIndex = queueList.findIndex((t) => {
+        if (!t) return false;
+        const tTitle = (t.title || '').trim().toLowerCase();
+        const tArtist = (t.artist || '').trim().toLowerCase();
+        return tTitle === normTitle && (!normArtist || tArtist === normArtist);
+      });
+    }
 
-    const historyEntries: QueueEntry<Track>[] = [];
-    const contextEntries: QueueEntry<Track>[] = [];
-
-    (remoteState.queue || []).forEach((t, idx) => {
-      if (!t) return;
-      if (currentIndex >= 0 && idx < currentIndex) {
-        historyEntries.push(toTrack(t, idx));
-      } else if (currentIndex >= 0 && idx > currentIndex) {
-        contextEntries.push(toTrack(t, idx));
-      }
-    });
-
-    const upNextEntries: QueueEntry<Track>[] = (remoteState.upNext || [])
+    const upNextIds = (Array.isArray(remoteState.upNext) ? remoteState.upNext : [])
       .filter(Boolean)
-      .map((t, idx) => toTrack(t, idx));
+      .map((t) => t.id);
 
-    return {
-      history: historyEntries,
-      current: currentEntry,
-      upNext: upNextEntries,
-      context: contextEntries,
-    };
+    const sections = deriveQueueSections(
+      queueList,
+      currentIndex >= 0 ? currentIndex : 0,
+      upNextIds
+    );
+
+    if (currentTrackSummary && sections.current) {
+      sections.current.track.artwork = player.artworkUri || undefined;
+    }
+
+    return sections;
   }, [player.isRemote, player.activeTrack, player.artworkUri, remoteState.queue, remoteState.upNext]);
 
   const effectiveQueueSections = player.isRemote ? derivedRemoteQueueSections : queueSections;
@@ -574,7 +564,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const handleRemoveUpNext = useCallback(
     async (sectionIndex: number) => {
       if (player.isRemote) {
-        remoteSyncManager.sendClientCommand({ type: 'COMMAND_QUEUE_REMOVE', trackIndex: sectionIndex });
+        const target = effectiveQueueSections?.upNext[sectionIndex];
+        const trackId = target?.track?.id;
+        remoteSyncManager.sendClientCommand({
+          type: 'COMMAND_QUEUE_REMOVE',
+          trackId: trackId || undefined,
+          trackIndex: target && target.index >= 0 ? target.index : undefined,
+        });
         return;
       }
       const target = queueSections?.upNext[sectionIndex];
@@ -583,20 +579,26 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       await refreshQueueSections();
       await refreshQueue();
     },
-    [player.isRemote, queueSections, refreshQueueSections, refreshQueue]
+    [player.isRemote, effectiveQueueSections, queueSections, refreshQueueSections, refreshQueue]
   );
 
   const handleRemoveFromContext = useCallback(
     async (queueIndex: number) => {
       if (player.isRemote) {
-        remoteSyncManager.sendClientCommand({ type: 'COMMAND_QUEUE_REMOVE', trackIndex: queueIndex });
+        const target = effectiveQueueSections?.context.find((e) => e.index === queueIndex);
+        const trackId = target?.track?.id;
+        remoteSyncManager.sendClientCommand({
+          type: 'COMMAND_QUEUE_REMOVE',
+          trackIndex: queueIndex,
+          trackId: trackId || undefined,
+        });
         return;
       }
       await removeQueueItem(queueIndex);
       await refreshQueueSections();
       await refreshQueue();
     },
-    [player.isRemote, refreshQueueSections, refreshQueue]
+    [player.isRemote, effectiveQueueSections, refreshQueueSections, refreshQueue]
   );
 
   const handleQueueItemPress = useCallback(
@@ -1065,48 +1067,68 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const remoteLrclibId = remoteLyrics?.lrclibId;
   const remoteGeniusId = remoteLyrics?.geniusId;
   const remoteGeniusUrl = remoteLyrics?.geniusUrl;
-  const remoteHasLines = !!(remoteLyrics?.lines && remoteLyrics.lines.length > 0);
+  const remoteHasContent = !!(
+    (remoteLyrics?.lines && remoteLyrics.lines.length > 0) ||
+    remoteLyrics?.plainLyrics
+  );
+  const lastFetchedRemoteLyricsKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (player.isRemote && remoteLyrics && !remoteHasLines) {
-      if (remoteLrclibId) {
-        const rawId = String(remoteLrclibId).replace('lrclib-', '');
-        fetch(`https://lrclib.net/api/get/${rawId}`, { headers: LRCLIB_HEADERS })
-          .then((res) => res.json())
-          .then((d) => {
-            if (d) {
-              const lines = parseAnySyncedLyrics(d.lyricsfile, d.syncedLyrics);
-              const current = useRemoteConnectStore.getState().remoteState.lyrics;
-              if (current) {
-                useRemoteConnectStore.getState().setRemoteLyrics({
-                  ...current,
-                  lines,
-                  syncedLyrics: d.syncedLyrics,
-                  plainLyrics: d.plainLyrics,
-                  lyricsfile: d.lyricsfile,
-                  isSynced: !!d.syncedLyrics && lines.length > 0,
-                });
-              }
-            }
-          })
-          .catch(() => {});
-      } else if (remoteGeniusUrl) {
-        fetchGeniusLyricsByUrl(remoteGeniusUrl).then((plain) => {
-          if (plain) {
+    if (!player.isRemote || !remoteLyrics || remoteHasContent) {
+      return;
+    }
+
+    const currentKey = `${player.activeTrack?.id || ''}_${remoteLrclibId || remoteGeniusUrl || ''}`;
+    if (lastFetchedRemoteLyricsKeyRef.current === currentKey) {
+      return;
+    }
+    lastFetchedRemoteLyricsKeyRef.current = currentKey;
+
+    if (remoteLrclibId) {
+      const rawId = String(remoteLrclibId).replace('lrclib-', '');
+      fetch(`https://lrclib.net/api/get/${rawId}`, { headers: LRCLIB_HEADERS })
+        .then((res) => res.json())
+        .then((d) => {
+          if (d) {
+            const lines = parseAnySyncedLyrics(d.lyricsfile, d.syncedLyrics);
             const current = useRemoteConnectStore.getState().remoteState.lyrics;
             if (current) {
               useRemoteConnectStore.getState().setRemoteLyrics({
                 ...current,
-                lines: [],
-                plainLyrics: plain,
-                isSynced: false,
+                lines,
+                syncedLyrics: d.syncedLyrics,
+                plainLyrics: d.plainLyrics,
+                lyricsfile: d.lyricsfile,
+                isSynced: !!d.syncedLyrics && lines.length > 0,
               });
             }
           }
-        });
-      }
+        })
+        .catch(() => {});
+    } else if (remoteGeniusUrl) {
+      fetchGeniusLyricsByUrl(remoteGeniusUrl).then((plain) => {
+        if (plain) {
+          const current = useRemoteConnectStore.getState().remoteState.lyrics;
+          if (current) {
+            useRemoteConnectStore.getState().setRemoteLyrics({
+              ...current,
+              lines: [],
+              plainLyrics: plain,
+              isSynced: false,
+            });
+          }
+        }
+      });
     }
-  }, [player.isRemote, remoteLyrics, remoteHasLines, remoteLrclibId, remoteGeniusId, remoteGeniusUrl]);
+  }, [
+    player.isRemote,
+    remoteLyrics,
+    remoteHasContent,
+    remoteLrclibId,
+    remoteGeniusId,
+    remoteGeniusUrl,
+    player.activeTrack?.id,
+  ]);
 
   const loadLyricsForTrack = async (title: string, artist?: string, force = false) => {
     if (player.isRemote || !localActiveTrack) return;
@@ -1258,6 +1280,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, [activeLineIndex, isFullscreenPlayerOpen, isLyricsMode, isLyricsAutoScrollPaused, parsedLines.length]);
 
   // Düz metin (Genius / LRCLIB plain) şarkı sözlerini şarkının saniyesine göre aşağıya doğru orantılı kaydır
+  const lastTargetPlainYRef = useRef<number>(0);
   useEffect(() => {
     if (
       isFullscreenPlayerOpen &&
@@ -1271,10 +1294,15 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       const maxScroll = Math.max(0, plainContentHeightRef.current - plainScrollViewHeightRef.current);
       if (maxScroll > 0) {
         const progressRatio = Math.min(1, Math.max(0, progress.position / duration));
-        plainLyricsScrollRef.current?.scrollTo({
-          y: progressRatio * maxScroll,
-          animated: true,
-        });
+        const targetY = progressRatio * maxScroll;
+        // Animasyon çatışmasını (jitter/glitch) önlemek için en az 3 piksellik fark olunca kaydır
+        if (Math.abs(targetY - lastTargetPlainYRef.current) >= 3) {
+          lastTargetPlainYRef.current = targetY;
+          plainLyricsScrollRef.current?.scrollTo({
+            y: targetY,
+            animated: true,
+          });
+        }
       }
     }
   }, [
@@ -1287,14 +1315,18 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     currentLyrics?.plainLyrics,
   ]);
 
-  // Şarkı değiştiğinde düz metin kaydırma pozisyonunu sıfırla
+  // Sadece parça kimliği (ID/URL) gerçekten değiştiğinde düz metin kaydırma pozisyonunu sıfırla
+  const activeTrackKey = activeTrack?.id || (activeTrack as any)?.url || null;
+  const lastPlainResetTrackIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (activeTrack) {
+    if (activeTrackKey && activeTrackKey !== lastPlainResetTrackIdRef.current) {
+      lastPlainResetTrackIdRef.current = activeTrackKey;
+      lastTargetPlainYRef.current = 0;
       isPlainUserScrollingRef.current = false;
       if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
       plainLyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
     }
-  }, [activeTrack]);
+  }, [activeTrackKey]);
 
   const handleManualSearch = async () => {
     if (!manualQuery.trim() || !activeTrack) return;
@@ -1605,16 +1637,17 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const togglePlaybackMode = useCallback(async () => {
     if (player.isRemote) {
-      if (player.repeatMode === RepeatMode.Off && !player.isShuffle) {
-        await player.setRepeatMode(RepeatMode.Queue);
-      } else if (player.repeatMode === RepeatMode.Queue) {
+      if (player.isShuffle) {
+        // Karışık -> Tek Şarkı Tekrarla
+        await player.setShuffle(false);
         await player.setRepeatMode(RepeatMode.Track);
       } else if (player.repeatMode === RepeatMode.Track) {
+        // Tek Şarkı Tekrarla -> Sırayla (Sequential)
+        await player.setRepeatMode(RepeatMode.Queue);
+      } else {
+        // Sırayla -> Karışık (Shuffle)
         await player.setRepeatMode(RepeatMode.Off);
         await player.setShuffle(true);
-      } else {
-        await player.setShuffle(false);
-        await player.setRepeatMode(RepeatMode.Off);
       }
       return;
     }
@@ -2190,6 +2223,16 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   plainScrollTimeoutRef.current = setTimeout(() => {
                     isPlainUserScrollingRef.current = false;
                   }, 4000);
+                }}
+                onMomentumScrollBegin={() => {
+                  isPlainUserScrollingRef.current = true;
+                  if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
+                }}
+                onMomentumScrollEnd={() => {
+                  if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
+                  plainScrollTimeoutRef.current = setTimeout(() => {
+                    isPlainUserScrollingRef.current = false;
+                  }, 4000);
                 }}>
                 <Text style={styles.plainLyricsText}>{currentLyrics.plainLyrics}</Text>
               </ScrollView>
@@ -2234,7 +2277,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <View style={[styles.queueSourceBadge, { backgroundColor: theme.surface }]}>
                 <Ionicons name="list" size={13} color={theme.primary} style={{ marginRight: 6 }} />
                 <Text style={[styles.queueSourceText, { color: theme.textAccent }]}>
-                  {t('player.queue_title')} {queue.length > 0 ? `(${queue.length})` : ''}
+                  {t('player.queue_title')}{' '}
+                  {(player.isRemote ? (remoteState.queue?.length || 0) : queue.length) > 0
+                    ? `(${player.isRemote ? (remoteState.queue?.length || 0) : queue.length})`
+                    : ''}
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -2269,7 +2315,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               ref={queueListRef}
               data={queueRows}
               initialScrollIndex={currentRowIndex >= 0 ? currentRowIndex : undefined}
-              extraData={`${isShuffle}-${isSmartShuffle}-${repeatMode}-${queueRevision}`}
+              extraData={`${isShuffle}-${isSmartShuffle}-${repeatMode}-${queueRevision}-${remoteState.queue?.length}-${player.activeTrack?.id}`}
               keyExtractor={(row) => row.key}
               renderItem={renderQueueRow}
               contentContainerStyle={styles.queueScrollContent}
@@ -2280,7 +2326,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               windowSize={7}
               onScrollToIndexFailed={handleScrollToIndexFailed}
               ListEmptyComponent={
-                queueSections ? (
+                effectiveQueueSections ? (
                   <View style={{ paddingVertical: 32, alignItems: 'center' }}>
                     <Text style={{ color: '#71717a', fontSize: 14 }}>{t('player.queue_empty')}</Text>
                   </View>

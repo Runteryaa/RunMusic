@@ -253,12 +253,16 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
 
       setRemoteTrackChange: (msg) => {
         const now = Date.now();
+        const currentActive = get().remoteState.activeTrack;
+        const isSameTrack =
+          (!!msg.track?.id && msg.track.id === currentActive?.id) ||
+          (!!msg.track?.title && msg.track.title === currentActive?.title && msg.track.artist === currentActive?.artist);
         set((state) => ({
           remoteState: {
             ...state.remoteState,
             activeTrack: msg.track,
-            lyrics: msg.lyrics,
-            artworkUri: null, // Reset for new track until artwork sync arrives
+            lyrics: isSameTrack ? (msg.lyrics ?? state.remoteState.lyrics) : (msg.lyrics ?? null),
+            artworkUri: isSameTrack ? state.remoteState.artworkUri : null,
           },
           lastKnownPosition: 0,
           clientSyncReceivedAt: now,
