@@ -3,7 +3,7 @@ module.exports = {
     'react-native-ble-plx': {
       platforms: {
         android: {
-          cmakeListsPath: '../../../../scripts/dummy-ble-cmake/CMakeLists.txt',
+          cmakeListsPath: 'dummy-cmake/CMakeLists.txt',
         },
       },
     },
