@@ -119,7 +119,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const [manualPort, setManualPort] = useState(RUNMUSIC_TCP_PORT.toString());
 
   useEffect(() => {
-    if (!isConnectMode || !isRemoteServiceEnabled || player.isRemote) {
+    if (!isConnectMode || player.isRemote) {
       if (!player.isRemote) {
         setDiscoveredHosts([]);
         setDiscoveredBlePeers([]);
@@ -144,7 +144,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     }
   }, [
     isConnectMode,
-    isRemoteServiceEnabled,
     player.isRemote,
     activeTransportTab,
     setDiscoveredHosts,
@@ -601,9 +600,15 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   );
 
   const handleQueueItemPress = useCallback(
-    async (queueIndex: number) => {
+    async (queueIndex: number, trackId?: string, title?: string, artist?: string) => {
       if (player.isRemote) {
-        remoteSyncManager.sendClientCommand({ type: 'COMMAND_PLAY_TRACK', trackIndex: queueIndex });
+        remoteSyncManager.sendClientCommand({
+          type: 'COMMAND_PLAY_TRACK',
+          trackIndex: queueIndex >= 0 ? queueIndex : undefined,
+          trackId,
+          title,
+          artist,
+        });
         return;
       }
       try {
@@ -702,9 +707,23 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       activeOpacity={0.7}
       onPress={() => {
         if (isHistory && typeof historyIndex === 'number') {
-          playHistoryTrack(historyIndex, entry.track);
+          if (player.isRemote) {
+            handleQueueItemPress(
+              entry.index,
+              entry.track.id,
+              entry.track.title,
+              entry.track.artist
+            );
+          } else {
+            playHistoryTrack(historyIndex, entry.track);
+          }
         } else {
-          handleQueueItemPress(entry.index);
+          handleQueueItemPress(
+            entry.index,
+            entry.track.id,
+            entry.track.title,
+            entry.track.artist
+          );
         }
       }}>
       <Text style={[styles.queueIndex, isCurrent && { color: theme.primary }]}>
@@ -2616,34 +2635,19 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 style={styles.connectList}
                 showsVerticalScrollIndicator={false}
                 ListEmptyComponent={
-                  !isRemoteServiceEnabled ? (
-                    <View style={styles.connectEmptyContainer}>
-                      <Ionicons
-                        name="power-outline"
-                        size={26}
-                        color="rgba(255, 255, 255, 0.35)"
-                        style={{ marginBottom: 6 }}
-                      />
-                      <Text style={styles.connectEmptyTitle}>Bağlantı Servisi Kapalı</Text>
-                      <Text style={styles.connectEmptySubtext}>
-                        Diğer cihazları görmek ve bu cihazı kontrol edilebilir kılmak için yukarıdaki anahtarı açın.
-                      </Text>
-                    </View>
-                  ) : (
-                    <View style={styles.connectEmptyContainer}>
-                      <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 6 }} />
-                      <Text style={styles.connectEmptyTitle}>
-                        {activeTransportTab === 'ble'
-                          ? 'Bluetooth cihazları aranıyor...'
-                          : 'Cihazlar aranıyor...'}
-                      </Text>
-                      <Text style={styles.connectEmptySubtext}>
-                        {activeTransportTab === 'ble'
-                          ? "Diğer cihazda da RunMusic'i açın ve Bluetooth sekmesini seçin."
-                          : "Diğer cihazda da RunMusic'i açın. Aynı Wi-Fi ağına bağlı olmalıdır."}
-                      </Text>
-                    </View>
-                  )
+                  <View style={styles.connectEmptyContainer}>
+                    <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 6 }} />
+                    <Text style={styles.connectEmptyTitle}>
+                      {activeTransportTab === 'ble'
+                        ? 'Bluetooth cihazları aranıyor...'
+                        : 'Cihazlar aranıyor...'}
+                    </Text>
+                    <Text style={styles.connectEmptySubtext}>
+                      {activeTransportTab === 'ble'
+                        ? "Diğer cihazda Bluetooth Kumandası açık ve görünür olmalıdır."
+                        : "Diğer cihazda Wi-Fi Kumandası açık olmalı ve aynı ağda bulunmalıdır."}
+                    </Text>
+                  </View>
                 }
                 renderItem={({ item }) => {
                   const isThisConnected =

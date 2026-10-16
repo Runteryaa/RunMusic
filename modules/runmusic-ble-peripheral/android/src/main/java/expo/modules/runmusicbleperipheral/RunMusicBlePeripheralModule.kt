@@ -126,6 +126,10 @@ class RunMusicBlePeripheralModule : Module() {
     ) {
       if (device == null || characteristic == null) return
 
+      if (!connectedDevices.any { it.address == device.address }) {
+        connectedDevices.add(device)
+      }
+
       // Rule 1: Always send response if responseNeeded is true so client's FIFO queue never hangs
       if (responseNeeded) {
         try {
@@ -158,6 +162,10 @@ class RunMusicBlePeripheralModule : Module() {
       value: ByteArray?
     ) {
       if (device == null || descriptor == null) return
+
+      if (!connectedDevices.any { it.address == device.address }) {
+        connectedDevices.add(device)
+      }
 
       // Update descriptor value in GATT server so Android internal BLE stack recognizes subscriptions
       if (descriptor.uuid == CCCD_UUID && value != null) {

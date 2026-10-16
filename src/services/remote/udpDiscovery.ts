@@ -85,7 +85,7 @@ class UDPDiscoveryService {
 
     try {
       acquireWifiMulticastLock();
-      const socket: any = dgram.createSocket({ type: 'udp4' } as any);
+      const socket: any = dgram.createSocket({ type: 'udp4', reusePort: true } as any);
       this.socket = socket;
       this.isSocketBound = false;
 
@@ -239,9 +239,6 @@ class UDPDiscoveryService {
       if (onHostsChanged) {
         this.listeners.delete(onHostsChanged);
       }
-      if (this.listeners.size === 0 && !this.isHostBeaconDesired) {
-        this.stopClientListener();
-      }
     };
   }
 
@@ -250,14 +247,6 @@ class UDPDiscoveryService {
    */
   public stopClientListener(): void {
     this.listeners.clear();
-    if (!this.isHostBeaconDesired) {
-      if (this.cleanupIntervalId) {
-        clearInterval(this.cleanupIntervalId);
-        this.cleanupIntervalId = null;
-      }
-      this.closeSocket();
-      this.discoveredHosts.clear();
-    }
   }
 
   /**

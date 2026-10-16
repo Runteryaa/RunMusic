@@ -196,12 +196,17 @@ export interface CommandQueueRemoveMessage {
 
 export interface CommandPlayTrackMessage {
   type: 'COMMAND_PLAY_TRACK';
-  trackIndex: number;
+  trackIndex?: number;
+  trackId?: string;
+  title?: string;
+  artist?: string;
 }
 
 export interface CommandPlayLibraryTrackMessage {
   type: 'COMMAND_PLAY_LIBRARY_TRACK';
   trackId: string;
+  title?: string;
+  artist?: string;
 }
 
 export interface CommandSelectLyricsMessage {

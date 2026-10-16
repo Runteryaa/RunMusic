@@ -95,9 +95,15 @@ class BlePeripheralService {
    */
   public async broadcast(
     message: RemoteMessage,
-    charUuid: string = BLE_CHAR_STATE_NOTIFY_UUID
+    charUuid?: string
   ): Promise<void> {
     if (!this.isAdvertising || !RunMusicBlePeripheralModule) return;
+
+    const targetUuid =
+      charUuid ||
+      (message.type === 'QUEUE_SYNC' || message.type === 'LYRICS_SYNC'
+        ? BLE_CHAR_QUEUE_LYRICS_UUID
+        : BLE_CHAR_STATE_NOTIFY_UUID);
 
     const serialized = serializeNDJSON(message);
     const rawBuffer = Buffer.from(serialized, 'utf8');
@@ -116,7 +122,7 @@ class BlePeripheralService {
       const base64Chunk = chunk.toString('base64');
       this.enqueueSend(async () => {
         try {
-          const sendPromise = RunMusicBlePeripheralModule?.sendNotification(charUuid, base64Chunk);
+          const sendPromise = RunMusicBlePeripheralModule?.sendNotification(targetUuid, base64Chunk);
           const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), 1500));
           await Promise.race([sendPromise, timeoutPromise]);
         } catch (err) {

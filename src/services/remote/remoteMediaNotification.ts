@@ -21,6 +21,8 @@ class RemoteMediaNotificationService {
 
   /**
    * Generates a PCM 8000Hz 8-bit mono silent WAV file matching the remote track's duration.
+   * 8000Hz is the minimum guaranteed rate supported by Android AudioTrack (4000-192000Hz),
+   * ensuring ExoPlayer advances 1:1 in real time and never hits premature EOF or resets.
    * Alternates between two file slots ('a' and 'b') to ensure ExoPlayer refreshes duration.
    */
   public async ensureSilentAudioFile(durationSec = 180): Promise<string> {
@@ -29,16 +31,8 @@ class RemoteMediaNotificationService {
     // Toggle slot to bust any ExoPlayer file metadata caching
     this.activeSilentSlot = this.activeSilentSlot === 'a' ? 'b' : 'a';
     const path = `${FileSystem.cacheDirectory}remote_silent_${this.activeSilentSlot}.wav`;
-    const otherPath = `${FileSystem.cacheDirectory}remote_silent_${this.activeSilentSlot === 'a' ? 'b' : 'a'}.wav`;
 
-    // Remove old slot file to keep storage clean
-    try {
-      await FileSystem.deleteAsync(otherPath, { idempotent: true });
-    } catch {
-      // ignore
-    }
-
-    const sampleRate = 1000;
+    const sampleRate = 8000;
     const numChannels = 1;
     const bitsPerSample = 8;
     const dataSize = sampleRate * numChannels * (bitsPerSample / 8) * safeDuration;

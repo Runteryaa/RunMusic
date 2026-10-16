@@ -193,7 +193,7 @@ class BleCentralService {
       // Request fresh initial state from Host now that monitors are active
       setTimeout(() => {
         this.sendCommand({ type: 'COMMAND_GET_STATE' } as any).catch(() => {});
-      }, 150);
+      }, 400);
     } catch (err: any) {
       console.error('[BleCentralService] Connection error:', err);
       this.cleanup();
@@ -237,7 +237,7 @@ class BleCentralService {
     }
 
     // High frequency SEEK can use writeWithoutResponse, while discrete commands use writeWithResponse
-    const isSeek = (message as any)?.type === 'SEEK_COMMAND';
+    const isSeek = (message as any)?.type === 'COMMAND_SEEK';
 
     for (const chunk of chunks) {
       const base64Chunk = chunk.toString('base64');
@@ -273,7 +273,9 @@ class BleCentralService {
       const task = this.sendQueue.shift();
       if (task) {
         try {
-          await task();
+          const writePromise = task();
+          const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 3000));
+          await Promise.race([writePromise, timeoutPromise]);
         } catch (err) {
           console.warn('[BleCentralService] Error in write queue task:', err);
         }

@@ -21,6 +21,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
+import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
+import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { EditTrackModal, EditTrackTarget } from '../components/EditTrackModal';
 import { AdBanner } from '../components/AdBanner';
@@ -459,6 +461,19 @@ export default function LibraryScreen() {
         useThemeStore.getState().updateThemeFromArtwork(targetArtwork);
       }
 
+      // Uzak cihaz bağlantısı aktifse komutu doğrudan sunucu cihaza yönlendir
+      if (useRemoteConnectStore.getState().isRemoteConnected()) {
+        const meta = metadataMap[selectedAsset.id];
+        remoteSyncManager.sendClientCommand({
+          type: 'COMMAND_PLAY_TRACK',
+          trackId: selectedAsset.id,
+          title: meta?.title || selectedAsset.filename,
+          artist: meta?.artist || undefined,
+        });
+        openFullscreenPlayer();
+        return;
+      }
+
       // 2. Mevcut kuyrukta şarkı var mı denetle
       const queue = await TrackPlayer.getQueue();
       const existingIndex = queue.findIndex(
@@ -514,6 +529,20 @@ export default function LibraryScreen() {
 
   const handleAddToQueue = async (asset: MediaLibrary.Asset) => {
     try {
+      const meta = metadataMap[asset.id];
+      const title = meta?.title || asset.filename;
+
+      if (useRemoteConnectStore.getState().isRemoteConnected()) {
+        remoteSyncManager.sendClientCommand({
+          type: 'COMMAND_PLAY_LIBRARY_TRACK',
+          trackId: asset.id,
+          title,
+          artist: meta?.artist || undefined,
+        });
+        showToast(`"${title}" ${t('library.added_to_queue')}`);
+        return;
+      }
+
       const track = buildQueueTrack(asset);
       await addToQueue(track);
       showToast(`"${track.title}" ${t('library.added_to_queue')}`);
@@ -524,6 +553,20 @@ export default function LibraryScreen() {
 
   const handlePlayNext = async (asset: MediaLibrary.Asset) => {
     try {
+      const meta = metadataMap[asset.id];
+      const title = meta?.title || asset.filename;
+
+      if (useRemoteConnectStore.getState().isRemoteConnected()) {
+        remoteSyncManager.sendClientCommand({
+          type: 'COMMAND_PLAY_LIBRARY_TRACK',
+          trackId: asset.id,
+          title,
+          artist: meta?.artist || undefined,
+        });
+        showToast(`"${title}" ${t('library.play_next_added')}`);
+        return;
+      }
+
       const track = buildQueueTrack(asset);
       await playNext(track);
       showToast(`"${track.title}" ${t('library.play_next_added')}`);
@@ -539,6 +582,13 @@ export default function LibraryScreen() {
   const handleShuffleAll = async () => {
     if (fullSortedList.length === 0) return;
     try {
+      if (useRemoteConnectStore.getState().isRemoteConnected()) {
+        remoteSyncManager.sendClientCommand({ type: 'COMMAND_SET_SHUFFLE', enabled: true });
+        remoteSyncManager.sendClientCommand({ type: 'COMMAND_PLAY' });
+        openFullscreenPlayer();
+        return;
+      }
+
       const startIndex = Math.floor(Math.random() * fullSortedList.length);
       const startTrack = buildQueueTrack(fullSortedList[startIndex]);
       const tracks = fullSortedList.map((asset) => buildQueueTrack(asset));

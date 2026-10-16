@@ -37,6 +37,7 @@ import type {
   LibraryQueryMessage,
   LibraryResultMessage,
   CommandSelectLyricsMessage,
+  CommandPlayTrackMessage,
   DiscoveredHost,
   TrustedClient,
 } from './remoteTypes';
@@ -366,11 +367,19 @@ class RemoteSyncManager {
         break;
 
       case 'COMMAND_SKIP_NEXT':
-        TrackPlayer.skipToNext();
+        TrackPlayer.skipToNext()
+          .then(() => TrackPlayer.play())
+          .catch((err) => {
+            console.warn('[RemoteSyncManager] Host skipToNext error:', err);
+          });
         break;
 
       case 'COMMAND_SKIP_PREVIOUS':
-        skipToPreviousTrack();
+        skipToPreviousTrack()
+          .then(() => TrackPlayer.play())
+          .catch((err) => {
+            console.warn('[RemoteSyncManager] Host skipToPrevious error:', err);
+          });
         break;
 
       case 'COMMAND_SEEK':
@@ -408,11 +417,11 @@ class RemoteSyncManager {
         break;
 
       case 'COMMAND_PLAY_TRACK':
-        TrackPlayer.skip(msg.trackIndex).then(() => TrackPlayer.play());
+        this.handlePlayTrackCommand(msg);
         break;
 
       case 'COMMAND_PLAY_LIBRARY_TRACK':
-        this.playHostLibraryTrack(msg.trackId);
+        this.playHostLibraryTrack(msg.trackId, msg.title, msg.artist);
         break;
 
       case 'LIBRARY_QUERY':
@@ -488,13 +497,79 @@ class RemoteSyncManager {
     tcpHostServer.sendToClient(clientSocket, response);
   }
 
-  private async playHostLibraryTrack(trackId: string): Promise<void> {
-    const allAssets = useStore.getState().allAssets;
-    const asset = allAssets.find((a) => a.id === trackId);
-    if (!asset) return;
+  private async handlePlayTrackCommand(msg: CommandPlayTrackMessage): Promise<void> {
+    try {
+      const queue = await TrackPlayer.getQueue();
+      let targetIndex = -1;
 
-    const metadata = useStore.getState().metadataMap[trackId];
-    const artwork = useStore.getState().artworkMap[trackId];
+      // 1. Try to find track in active queue by ID
+      if (msg.trackId) {
+        targetIndex = queue.findIndex(
+          (t) => t.id === msg.trackId || (t as any).url === msg.trackId
+        );
+      }
+
+      // 2. Try to find by title & artist match (if IDs differ between devices)
+      if (targetIndex === -1 && msg.title) {
+        const normTitle = msg.title.trim().toLowerCase();
+        const normArtist = (msg.artist || '').trim().toLowerCase();
+        targetIndex = queue.findIndex((t) => {
+          const tTitle = (t.title || '').trim().toLowerCase();
+          const tArtist = (t.artist || '').trim().toLowerCase();
+          return tTitle === normTitle && (!normArtist || tArtist === normArtist);
+        });
+      }
+
+      // 3. Fallback to trackIndex if within bounds
+      if (
+        targetIndex === -1 &&
+        typeof msg.trackIndex === 'number' &&
+        msg.trackIndex >= 0 &&
+        msg.trackIndex < queue.length
+      ) {
+        targetIndex = msg.trackIndex;
+      }
+
+      if (targetIndex >= 0) {
+        await TrackPlayer.skip(targetIndex);
+        await TrackPlayer.play();
+        return;
+      }
+
+      // 4. If not found in active queue, check if it exists in host's library
+      if (msg.trackId) {
+        await this.playHostLibraryTrack(msg.trackId, msg.title, msg.artist);
+      }
+    } catch (e) {
+      console.warn('[RemoteSyncManager] handlePlayTrackCommand error:', e);
+    }
+  }
+
+  private async playHostLibraryTrack(trackId: string, title?: string, artist?: string): Promise<void> {
+    const allAssets = useStore.getState().allAssets;
+    const metadataMap = useStore.getState().metadataMap;
+
+    let asset = allAssets.find((a) => a.id === trackId || a.uri === trackId);
+
+    // If ID didn't match, search by title & artist
+    if (!asset && title) {
+      const normTitle = title.trim().toLowerCase();
+      const normArtist = (artist || '').trim().toLowerCase();
+      asset = allAssets.find((a) => {
+        const meta = metadataMap[a.id];
+        const aTitle = (meta?.title || a.filename || '').trim().toLowerCase();
+        const aArtist = (meta?.artist || '').trim().toLowerCase();
+        return aTitle === normTitle && (!normArtist || aArtist === normArtist);
+      });
+    }
+
+    if (!asset) {
+      console.warn('[RemoteSyncManager] playHostLibraryTrack: Track not found on host:', trackId, title);
+      return;
+    }
+
+    const metadata = metadataMap[asset.id];
+    const artwork = useStore.getState().artworkMap[asset.id];
 
     await TrackPlayer.reset();
     await TrackPlayer.add({
