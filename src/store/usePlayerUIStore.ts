@@ -17,6 +17,10 @@ interface PlayerUIState {
   toggleSleepTimerMode: () => void;
   setSleepTimerMode: (val: boolean) => void;
 
+  isConnectMode: boolean;
+  toggleConnectMode: () => void;
+  setConnectMode: (val: boolean) => void;
+
   isDeviceSelectorOpen: boolean;
   openDeviceSelector: () => void;
   closeDeviceSelector: () => void;
@@ -29,6 +33,7 @@ export const usePlayerUIStore = create<PlayerUIState>((set) => ({
     set({
       isFullscreenPlayerOpen: false,
       isSleepTimerMode: false,
+      isConnectMode: false,
     }),
 
   isDeviceSelectorOpen: false,
@@ -41,12 +46,14 @@ export const usePlayerUIStore = create<PlayerUIState>((set) => ({
       isLyricsMode: !state.isLyricsMode,
       isQueueMode: false,
       isSleepTimerMode: false,
+      isConnectMode: false,
     })),
   setLyricsMode: (val: boolean) =>
     set((state) => ({
       isLyricsMode: val,
       isQueueMode: val ? false : state.isQueueMode,
       isSleepTimerMode: val ? false : state.isSleepTimerMode,
+      isConnectMode: val ? false : state.isConnectMode,
     })),
 
   isQueueMode: false,
@@ -55,12 +62,14 @@ export const usePlayerUIStore = create<PlayerUIState>((set) => ({
       isQueueMode: !state.isQueueMode,
       isLyricsMode: false,
       isSleepTimerMode: false,
+      isConnectMode: false,
     })),
   setQueueMode: (val: boolean) =>
     set((state) => ({
       isQueueMode: val,
       isLyricsMode: val ? false : state.isLyricsMode,
       isSleepTimerMode: val ? false : state.isSleepTimerMode,
+      isConnectMode: val ? false : state.isConnectMode,
     })),
 
   isSleepTimerMode: false,
@@ -69,11 +78,29 @@ export const usePlayerUIStore = create<PlayerUIState>((set) => ({
       isSleepTimerMode: !state.isSleepTimerMode,
       isLyricsMode: false,
       isQueueMode: false,
+      isConnectMode: false,
     })),
   setSleepTimerMode: (val: boolean) =>
     set((state) => ({
       isSleepTimerMode: val,
       isLyricsMode: val ? false : state.isLyricsMode,
       isQueueMode: val ? false : state.isQueueMode,
+      isConnectMode: val ? false : state.isConnectMode,
+    })),
+
+  isConnectMode: false,
+  toggleConnectMode: () =>
+    set((state) => ({
+      isConnectMode: !state.isConnectMode,
+      isLyricsMode: false,
+      isQueueMode: false,
+      isSleepTimerMode: false,
+    })),
+  setConnectMode: (val: boolean) =>
+    set((state) => ({
+      isConnectMode: val,
+      isLyricsMode: val ? false : state.isLyricsMode,
+      isQueueMode: val ? false : state.isQueueMode,
+      isSleepTimerMode: val ? false : state.isSleepTimerMode,
     })),
 }));

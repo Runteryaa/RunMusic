@@ -34,7 +34,8 @@ import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { useActivePlayer } from '../hooks/useActivePlayer';
 import { useActiveProgress } from '../hooks/useActiveProgress';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
-import type { RemoteTrackSummary } from '../services/remote/remoteTypes';
+import { udpDiscoveryService } from '../services/remote/udpDiscovery';
+import { RUNMUSIC_TCP_PORT, type RemoteTrackSummary, type DiscoveredHost } from '../services/remote/remoteTypes';
 import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
@@ -87,21 +88,77 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     toggleQueueMode,
     isSleepTimerMode,
     toggleSleepTimerMode,
+    isConnectMode,
+    toggleConnectMode,
   } = usePlayerUIStore();
 
   const theme = useThemeStore((s) => s.theme);
-  const openDeviceSelector = usePlayerUIStore((s) => s.openDeviceSelector);
   const player = useActivePlayer();
   const progress = useActiveProgress();
   const localActiveTrack = useActiveTrack();
   const activeTrack = player.activeTrack;
   const playing = player.isPlaying;
   const remoteState = useRemoteConnectStore((s) => s.remoteState);
+  const discoveredHosts = useRemoteConnectStore((s) => s.discoveredHosts);
+  const setDiscoveredHosts = useRemoteConnectStore((s) => s.setDiscoveredHosts);
+  const remoteMode = useRemoteConnectStore((s) => s.mode);
+  const remoteConnectionStatus = useRemoteConnectStore((s) => s.connectionStatus);
+  const connectedDeviceName = useRemoteConnectStore((s) => s.connectedDeviceName);
+
+  const [showManualIp, setShowManualIp] = useState(false);
+  const [manualIp, setManualIp] = useState('');
+  const [manualPort, setManualPort] = useState(RUNMUSIC_TCP_PORT.toString());
+
+  useEffect(() => {
+    if (!isConnectMode) return;
+
+    if (!remoteSyncManager.getIsHostActive() && remoteMode !== 'client') {
+      remoteSyncManager.startHostService().catch(() => {});
+    }
+
+    const unsubscribe = udpDiscoveryService.startClientListener((hosts) => {
+      setDiscoveredHosts(hosts);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [isConnectMode, remoteMode, setDiscoveredHosts]);
+
+  const handleSelectLocalDevice = useCallback(() => {
+    if (remoteMode === 'client') {
+      remoteSyncManager.disconnectClient();
+    }
+    toggleConnectMode();
+  }, [remoteMode, toggleConnectMode]);
+
+  const handleSelectRemoteHost = useCallback(async (host: DiscoveredHost) => {
+    await remoteSyncManager.connectToHost(host);
+  }, []);
+
+  const handleManualConnect = useCallback(async () => {
+    const ip = manualIp.trim();
+    if (!ip) return;
+    const port = parseInt(manualPort.trim(), 10) || RUNMUSIC_TCP_PORT;
+    const manualHost: DiscoveredHost = {
+      deviceId: `manual_${ip}`,
+      deviceName: `Cihaz (${ip})`,
+      hostIp: ip,
+      port,
+      lastSeen: Date.now(),
+    };
+    setShowManualIp(false);
+    await remoteSyncManager.connectToHost(manualHost);
+  }, [manualIp, manualPort]);
 
   // Android hardware back button listener
   useEffect(() => {
     if (!isFullscreenPlayerOpen) return;
     const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isConnectMode) {
+        toggleConnectMode();
+        return true;
+      }
       if (isSleepTimerMode) {
         toggleSleepTimerMode();
         return true;
@@ -120,9 +177,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     return () => backSub.remove();
   }, [
     isFullscreenPlayerOpen,
+    isConnectMode,
     isSleepTimerMode,
     isQueueMode,
     isLyricsMode,
+    toggleConnectMode,
     toggleSleepTimerMode,
     toggleQueueMode,
     toggleLyricsMode,
@@ -1313,6 +1372,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const lyricsTransition = useMemo(() => new Animated.Value(0), []);
   const queueTransition = useMemo(() => new Animated.Value(0), []);
   const sleepTimerTransition = useMemo(() => new Animated.Value(0), []);
+  const connectTransition = useMemo(() => new Animated.Value(0), []);
   const coverTransition = useMemo(() => new Animated.Value(1), []);
   const playBtnScale = useMemo(() => new Animated.Value(1), []);
   const [isSkipping, setIsSkipping] = useState(false);
@@ -1331,11 +1391,12 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, [playing, artworkScale, reduceMotion]);
 
   useEffect(() => {
-    const isCover = !isLyricsMode && !isQueueMode && !isSleepTimerMode;
+    const isCover = !isLyricsMode && !isQueueMode && !isSleepTimerMode && !isConnectMode;
     if (reduceMotion) {
       lyricsTransition.setValue(isLyricsMode ? 1 : 0);
       queueTransition.setValue(isQueueMode ? 1 : 0);
       sleepTimerTransition.setValue(isSleepTimerMode ? 1 : 0);
+      connectTransition.setValue(isConnectMode ? 1 : 0);
       coverTransition.setValue(isCover ? 1 : 0);
       return;
     }
@@ -1361,6 +1422,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         stiffness: 150,
         useNativeDriver: true,
       }),
+      Animated.spring(connectTransition, {
+        toValue: isConnectMode ? 1 : 0,
+        damping: 20,
+        mass: 0.9,
+        stiffness: 150,
+        useNativeDriver: true,
+      }),
       Animated.spring(coverTransition, {
         toValue: isCover ? 1 : 0,
         damping: 20,
@@ -1373,9 +1441,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     isLyricsMode,
     isQueueMode,
     isSleepTimerMode,
+    isConnectMode,
     lyricsTransition,
     queueTransition,
     sleepTimerTransition,
+    connectTransition,
     coverTransition,
     reduceMotion,
   ]);
@@ -1695,16 +1765,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             <TouchableOpacity
               style={styles.headerIconBtn}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              onPress={openDeviceSelector}>
-              <Ionicons
-                name={player.isRemote ? 'radio' : 'radio-outline'}
-                size={22}
-                color={player.isRemote ? '#10b981' : 'rgba(255, 255, 255, 0.75)'}
-              />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.headerIconBtn}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               onPress={() => setIsOptionsModalOpen(true)}>
               <Ionicons name="ellipsis-horizontal-circle" size={24} color="rgba(255, 255, 255, 0.75)" />
             </TouchableOpacity>
@@ -1750,7 +1810,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 ],
               },
             ]}
-            pointerEvents={(!isLyricsMode && !isQueueMode && !isSleepTimerMode) ? 'auto' : 'none'}>
+            pointerEvents={(!isLyricsMode && !isQueueMode && !isSleepTimerMode && !isConnectMode) ? 'auto' : 'none'}>
             {/* Önceki Şarkı Kapağı (Soldan süzülen önizleme) */}
             {prevTrack ? (
               <Animated.View
@@ -2331,6 +2391,209 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               </View>
             </View>
           </Animated.View>
+
+          {/* 5. RunMusic Connect Görünümü (Kapak yerine aynı boyutta yumuşak geçiş) */}
+          <Animated.View
+            style={[
+              styles.connectCardContainer,
+              {
+                opacity: connectTransition,
+                transform: [
+                  {
+                    scale: connectTransition.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.92, 1],
+                    }),
+                  },
+                  { scale: artworkScale },
+                ],
+              },
+            ]}
+            pointerEvents={isConnectMode ? 'auto' : 'none'}>
+            <View style={styles.queueCardHeader}>
+              <View style={[styles.queueSourceBadge, { backgroundColor: theme.surface }]}>
+                <Ionicons name="radio" size={13} color={theme.primary} style={{ marginRight: 6 }} />
+                <Text style={[styles.queueSourceText, { color: theme.textAccent }]}>
+                  RunMusic Connect
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.queueCardCloseBtn}
+                activeOpacity={0.7}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                onPress={toggleConnectMode}>
+                <Ionicons name="close" size={18} color="rgba(255, 255, 255, 0.7)" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.connectBody}>
+              {/* Bu Telefon (Yerel Cihaz) */}
+              <TouchableOpacity
+                style={[
+                  styles.connectDeviceItem,
+                  { backgroundColor: theme.surface },
+                  !player.isRemote && {
+                    borderColor: theme.primary,
+                    borderWidth: 1.5,
+                  },
+                ]}
+                activeOpacity={0.75}
+                onPress={handleSelectLocalDevice}>
+                <View
+                  style={[
+                    styles.connectDeviceIcon,
+                    {
+                      backgroundColor: !player.isRemote ? `${theme.primary}25` : 'rgba(255, 255, 255, 0.06)',
+                    },
+                  ]}>
+                  <Ionicons
+                    name="phone-portrait-outline"
+                    size={20}
+                    color={!player.isRemote ? theme.primary : 'rgba(255, 255, 255, 0.7)'}
+                  />
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={[styles.connectDeviceName, !player.isRemote && { color: theme.primary, fontWeight: '700' }]}>
+                    Bu Telefon
+                  </Text>
+                  <Text style={styles.connectDeviceSubtext}>
+                    {!player.isRemote ? 'Şu anda çalıyor' : 'Yerel çalmaya geri dön'}
+                  </Text>
+                </View>
+                {!player.isRemote ? (
+                  <Ionicons name="checkmark-circle" size={20} color={theme.primary} />
+                ) : null}
+              </TouchableOpacity>
+
+              {/* Bölüm Başlığı */}
+              <View style={styles.connectSectionHeader}>
+                <Text style={[styles.connectSectionLabel, { color: theme.textAccent }]}>
+                  AYNI Wİ-Fİ AĞINDAKİ CİHAZLAR
+                </Text>
+              </View>
+
+              {/* Cihazlar Listesi */}
+              <FlatList
+                data={discoveredHosts}
+                keyExtractor={(item) => item.deviceId}
+                style={styles.connectList}
+                showsVerticalScrollIndicator={false}
+                ListEmptyComponent={
+                  <View style={styles.connectEmptyContainer}>
+                    <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 6 }} />
+                    <Text style={styles.connectEmptyTitle}>Cihazlar aranıyor...</Text>
+                    <Text style={styles.connectEmptySubtext}>
+                      {"Diğer cihazda da RunMusic'i açın. Aynı Wi-Fi ağına bağlı olmalıdır."}
+                    </Text>
+                  </View>
+                }
+                renderItem={({ item }) => {
+                  const isThisConnected = player.isRemote && connectedDeviceName === item.deviceName;
+                  const isConnecting =
+                    remoteMode === 'client' &&
+                    remoteConnectionStatus === 'pairing' &&
+                    connectedDeviceName === item.deviceName;
+
+                  return (
+                    <TouchableOpacity
+                      style={[
+                        styles.connectDeviceItem,
+                        { backgroundColor: theme.surface },
+                        isThisConnected && {
+                          borderColor: theme.primary,
+                          borderWidth: 1.5,
+                        },
+                      ]}
+                      activeOpacity={0.75}
+                      onPress={() => handleSelectRemoteHost(item)}>
+                      <View
+                        style={[
+                          styles.connectDeviceIcon,
+                          {
+                            backgroundColor: isThisConnected
+                              ? `${theme.primary}25`
+                              : 'rgba(255, 255, 255, 0.06)',
+                          },
+                        ]}>
+                        <Ionicons
+                          name="laptop-outline"
+                          size={20}
+                          color={isThisConnected ? theme.primary : 'rgba(255, 255, 255, 0.7)'}
+                        />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text
+                          style={[
+                            styles.connectDeviceName,
+                            isThisConnected && { color: theme.primary, fontWeight: '700' },
+                          ]}
+                          numberOfLines={1}>
+                          {item.deviceName}
+                        </Text>
+                        <Text style={styles.connectDeviceSubtext}>
+                          {isThisConnected ? 'Bağlandı' : `${item.hostIp}:${item.port}`}
+                        </Text>
+                      </View>
+                      {isConnecting ? (
+                        <ActivityIndicator size="small" color={theme.primary} />
+                      ) : isThisConnected ? (
+                        <Ionicons name="checkmark-circle" size={20} color={theme.primary} />
+                      ) : (
+                        <Ionicons name="chevron-forward" size={18} color="rgba(255, 255, 255, 0.4)" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+
+              {/* Manuel IP Toggle / Giriş */}
+              {showManualIp ? (
+                <View style={[styles.connectManualBox, { backgroundColor: theme.surface }]}>
+                  <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
+                    <TextInput
+                      style={[styles.connectInput, { flex: 2 }]}
+                      placeholder="IP (örn. 192.168.1.50)"
+                      placeholderTextColor="#71717a"
+                      keyboardType="numbers-and-punctuation"
+                      value={manualIp}
+                      onChangeText={setManualIp}
+                      autoCapitalize="none"
+                    />
+                    <TextInput
+                      style={[styles.connectInput, { flex: 1 }]}
+                      placeholder="Port"
+                      placeholderTextColor="#71717a"
+                      keyboardType="numeric"
+                      value={manualPort}
+                      onChangeText={setManualPort}
+                    />
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+                    <TouchableOpacity
+                      style={styles.connectCancelBtn}
+                      onPress={() => setShowManualIp(false)}>
+                      <Text style={styles.connectCancelText}>İptal</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.connectSubmitBtn, { backgroundColor: theme.primary }]}
+                      onPress={handleManualConnect}
+                      disabled={!manualIp.trim()}>
+                      <Text style={styles.connectSubmitText}>Bağlan</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.connectManualToggle}
+                  onPress={() => setShowManualIp(true)}>
+                  <Ionicons name="add-circle-outline" size={16} color={theme.primary} style={{ marginRight: 6 }} />
+                  <Text style={[styles.connectManualToggleText, { color: theme.primary }]}>
+                    Manuel IP ile Bağlan
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </Animated.View>
         </Animated.View>
 
         {/* ALT BÖLÜM: Apple Music Şarkı Bilgileri, Scrubber ve Kontroller */}
@@ -2358,10 +2621,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   },
                 ],
               }}
-              pointerEvents={(!isLyricsMode && !isQueueMode && !isSleepTimerMode) ? 'none' : 'auto'}>
+              pointerEvents={(!isLyricsMode && !isQueueMode && !isSleepTimerMode && !isConnectMode) ? 'none' : 'auto'}>
               <TouchableOpacity
                 activeOpacity={0.8}
                 onPress={() => {
+                  if (isConnectMode) toggleConnectMode();
                   if (isSleepTimerMode) toggleSleepTimerMode();
                   if (isQueueMode) toggleQueueMode();
                   if (isLyricsMode) toggleLyricsMode();
@@ -2487,6 +2751,30 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 {repeatMode === RepeatMode.Track ? (
                   <Text style={[styles.repeatBadge, { color: theme.primary }]}>1</Text>
                 ) : null}
+              </TouchableOpacity>
+
+              {/* RunMusic Connect Butonu (Shuffle ile Sleep Timer arasında) */}
+              <TouchableOpacity
+                style={[
+                  styles.appleSubUtilBtn,
+                  (isConnectMode || player.isRemote) && {
+                    backgroundColor: theme.surface,
+                    borderRadius: 20,
+                  },
+                ]}
+                onPress={toggleConnectMode}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Ionicons
+                  name={player.isRemote ? 'radio' : 'radio-outline'}
+                  size={20}
+                  color={
+                    player.isRemote
+                      ? theme.primary
+                      : isConnectMode
+                        ? '#ffffff'
+                        : 'rgba(255, 255, 255, 0.5)'
+                  }
+                />
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -2681,7 +2969,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     style={styles.optionsModalRow}
                     onPress={() => {
                       setIsOptionsModalOpen(false);
-                      openDeviceSelector();
+                      toggleConnectMode();
                     }}>
                     <Ionicons name="swap-horizontal-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
                     <Text style={styles.optionsModalText}>Cihazı Değiştir / Tara</Text>
@@ -2698,6 +2986,15 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 </>
               ) : (
                 <>
+                  <TouchableOpacity
+                    style={styles.optionsModalRow}
+                    onPress={() => {
+                      setIsOptionsModalOpen(false);
+                      toggleConnectMode();
+                    }}>
+                    <Ionicons name="radio-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
+                    <Text style={styles.optionsModalText}>RunMusic Connect</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.optionsModalRow}
                     onPress={() => {
@@ -2754,7 +3051,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         />
 
         {/* Dinamik Renk Keşif Kartı (Snackbar) */}
-        {!isDynamicColorUnlocked && !isDevModeActive && !hasDismissedDynamicColorBanner && !isLyricsMode && !isQueueMode && !isSleepTimerMode && (
+        {!isDynamicColorUnlocked && !isDevModeActive && !hasDismissedDynamicColorBanner && !isLyricsMode && !isQueueMode && !isSleepTimerMode && !isConnectMode && (
           <View
             style={[
               styles.dynamicThemeBanner,
@@ -3609,5 +3906,119 @@ const styles = StyleSheet.create({
   dynamicThemeBannerCloseBtn: {
     padding: 4,
     marginLeft: 2,
+  },
+  connectCardContainer: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    left: 8,
+    right: 8,
+    alignSelf: 'stretch',
+    borderRadius: 24,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  connectBody: {
+    flex: 1,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  connectDeviceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    marginBottom: 6,
+  },
+  connectDeviceIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  connectDeviceName: {
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  connectDeviceSubtext: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.5)',
+    marginTop: 1,
+  },
+  connectSectionHeader: {
+    marginTop: 6,
+    marginBottom: 6,
+    paddingHorizontal: 4,
+  },
+  connectSectionLabel: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  connectList: {
+    flex: 1,
+  },
+  connectEmptyContainer: {
+    paddingVertical: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  connectEmptyTitle: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  connectEmptySubtext: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.5)',
+    textAlign: 'center',
+    lineHeight: 15,
+  },
+  connectManualToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+  },
+  connectManualToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  connectManualBox: {
+    padding: 10,
+    borderRadius: 14,
+    marginTop: 4,
+  },
+  connectInput: {
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 10,
+    color: '#ffffff',
+    fontSize: 12,
+  },
+  connectCancelBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  connectCancelText: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.6)',
+  },
+  connectSubmitBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  connectSubmitText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
   },
 });

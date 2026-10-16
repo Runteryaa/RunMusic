@@ -51,6 +51,10 @@ class RemoteSyncManager {
   // HOST MANAGEMENT
   // ==========================================
 
+  public getIsHostActive(): boolean {
+    return this.isHostActive;
+  }
+
   public async startHostService(): Promise<void> {
     if (this.isHostActive) return;
 
