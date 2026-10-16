@@ -28,6 +28,8 @@ import { syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
 import { useTranslation, type AppLanguage } from '../services/i18n';
 import { AdBanner } from '../components/AdBanner';
 import { showRewardedAd } from '../services/adService';
+import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
+import { usePlayerUIStore } from '../store/usePlayerUIStore';
 
 const GITHUB_URL = 'https://github.com/Runteryaa/RunMusic';
 
@@ -67,6 +69,17 @@ export default function SettingsScreen() {
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isLoadingThemeAd, setIsLoadingThemeAd] = useState(false);
   const [storageKB, setStorageKB] = useState<number | null>(null);
+  const openDeviceSelector = usePlayerUIStore((s) => s.openDeviceSelector);
+
+  const isRemoteEnabled = useRemoteConnectStore((s) => s.isServiceEnabled);
+  const setRemoteEnabled = useRemoteConnectStore((s) => s.setServiceEnabled);
+  const customDeviceName = useRemoteConnectStore((s) => s.customDeviceName);
+  const setCustomDeviceName = useRemoteConnectStore((s) => s.setCustomDeviceName);
+  const trustedDevices = useRemoteConnectStore((s) => s.trustedDevices);
+  const removeTrustedDevice = useRemoteConnectStore((s) => s.removeTrustedDevice);
+  const remoteMode = useRemoteConnectStore((s) => s.mode);
+  const connectionStatus = useRemoteConnectStore((s) => s.connectionStatus);
+  const connectedDeviceName = useRemoteConnectStore((s) => s.connectedDeviceName);
 
   const languageOptions = useMemo(
     () => [
@@ -426,6 +439,91 @@ export default function SettingsScreen() {
           options={languageOptions}
           onChange={(value) => updatePreferences({ appLanguage: value as AppLanguage })}
         />
+      </Section>
+
+      {/* ── RUNMUSIC CONNECT (Wİ-Fİ KUMANDASI) ───────────────────────── */}
+      <Section
+        icon="radio-outline"
+        title="RunMusic Connect"
+        subtitle={
+          remoteMode === 'client' && connectionStatus === 'connected'
+            ? `Bağlandı: ${connectedDeviceName}`
+            : isRemoteEnabled
+            ? 'Sunucu aktif (Cihazınız ağda görünür)'
+            : 'Kapalı'
+        }
+        theme={theme}>
+        <ToggleRow
+          theme={theme}
+          label="RunMusic Connect (Wi-Fi Kumandası)"
+          hint="Aynı Wi-Fi ağındaki diğer RunMusic cihazlarının bu telefonu uzaktan kontrol etmesine ve müzik sözlerini görüntülemesine izin verin."
+          value={isRemoteEnabled}
+          onChange={(v) => {
+            setRemoteEnabled(v);
+          }}
+        />
+
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.rowLabel}>Cihaz Adı</Text>
+            <Text style={styles.rowHint}>Ağdaki diğer cihazlarda görünecek isim.</Text>
+          </View>
+          <TextInput
+            style={[styles.smallInput, { width: 140, textAlign: 'left', paddingHorizontal: 10 }]}
+            value={customDeviceName}
+            onChangeText={setCustomDeviceName}
+            placeholder="Cihaz Adı"
+            placeholderTextColor="#71717a"
+            maxLength={30}
+          />
+        </View>
+
+        <ActionRow
+          theme={theme}
+          icon="chevron-forward"
+          label={
+            remoteMode === 'client' && connectionStatus === 'connected'
+              ? `Bağlı: ${connectedDeviceName}`
+              : 'Başka Bir Cihaza Bağlan'
+          }
+          hint="Ağdaki diğer RunMusic cihazlarını bulun ve bu telefonu uzaktan kumanda olarak kullanın."
+          onPress={openDeviceSelector}
+        />
+
+        {trustedDevices.length > 0 && (
+          <View style={{ marginTop: 8, paddingBottom: 6 }}>
+            <Text style={[styles.rowLabel, { fontSize: 13, color: '#a1a1aa', marginBottom: 6 }]}>
+              Güvenilen Eşleşmiş Cihazlar ({trustedDevices.length})
+            </Text>
+            {trustedDevices.map((dev) => (
+              <View
+                key={dev.deviceId}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingVertical: 8,
+                  borderBottomWidth: 1,
+                  borderBottomColor: '#27272a44',
+                }}>
+                <View>
+                  <Text style={{ fontSize: 14, color: '#FFFFFF', fontWeight: '500' }}>
+                    {dev.deviceName}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#71717a' }}>
+                    Son bağlantı: {new Date(dev.lastConnected).toLocaleDateString()}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => removeTrustedDevice(dev.deviceId)}
+                  hitSlop={8}
+                  style={{ padding: 6 }}>
+                  <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        )}
       </Section>
 
       {/* ── ÇALMA ─────────────────────────────────────────────────────────── */}

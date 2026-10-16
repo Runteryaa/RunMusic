@@ -23,8 +23,6 @@ import * as MediaLibrary from 'expo-media-library/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import TrackPlayer, {
   useActiveTrack,
-  useIsPlaying,
-  useProgress,
   RepeatMode,
   Track,
 } from 'react-native-track-player';
@@ -32,6 +30,11 @@ import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useSleepTimerStore } from '../store/useSleepTimerStore';
+import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
+import { useActivePlayer } from '../hooks/useActivePlayer';
+import { useActiveProgress } from '../hooks/useActiveProgress';
+import { remoteSyncManager } from '../services/remote/remoteSyncManager';
+import type { RemoteTrackSummary } from '../services/remote/remoteTypes';
 import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
@@ -58,7 +61,6 @@ import {
   markUpNextConsumed,
   moveUpNext,
   removeQueueItem,
-  skipToPreviousTrack,
   playHistoryTrack,
   type QueueEntry,
   type QueueRow,
@@ -86,10 +88,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   } = usePlayerUIStore();
 
   const theme = useThemeStore((s) => s.theme);
-  const activeTrack = useActiveTrack();
-  const { playing } = useIsPlaying();
-  // Player kapalıyken yüksek frekanslı gereksiz render'ları önle
-  const progress = useProgress(isFullscreenPlayerOpen ? 150 : 2500);
+  const openDeviceSelector = usePlayerUIStore((s) => s.openDeviceSelector);
+  const player = useActivePlayer();
+  const progress = useActiveProgress();
+  const localActiveTrack = useActiveTrack();
+  const activeTrack = player.activeTrack;
+  const playing = player.isPlaying;
+  const remoteState = useRemoteConnectStore((s) => s.remoteState);
 
   // Android hardware back button listener
   useEffect(() => {
@@ -176,10 +181,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     });
   }, [expandAnim]);
 
-  const isShuffle = useStore((s) => s.isShuffle);
-  const isSmartShuffle = useStore((s) => s.isSmartShuffle);
+  const storeIsShuffle = useStore((s) => s.isShuffle);
+  const storeIsSmartShuffle = useStore((s) => s.isSmartShuffle);
+  const storeRepeatMode = useStore((s) => s.repeatMode);
+  const isShuffle = player.isRemote ? player.isShuffle : storeIsShuffle;
+  const isSmartShuffle = player.isRemote ? false : storeIsSmartShuffle;
   const library = useStore((s) => s.library);
-  const repeatMode = useStore((s) => s.repeatMode);
+  const repeatMode = player.isRemote ? player.repeatMode : storeRepeatMode;
   const upNextIds = useStore((s) => s.upNextIds);
   const contextIds = useStore((s) => s.contextIds);
   const playedHistory = useStore((s) => s.playedHistory);
@@ -256,8 +264,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       const shown = await showRewardedAd({
         onRewarded: () => {
           unlockDynamicColor();
-          if (activeTrack) {
-            useThemeStore.getState().updateThemeFromArtwork(activeTrack.artwork || currentArtworkUri);
+          if (currentArtworkUri) {
+            useThemeStore.getState().updateThemeFromArtwork(currentArtworkUri);
           }
           setTimeout(() => {
             Alert.alert(
@@ -383,13 +391,68 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   // Çalınan parça manuel kuyruktan geldiyse listeden düşür.
   useEffect(() => {
-    markUpNextConsumed(activeTrack);
-  }, [activeTrack]);
+    if (!player.isRemote && localActiveTrack) {
+      markUpNextConsumed(localActiveTrack);
+    }
+  }, [player.isRemote, localActiveTrack]);
+
+  const derivedRemoteQueueSections = useMemo((): QueueSections<Track> | null => {
+    if (!player.isRemote) return null;
+    const currentTrackSummary = player.activeTrack;
+    const currentIndex = remoteState.queue.findIndex((t) => t.id === currentTrackSummary?.id);
+
+    const toTrack = (t: RemoteTrackSummary, idx: number): QueueEntry<Track> => ({
+      index: idx,
+      track: {
+        id: t.id,
+        url: t.id,
+        title: t.title,
+        artist: t.artist,
+        duration: t.duration,
+      } as Track,
+    });
+
+    const currentEntry: QueueEntry<Track> | null = currentTrackSummary
+      ? {
+          index: currentIndex >= 0 ? currentIndex : 0,
+          track: {
+            id: currentTrackSummary.id,
+            url: currentTrackSummary.id,
+            title: currentTrackSummary.title,
+            artist: currentTrackSummary.artist,
+            duration: currentTrackSummary.duration,
+            artwork: player.artworkUri || undefined,
+          } as Track,
+        }
+      : null;
+
+    const historyEntries: QueueEntry<Track>[] = [];
+    const contextEntries: QueueEntry<Track>[] = [];
+
+    remoteState.queue.forEach((t, idx) => {
+      if (currentIndex >= 0 && idx < currentIndex) {
+        historyEntries.push(toTrack(t, idx));
+      } else if (currentIndex >= 0 && idx > currentIndex) {
+        contextEntries.push(toTrack(t, idx));
+      }
+    });
+
+    const upNextEntries: QueueEntry<Track>[] = remoteState.upNext.map((t, idx) => toTrack(t, idx));
+
+    return {
+      history: historyEntries,
+      current: currentEntry,
+      upNext: upNextEntries,
+      context: contextEntries,
+    };
+  }, [player.isRemote, player.activeTrack, player.artworkUri, remoteState.queue, remoteState.upNext]);
+
+  const effectiveQueueSections = player.isRemote ? derivedRemoteQueueSections : queueSections;
 
   /** Manuel "Sırada" listesi (görsel model). */
   const upNextItems: UpNextItem[] = useMemo(() => {
-    if (!queueSections) return [];
-    return queueSections.upNext.map((entry, i) => ({
+    if (!effectiveQueueSections) return [];
+    return effectiveQueueSections.upNext.map((entry, i) => ({
       key: `${entry.track.id ?? entry.track.url}-${i}`,
       title: cleanDisplayTitle(entry.track.title ?? '', entry.track.artist) || t('common.unknown_track'),
       artist: entry.track.artist ?? undefined,
@@ -397,39 +460,55 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       trackId: entry.track.id ?? null,
       trackUri: entry.track.url ?? null,
     }));
-  }, [queueSections, t]);
+  }, [effectiveQueueSections, t]);
 
   const handleMoveUpNext = useCallback(
     async (from: number, to: number) => {
+      if (player.isRemote) {
+        remoteSyncManager.sendClientCommand({ type: 'COMMAND_QUEUE_MOVE', fromIndex: from, toIndex: to });
+        return;
+      }
       await moveUpNext(from, to);
       await refreshQueueSections();
       await refreshQueue();
     },
-    [refreshQueueSections, refreshQueue]
+    [player.isRemote, refreshQueueSections, refreshQueue]
   );
 
   const handleRemoveUpNext = useCallback(
     async (sectionIndex: number) => {
+      if (player.isRemote) {
+        remoteSyncManager.sendClientCommand({ type: 'COMMAND_QUEUE_REMOVE', trackIndex: sectionIndex });
+        return;
+      }
       const target = queueSections?.upNext[sectionIndex];
       if (!target) return;
       await removeQueueItem(target.index);
       await refreshQueueSections();
       await refreshQueue();
     },
-    [queueSections, refreshQueueSections, refreshQueue]
+    [player.isRemote, queueSections, refreshQueueSections, refreshQueue]
   );
 
   const handleRemoveFromContext = useCallback(
     async (queueIndex: number) => {
+      if (player.isRemote) {
+        remoteSyncManager.sendClientCommand({ type: 'COMMAND_QUEUE_REMOVE', trackIndex: queueIndex });
+        return;
+      }
       await removeQueueItem(queueIndex);
       await refreshQueueSections();
       await refreshQueue();
     },
-    [refreshQueueSections, refreshQueue]
+    [player.isRemote, refreshQueueSections, refreshQueue]
   );
 
   const handleQueueItemPress = useCallback(
     async (queueIndex: number) => {
+      if (player.isRemote) {
+        remoteSyncManager.sendClientCommand({ type: 'COMMAND_PLAY_TRACK', trackIndex: queueIndex });
+        return;
+      }
       try {
         await TrackPlayer.skip(queueIndex);
         await TrackPlayer.play();
@@ -437,7 +516,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         console.warn('Queue skip failed', e);
       }
     },
-    []
+    [player.isRemote]
   );
 
   const queueSectionLabels = useMemo(
@@ -452,7 +531,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   // Saf fonksiyonla üretilir; React Compiler kendi memoizasyonunu uygular.
   const queueRows = buildQueueRows(
-    queueSections,
+    effectiveQueueSections,
     upNextItems.length,
     isShuffle,
     isSmartShuffle,
@@ -599,55 +678,72 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   };
 
   const currentAsset = useMemo(() => {
-    if (!activeTrack) return null;
+    if (player.isRemote || !localActiveTrack) return null;
     return (
       library.find(
         (a) =>
-          (activeTrack.id && a.id === activeTrack.id) ||
-          (activeTrack.url && (a.uri === activeTrack.url || a.id === activeTrack.url))
+          (localActiveTrack.id && a.id === localActiveTrack.id) ||
+          (localActiveTrack.url && (a.uri === localActiveTrack.url || a.id === localActiveTrack.url))
       ) || null
     );
-  }, [library, activeTrack]);
+  }, [player.isRemote, library, localActiveTrack]);
 
-  const resolvedTrackId = currentAsset?.id || activeTrack?.id || activeTrack?.url || '';
-  const activeMeta =
-    (resolvedTrackId ? metadataMap[resolvedTrackId] : undefined) ||
-    (activeTrack?.id ? metadataMap[activeTrack.id] : undefined) ||
-    (activeTrack?.url ? metadataMap[activeTrack.url] : undefined);
+  const resolvedTrackId = player.isRemote
+    ? player.activeTrack?.id || ''
+    : currentAsset?.id || localActiveTrack?.id || localActiveTrack?.url || '';
+
+  const activeMeta = player.isRemote
+    ? undefined
+    : (resolvedTrackId ? metadataMap[resolvedTrackId] : undefined) ||
+      (localActiveTrack?.id ? metadataMap[localActiveTrack.id] : undefined) ||
+      (localActiveTrack?.url ? metadataMap[localActiveTrack.url] : undefined);
 
   const unknownArtist = t('common.unknown_artist');
   const unknownTrack = t('common.unknown_track');
-  const activeKeywords = getSearchKeywords(activeTrack?.title || '', activeTrack?.artist || '');
+  const activeKeywords = player.isRemote
+    ? { expectedArtist: undefined, expectedTrack: undefined }
+    : getSearchKeywords(localActiveTrack?.title || '', localActiveTrack?.artist || '');
 
-  const rawArtist =
-    (activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
-      ? activeMeta.artist.trim()
-      : '') ||
-    (activeKeywords.expectedArtist && activeKeywords.expectedArtist !== 'Local Audio' && activeKeywords.expectedArtist !== 'Bilinmeyen Sanatçı'
-      ? activeKeywords.expectedArtist
-      : (activeTrack?.artist && activeTrack.artist !== 'Local Audio' && activeTrack.artist !== 'Bilinmeyen Sanatçı'
-          ? cleanYouTubeTitle(activeTrack.artist)
-          : unknownArtist));
+  const rawArtist = player.isRemote
+    ? player.activeTrack?.artist || unknownArtist
+    : (activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
+        ? activeMeta.artist.trim()
+        : '') ||
+      (activeKeywords.expectedArtist && activeKeywords.expectedArtist !== 'Local Audio' && activeKeywords.expectedArtist !== 'Bilinmeyen Sanatçı'
+        ? activeKeywords.expectedArtist
+        : (localActiveTrack?.artist && localActiveTrack.artist !== 'Local Audio' && localActiveTrack.artist !== 'Bilinmeyen Sanatçı'
+            ? cleanYouTubeTitle(localActiveTrack.artist)
+            : unknownArtist));
 
-  const rawTitle =
-    (activeMeta?.title?.trim() ? activeMeta.title.trim() : '') ||
-    activeKeywords.expectedTrack ||
-    activeTrack?.title ||
-    '';
+  const rawTitle = player.isRemote
+    ? player.activeTrack?.title || unknownTrack
+    : (activeMeta?.title?.trim() ? activeMeta.title.trim() : '') ||
+      activeKeywords.expectedTrack ||
+      localActiveTrack?.title ||
+      '';
 
   const displayArtist = rawArtist;
-  const displayTitle =
-    cleanDisplayTitle(rawTitle, displayArtist !== unknownArtist && displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : undefined) ||
-    unknownTrack;
+  const displayTitle = player.isRemote
+    ? rawTitle
+    : cleanDisplayTitle(rawTitle, displayArtist !== unknownArtist && displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : undefined) ||
+      unknownTrack;
 
-  const currentArtworkUri =
-    activeMeta?.artwork ||
-    (resolvedTrackId ? artworkMap[resolvedTrackId] : undefined) ||
-    (activeTrack?.id ? artworkMap[activeTrack.id] : undefined) ||
-    (typeof activeTrack?.artwork === 'string' ? activeTrack.artwork : undefined);
+  const currentArtworkUri = player.isRemote
+    ? player.artworkUri || undefined
+    : activeMeta?.artwork ||
+      (resolvedTrackId ? artworkMap[resolvedTrackId] : undefined) ||
+      (localActiveTrack?.id ? artworkMap[localActiveTrack.id] : undefined) ||
+      (typeof localActiveTrack?.artwork === 'string' ? localActiveTrack.artwork : undefined);
 
   // Önceki ve sonraki şarkıyı belirleme (Kapak geçiş önizlemesi için)
   const prevTrack = useMemo(() => {
+    if (player.isRemote) {
+      if (remoteState.queue.length <= 1) return null;
+      const idx = remoteState.queue.findIndex((t) => t.id === player.activeTrack?.id);
+      if (idx > 0) return remoteState.queue[idx - 1] as any;
+      if (player.repeatMode === RepeatMode.Queue) return remoteState.queue[remoteState.queue.length - 1] as any;
+      return null;
+    }
     if (playedHistory.length > 0) {
       return playedHistory[playedHistory.length - 1];
     }
@@ -655,14 +751,21 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     if (activeIndex > 0) return queue[activeIndex - 1];
     if (repeatMode === RepeatMode.Queue) return queue[queue.length - 1];
     return null;
-  }, [playedHistory, queue, activeIndex, repeatMode]);
+  }, [player.isRemote, player.activeTrack, player.repeatMode, remoteState.queue, playedHistory, queue, activeIndex, repeatMode]);
 
   const nextTrack = useMemo(() => {
+    if (player.isRemote) {
+      if (remoteState.queue.length <= 1) return null;
+      const idx = remoteState.queue.findIndex((t) => t.id === player.activeTrack?.id);
+      if (idx >= 0 && idx < remoteState.queue.length - 1) return remoteState.queue[idx + 1] as any;
+      if (player.repeatMode === RepeatMode.Queue) return remoteState.queue[0] as any;
+      return null;
+    }
     if (queue.length <= 1) return null;
     if (activeIndex < queue.length - 1) return queue[activeIndex + 1];
     if (repeatMode === RepeatMode.Queue) return queue[0];
     return null;
-  }, [queue, activeIndex, repeatMode]);
+  }, [player.isRemote, player.activeTrack, player.repeatMode, remoteState.queue, queue, activeIndex, repeatMode]);
 
   const prevArtworkUri = useMemo(() => {
     if (!prevTrack) return undefined;
@@ -706,12 +809,12 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   } | null>(null);
 
   useEffect(() => {
-    if (!activeTrack) return;
+    if (player.isRemote || !localActiveTrack) return;
 
-    const trackId = resolvedTrackId || activeTrack.id || activeTrack.url;
-    const queueTitle = typeof activeTrack.title === 'string' ? activeTrack.title : undefined;
-    const queueArtist = typeof activeTrack.artist === 'string' ? activeTrack.artist : undefined;
-    const queueArtwork = typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined;
+    const trackId = resolvedTrackId || localActiveTrack.id || localActiveTrack.url;
+    const queueTitle = typeof localActiveTrack.title === 'string' ? localActiveTrack.title : undefined;
+    const queueArtist = typeof localActiveTrack.artist === 'string' ? localActiveTrack.artist : undefined;
+    const queueArtwork = typeof localActiveTrack.artwork === 'string' ? localActiveTrack.artwork : undefined;
 
     const resolvedTitle = activeStoreMeta?.title?.trim() || queueTitle;
     const resolvedArtist =
@@ -768,16 +871,28 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTrack?.id, activeTrack?.url, activeIndex, activeStoreArtwork, activeStoreMeta]);
+  }, [player.isRemote, localActiveTrack?.id, localActiveTrack?.url, activeIndex, activeStoreArtwork, activeStoreMeta]);
 
   const currentLyrics: LyricsResult | null = useMemo(() => {
-    if (!activeTrack || !lyricsCache) return null;
+    if (player.isRemote) {
+      if (!player.lyrics) return null;
+      return {
+        syncedLyrics: player.lyrics.isSynced ? 'synced' : undefined,
+        plainLyrics: player.lyrics.plainLyrics,
+        parsedLines: player.lyrics.lines,
+        source: player.lyrics.source || undefined,
+        trackName: player.activeTrack?.title,
+        artistName: player.activeTrack?.artist,
+      } as LyricsResult;
+    }
+
+    if (!localActiveTrack || !lyricsCache) return null;
     const item = getLyricsFromCache({
-      id: activeTrack.id,
-      url: activeTrack.url,
+      id: localActiveTrack.id,
+      url: localActiveTrack.url,
       title: displayTitle,
       artist: displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '',
-      rawTitle: activeTrack.title,
+      rawTitle: localActiveTrack.title,
     });
     if (!item) return null;
     if ((item.syncedLyrics || item.lyricsfile) && (!item.parsedLines || item.parsedLines.length === 0)) {
@@ -787,7 +902,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       };
     }
     return item;
-  }, [activeTrack, lyricsCache, getLyricsFromCache, displayTitle, displayArtist]);
+  }, [player.isRemote, player.lyrics, player.activeTrack, localActiveTrack, lyricsCache, getLyricsFromCache, displayTitle, displayArtist]);
 
   const parsedLines = useMemo(() => {
     if (!currentLyrics) return [];
@@ -804,16 +919,16 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, [currentLyrics, parsedLines]);
 
   const loadLyricsForTrack = async (title: string, artist?: string, force = false) => {
-    if (!activeTrack) return;
+    if (player.isRemote || !localActiveTrack) return;
     const cleanArtist = artist && artist !== 'Local Audio' && artist !== 'Bilinmeyen Sanatçı' ? artist : '';
 
     if (!force) {
       const cached = getLyricsFromCache({
-        id: activeTrack.id,
-        url: activeTrack.url,
+        id: localActiveTrack.id,
+        url: localActiveTrack.url,
         title,
         artist: cleanArtist,
-        rawTitle: activeTrack.title,
+        rawTitle: localActiveTrack.title,
       });
 
       // Kaydedilmiş/seçilmiş herhangi bir lyric varsa (senkronize, word sync veya düz metin),
@@ -836,11 +951,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       if (result) {
         // Asenkron istek dönerken kullanıcı manuel bir seçim yaptıysa veya cache'e lyric kaydedildiyse ezme!
         const existing = getLyricsFromCache({
-          id: activeTrack.id,
-          url: activeTrack.url,
+          id: localActiveTrack.id,
+          url: localActiveTrack.url,
           title,
           artist: cleanArtist,
-          rawTitle: activeTrack.title,
+          rawTitle: localActiveTrack.title,
         });
         if (existing && !force) {
           return;
@@ -850,13 +965,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           setCandidatesList(result.candidates);
         }
         const altKeys = getLyricsCacheKeys({
-          id: activeTrack.id,
-          url: activeTrack.url,
+          id: localActiveTrack.id,
+          url: localActiveTrack.url,
           title,
           artist: cleanArtist,
-          rawTitle: activeTrack.title,
+          rawTitle: localActiveTrack.title,
         });
-        const saveId = activeTrack.id || activeTrack.url || title;
+        const saveId = localActiveTrack.id || localActiveTrack.url || title;
         const initialSaved: LyricsResult = {
           ...result,
           selectedCandidateId: result.id,
@@ -871,7 +986,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   };
 
   useEffect(() => {
-    if (activeTrack && isHydrated) {
+    if (!player.isRemote && localActiveTrack && isHydrated) {
       const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
       const titleLower = displayTitle.toLowerCase();
       const artistLower = searchArtist.toLowerCase();
@@ -882,11 +997,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       setManualQuery(initialQuery);
 
       const cached = getLyricsFromCache({
-        id: activeTrack.id,
-        url: activeTrack.url,
+        id: localActiveTrack.id,
+        url: localActiveTrack.url,
         title: displayTitle,
         artist: searchArtist,
-        rawTitle: activeTrack.title,
+        rawTitle: localActiveTrack.title,
       });
 
       if (!cached && autoFetchLyrics) {
@@ -897,7 +1012,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTrack?.id, activeTrack?.url, displayTitle, displayArtist, isHydrated, autoFetchLyrics]);
+  }, [player.isRemote, localActiveTrack?.id, localActiveTrack?.url, displayTitle, displayArtist, isHydrated, autoFetchLyrics]);
 
   const activeLineIndex = useMemo(() => {
     if (!parsedLines || parsedLines.length === 0) return -1;
@@ -1006,20 +1121,20 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   };
 
   const handleSelectCandidate = async (candidate: LyricsCandidate) => {
-    if (!activeTrack) return;
+    if (player.isRemote || !localActiveTrack) return;
     setResolvingCandidateId(candidate.id);
     try {
       const resolved = await resolveCandidateToLyricsResult(candidate, candidatesList);
       if (resolved) {
         const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
         const altKeys = getLyricsCacheKeys({
-          id: activeTrack.id,
-          url: activeTrack.url,
+          id: localActiveTrack.id,
+          url: localActiveTrack.url,
           title: displayTitle,
           artist: searchArtist,
-          rawTitle: activeTrack.title,
+          rawTitle: localActiveTrack.title,
         });
-        const saveId = activeTrack.id || activeTrack.url || displayTitle;
+        const saveId = localActiveTrack.id || localActiveTrack.url || displayTitle;
         const selectedResult: LyricsResult = {
           ...resolved,
           isUserSelected: true,
@@ -1043,7 +1158,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
       if (currentLyrics?.candidates && currentLyrics.candidates.length > 0) {
         setCandidatesList(currentLyrics.candidates);
-      } else if (activeTrack) {
+      } else if (!player.isRemote && localActiveTrack) {
         const queryToSearch = manualQuery.trim() || displayTitle;
         setIsSearchingCandidates(true);
         searchAllCandidates(queryToSearch, searchArtist)
@@ -1051,13 +1166,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             setCandidatesList(results);
             if (currentLyrics) {
               const altKeys = getLyricsCacheKeys({
-                id: activeTrack.id,
-                url: activeTrack.url,
+                id: localActiveTrack.id,
+                url: localActiveTrack.url,
                 title: displayTitle,
                 artist: searchArtist,
-                rawTitle: activeTrack.title,
+                rawTitle: localActiveTrack.title,
               });
-              const saveId = activeTrack.id || activeTrack.url || displayTitle;
+              const saveId = localActiveTrack.id || localActiveTrack.url || displayTitle;
               setLyrics(saveId, { ...currentLyrics, candidates: results }, altKeys);
             }
           })
@@ -1091,24 +1206,24 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     }
     const target = handleTouchCalc(e);
     setIsDragging(false);
-    await TrackPlayer.seekTo(target);
+    await player.seekTo(target);
   };
 
   const togglePlayback = async () => {
-    if (playing) {
-      await TrackPlayer.pause();
-      if (activeTrack && progress.position > 0) {
+    if (player.isPlaying) {
+      await player.pause();
+      if (!player.isRemote && localActiveTrack && progress.position > 0) {
         saveLastPlayback(
           {
-            trackId: activeTrack.id || activeTrack.url,
+            trackId: localActiveTrack.id || localActiveTrack.url,
             trackIndex: activeIndex,
             position: progress.position,
             track: {
-              id: activeTrack.id || activeTrack.url,
-              url: activeTrack.url,
-              title: activeTrack.title,
-              artist: activeTrack.artist,
-              artwork: typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined,
+              id: localActiveTrack.id || localActiveTrack.url,
+              url: localActiveTrack.url,
+              title: localActiveTrack.title,
+              artist: localActiveTrack.artist,
+              artwork: typeof localActiveTrack.artwork === 'string' ? localActiveTrack.artwork : undefined,
             },
           },
           true
@@ -1116,7 +1231,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         updateQueueSnapshotActiveIndex(activeIndex, progress.position);
       }
     } else {
-      await TrackPlayer.play();
+      await player.play();
     }
   };
 
@@ -1214,74 +1329,85 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   // next/prev her zaman doğru parçayı çalar; ekstra indeks hesabı gerekmez.
   const skipNext = useCallback(async () => {
     try {
-      await TrackPlayer.skipToNext();
-      await TrackPlayer.play();
+      await player.skipToNext();
     } catch (e) {
       console.warn('Skip next failed', e);
     }
-  }, []);
+  }, [player]);
 
   const skipPrev = useCallback(async () => {
     try {
-      await skipToPreviousTrack();
+      await player.skipToPrevious();
     } catch (e) {
       console.warn('Skip prev failed', e);
     }
-  }, []);
+  }, [player]);
 
   const handleHideTrack = useCallback(() => {
-    if (activeTrack?.id) {
-      hideTrack(activeTrack.id);
+    if (!player.isRemote && localActiveTrack?.id) {
+      hideTrack(localActiveTrack.id);
       setIsOptionsModalOpen(false);
       skipNext();
     }
-  }, [activeTrack, hideTrack, skipNext]);
+  }, [player.isRemote, localActiveTrack, hideTrack, skipNext]);
 
   const handleDeleteTrack = useCallback(async () => {
-    if (activeTrack?.id) {
+    if (!player.isRemote && localActiveTrack?.id) {
       try {
-        await MediaLibrary.deleteAssetsAsync([activeTrack.id]);
+        await MediaLibrary.deleteAssetsAsync([localActiveTrack.id]);
         setIsOptionsModalOpen(false);
         skipNext();
       } catch (e) {
         console.warn('Could not delete track', e);
       }
     }
-  }, [activeTrack, skipNext]);
+  }, [player.isRemote, localActiveTrack, skipNext]);
 
   const gestureSkipPrev = useCallback(async () => {
     try {
-      await skipToPreviousTrack();
+      await player.skipToPrevious();
     } catch (e) {
       console.warn('Gesture skip prev failed', e);
     }
-  }, []);
+  }, [player]);
 
   const handleSeekBackward = useCallback(async () => {
     try {
-      const { position } = await TrackPlayer.getProgress();
-      await TrackPlayer.seekTo(Math.max(0, position - 5));
+      await player.seekTo(Math.max(0, progress.position - 5));
     } catch (e) {
       console.warn('Seek backward failed', e);
     }
-  }, []);
+  }, [player, progress.position]);
 
   const handleSeekForward = useCallback(async () => {
     try {
-      const { position, duration } = await TrackPlayer.getProgress();
-      await TrackPlayer.seekTo(Math.min(duration, position + 5));
+      await player.seekTo(Math.min(duration, progress.position + 5));
     } catch (e) {
       console.warn('Seek forward failed', e);
     }
-  }, []);
+  }, [player, progress.position, duration]);
 
   const togglePlaybackMode = useCallback(async () => {
+    if (player.isRemote) {
+      if (player.repeatMode === RepeatMode.Off && !player.isShuffle) {
+        await player.setRepeatMode(RepeatMode.Queue);
+      } else if (player.repeatMode === RepeatMode.Queue) {
+        await player.setRepeatMode(RepeatMode.Track);
+      } else if (player.repeatMode === RepeatMode.Track) {
+        await player.setRepeatMode(RepeatMode.Off);
+        await player.setShuffle(true);
+      } else {
+        await player.setShuffle(false);
+        await player.setRepeatMode(RepeatMode.Off);
+      }
+      return;
+    }
     await cyclePlaybackMode();
     if (isQueueMode) {
       await refreshQueueSections();
       await refreshQueue();
     }
-  }, [isQueueMode, refreshQueueSections, refreshQueue]);
+  }, [player, isQueueMode, refreshQueueSections, refreshQueue]);
 
   // Gestures: Middle container (Interactive Carousel Artwork / Lyrics)
   const artworkPanResponder = useMemo(
@@ -1478,17 +1604,38 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             <Ionicons name="chevron-down" size={26} color="rgba(255, 255, 255, 0.75)" />
           </TouchableOpacity>
           <View style={styles.headerTitleBox}>
-            <Text style={styles.headerSmallLabel}>{t('player.now_playing')}</Text>
+            {player.isRemote ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                <View style={styles.remoteHeaderDot} />
+                <Text style={styles.headerSmallLabelRemote} numberOfLines={1}>
+                  {player.remoteDeviceName || 'Remote Device'}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.headerSmallLabel}>{t('player.now_playing')}</Text>
+            )}
             <Text style={styles.headerAlbumName} numberOfLines={1}>
               {displayArtist}
             </Text>
           </View>
-          <TouchableOpacity
-            style={styles.headerIconBtn}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            onPress={() => setIsOptionsModalOpen(true)}>
-            <Ionicons name="ellipsis-horizontal-circle" size={24} color="rgba(255, 255, 255, 0.75)" />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <TouchableOpacity
+              style={styles.headerIconBtn}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              onPress={openDeviceSelector}>
+              <Ionicons
+                name={player.isRemote ? 'radio' : 'radio-outline'}
+                size={22}
+                color={player.isRemote ? '#10b981' : 'rgba(255, 255, 255, 0.75)'}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.headerIconBtn}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              onPress={() => setIsOptionsModalOpen(true)}>
+              <Ionicons name="ellipsis-horizontal-circle" size={24} color="rgba(255, 255, 255, 0.75)" />
+            </TouchableOpacity>
+          </View>
         </View>
       </Animated.View>
 
@@ -1607,8 +1754,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 onPress={toggleLyricsMode}>
                 <TrackArtwork
                   uri={currentArtworkUri}
-                  trackId={activeTrack.id}
-                  trackUri={activeTrack.url}
+                  trackId={activeTrack?.id}
+                  trackUri={(activeTrack as any)?.url}
                   size={ARTWORK_SIZE}
                   borderRadius={18}
                   iconSize={84}
@@ -1766,7 +1913,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   return (
                     <TouchableOpacity
                       activeOpacity={0.7}
-                      onPress={() => TrackPlayer.seekTo(item.time)}
+                      onPress={() => player.seekTo(item.time)}
                       style={[styles.lyricRow, isActive && styles.lyricRowActive]}>
                       {isActive && item.words && item.words.length > 0 ? (
                         <Text
@@ -2149,8 +2296,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 style={styles.lyricsMiniCoverBtn}>
                 <TrackArtwork
                   uri={currentArtworkUri}
-                  trackId={activeTrack.id}
-                  trackUri={activeTrack.url}
+                  trackId={activeTrack?.id}
+                  trackUri={(activeTrack as any)?.url}
                   size={52}
                   borderRadius={10}
                   iconSize={26}
@@ -2455,48 +2602,73 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             onPress={() => setIsOptionsModalOpen(false)}
             {...optionsModalPanResponder.panHandlers}>
             <Pressable style={styles.optionsModalBox} onPress={(e) => e.stopPropagation()}>
-              <TouchableOpacity
-                style={styles.optionsModalRow}
-                onPress={() => {
-                  setIsOptionsModalOpen(false);
-                  loadLyricsForTrack(displayTitle, displayArtist !== unknownArtist && displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '', true);
-                }}>
-                <Ionicons name="refresh-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
-                <Text style={styles.optionsModalText}>{t('player.options_refetch_lyrics')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.optionsModalRow}
-                onPress={() => {
-                  setIsOptionsModalOpen(false);
-                  setIsEditTrackModalOpen(true);
-                }}>
-                <Ionicons name="pencil-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
-                <Text style={styles.optionsModalText}>{t('player.options_edit_info')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.optionsModalRow}
-                onPress={handleHideTrack}>
-                <Ionicons name="eye-off-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
-                <Text style={styles.optionsModalText}>{t('player.options_hide_track')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.optionsModalRow}
-                onPress={handleDeleteTrack}>
-                <Ionicons name="trash-outline" size={24} color="#ef4444" style={{ marginRight: 16 }} />
-                <Text style={[styles.optionsModalText, { color: '#ef4444' }]}>{t('player.options_delete_track')}</Text>
-              </TouchableOpacity>
+              {player.isRemote ? (
+                <>
+                  <TouchableOpacity
+                    style={styles.optionsModalRow}
+                    onPress={() => {
+                      setIsOptionsModalOpen(false);
+                      openDeviceSelector();
+                    }}>
+                    <Ionicons name="swap-horizontal-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
+                    <Text style={styles.optionsModalText}>Cihazı Değiştir / Tara</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.optionsModalRow}
+                    onPress={() => {
+                      setIsOptionsModalOpen(false);
+                      player.disconnect();
+                    }}>
+                    <Ionicons name="close-circle-outline" size={24} color="#ef4444" style={{ marginRight: 16 }} />
+                    <Text style={[styles.optionsModalText, { color: '#ef4444' }]}>Bağlantıyı Kes</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={styles.optionsModalRow}
+                    onPress={() => {
+                      setIsOptionsModalOpen(false);
+                      loadLyricsForTrack(displayTitle, displayArtist !== unknownArtist && displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '', true);
+                    }}>
+                    <Ionicons name="refresh-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
+                    <Text style={styles.optionsModalText}>{t('player.options_refetch_lyrics')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.optionsModalRow}
+                    onPress={() => {
+                      setIsOptionsModalOpen(false);
+                      setIsEditTrackModalOpen(true);
+                    }}>
+                    <Ionicons name="pencil-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
+                    <Text style={styles.optionsModalText}>{t('player.options_edit_info')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.optionsModalRow}
+                    onPress={handleHideTrack}>
+                    <Ionicons name="eye-off-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
+                    <Text style={styles.optionsModalText}>{t('player.options_hide_track')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.optionsModalRow}
+                    onPress={handleDeleteTrack}>
+                    <Ionicons name="trash-outline" size={24} color="#ef4444" style={{ marginRight: 16 }} />
+                    <Text style={[styles.optionsModalText, { color: '#ef4444' }]}>{t('player.options_delete_track')}</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </Pressable>
           </Pressable>
         </Modal>
 
         {/* Şarkı Bilgilerini Düzenleme Modalı */}
         <EditTrackModal
-          visible={isEditTrackModalOpen && activeTrack != null}
+          visible={isEditTrackModalOpen && !player.isRemote && localActiveTrack != null}
           track={
-            activeTrack
+            localActiveTrack
               ? {
-                  id: resolvedTrackId || activeTrack.id || activeTrack.url,
-                  uri: currentAsset?.uri || activeTrack.url,
+                  id: resolvedTrackId || localActiveTrack.id || localActiveTrack.url,
+                  uri: currentAsset?.uri || localActiveTrack.url,
                   title: activeMeta?.title || displayTitle,
                   artist: activeMeta?.artist || (displayArtist !== unknownArtist && displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : ''),
                   album: activeMeta?.album,
@@ -2593,6 +2765,19 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.2,
+    marginBottom: 2,
+  },
+  remoteHeaderDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10b981',
+  },
+  headerSmallLabelRemote: {
+    color: '#10b981',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.8,
     marginBottom: 2,
   },
   headerAlbumName: {

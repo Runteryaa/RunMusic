@@ -39,6 +39,40 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
+      - name: 💾 Cache Android NDK
+        uses: actions/cache@v4
+        id: cache-ndk
+        with:
+          path: /usr/local/lib/android/sdk/ndk/27.0.12077973
+          key: android-ndk-27.0.12077973-${{ runner.os }}
+
+      - name: 🛠 Ensure Android NDK 27
+        run: |
+          NDK_DIR="/usr/local/lib/android/sdk/ndk/27.0.12077973"
+          if [ -d "$NDK_DIR" ] && [ -f "$NDK_DIR/source.properties" ]; then
+            echo "✅ Android NDK 27.0.12077973 is already present."
+          else
+            echo "⚡ Installing Android NDK 27.0.12077973 with retries..."
+            SUCCESS=0
+            for attempt in {1..5}; do
+              echo "Attempt $attempt / 5..."
+              if echo "y" | ${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.0.12077973"; then
+                if [ -d "$NDK_DIR" ] && [ -f "$NDK_DIR/source.properties" ]; then
+                  SUCCESS=1
+                  echo "✅ Successfully installed Android NDK 27."
+                  break
+                fi
+              fi
+              echo "⚠️ Attempt $attempt failed. Waiting 15s before retry..."
+              sleep 15
+            done
+            if [ "$SUCCESS" -ne 1 ]; then
+              echo "❌ Failed to install Android NDK 27 after 5 attempts."
+              exit 1
+            fi
+          fi
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> $GITHUB_ENV
+
       - name: 📦 Install Dependencies
         run: npm install --legacy-peer-deps
 
@@ -67,6 +101,8 @@ jobs:
           sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
           grep -q 'reactNativeArchitectures' android/gradle.properties || echo 'reactNativeArchitectures=arm64-v8a' >> android/gradle.properties
 
+          echo "ndk.dir=/usr/local/lib/android/sdk/ndk/27.0.12077973" >> android/local.properties
+
           TARGET_BRANCH="${GITHUB_REF_NAME}"
           if [ "$TARGET_BRANCH" = "beta" ]; then
             UPDATE_CHANNEL="beta"
@@ -76,8 +112,9 @@ jobs:
           echo "Setting EXPO_UPDATES_CHANNEL to $UPDATE_CHANNEL"
           sed -i "s|</application>|    <meta-data android:name=\"expo.modules.updates.EXPO_UPDATES_CHANNEL\" android:value=\"$UPDATE_CHANNEL\"/>\n  </application>|" android/app/src/main/AndroidManifest.xml
 
-          echo "--- Configured gradle.properties & AndroidManifest.xml ---"
+          echo "--- Configured gradle.properties, local.properties & AndroidManifest.xml ---"
           grep -E '(newArch|reactNativeArchitectures)' android/gradle.properties
+          grep -i 'ndk.dir' android/local.properties || true
           grep -i 'EXPO_UPDATES_CHANNEL' android/app/src/main/AndroidManifest.xml || true
 
       - name: 🏗 Build APK

@@ -21,6 +21,12 @@ import { useTranslation } from '../services/i18n';
 import { initAdService } from '../services/adService';
 import * as Font from 'expo-font';
 import { getCachedLibrary } from '../services/libraryStorage';
+import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
+import { remoteSyncManager } from '../services/remote/remoteSyncManager';
+import { PairChallengeModal } from '../components/PairChallengeModal';
+import { PairVerifyModal } from '../components/PairVerifyModal';
+import { DeviceSelectorModal } from '../components/DeviceSelectorModal';
+import { usePlayerUIStore } from '../store/usePlayerUIStore';
 
 let MusicWidgetModule: any = null;
 try {
@@ -38,6 +44,8 @@ TrackPlayer.registerPlaybackService(() => playbackService);
 function MainAppLayout() {
   useWidgetUpdater();
   const { t } = useTranslation();
+  const isDeviceSelectorOpen = usePlayerUIStore((s) => s.isDeviceSelectorOpen);
+  const closeDeviceSelector = usePlayerUIStore((s) => s.closeDeviceSelector);
   
   const activeTrack = useActiveTrack();
   const theme = useThemeStore((s) => s.theme);
@@ -58,6 +66,17 @@ function MainAppLayout() {
   useEffect(() => {
     syncAppKilledPlaybackBehavior(keepPlayingWhenAppKilled);
   }, [keepPlayingWhenAppKilled]);
+
+  const isRemoteServiceEnabled = useRemoteConnectStore((s) => s.isServiceEnabled);
+  useEffect(() => {
+    if (isRemoteServiceEnabled) {
+      remoteSyncManager.startHostService().catch((err) => {
+        console.warn('Failed to start remote host service:', err);
+      });
+    } else {
+      remoteSyncManager.stopHostService();
+    }
+  }, [isRemoteServiceEnabled]);
 
   // Aktif şarkının kapak görseli henüz önbellekte yoksa anında çek ve temayı tetikle
   useEffect(() => {
@@ -134,6 +153,14 @@ function MainAppLayout() {
 
         {/* Genişleyen ve Dönüşen Müzik Çalar (MiniPlayer <---> FullscreenPlayer) */}
         <ExpandingPlayer />
+
+        {/* Wi-Fi Remote Connect Modals */}
+        <PairChallengeModal />
+        <PairVerifyModal />
+        <DeviceSelectorModal
+          visible={isDeviceSelectorOpen}
+          onClose={closeDeviceSelector}
+        />
       </View>
     </GestureHandlerRootView>
   );

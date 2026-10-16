@@ -16,6 +16,10 @@ interface PlayerUIState {
   isSleepTimerMode: boolean;
   toggleSleepTimerMode: () => void;
   setSleepTimerMode: (val: boolean) => void;
+
+  isDeviceSelectorOpen: boolean;
+  openDeviceSelector: () => void;
+  closeDeviceSelector: () => void;
 }
 
 export const usePlayerUIStore = create<PlayerUIState>((set) => ({
@@ -26,6 +30,10 @@ export const usePlayerUIStore = create<PlayerUIState>((set) => ({
       isFullscreenPlayerOpen: false,
       isSleepTimerMode: false,
     }),
+
+  isDeviceSelectorOpen: false,
+  openDeviceSelector: () => set({ isDeviceSelectorOpen: true }),
+  closeDeviceSelector: () => set({ isDeviceSelectorOpen: false }),
 
   isLyricsMode: false,
   toggleLyricsMode: () =>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   StyleSheet,
+  Text,
   View,
   TouchableOpacity,
   PanResponder,
@@ -9,129 +10,143 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import TrackPlayer, {
-  useActiveTrack,
-  useIsPlaying,
-  useProgress,
   RepeatMode,
   Track,
 } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
+import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
+import { useActivePlayer } from '../hooks/useActivePlayer';
+import { useActiveProgress } from '../hooks/useActiveProgress';
 import { TrackArtwork } from './TrackArtwork';
 import { MarqueeText } from './ui/MarqueeText';
 import { cleanYouTubeTitle, cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
-import { skipToPreviousTrack } from '../services/queueController';
 import { useTranslation } from '../services/i18n';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
   const { t } = useTranslation();
-  const activeTrack = useActiveTrack();
-  const { playing } = useIsPlaying();
-  const progress = useProgress(500);
+  const player = useActivePlayer();
+  const progress = useActiveProgress();
 
   const theme = useThemeStore((s) => s.theme);
   const openFullscreenPlayer = usePlayerUIStore((s) => s.openFullscreenPlayer);
   const metadataMap = useStore((s) => s.metadataMap);
   const artworkMap = useStore((s) => s.artworkMap);
-  const repeatMode = useStore((s) => s.repeatMode);
 
   const duration = progress.duration > 0 ? progress.duration : 0;
   const progressPercent = duration > 0 ? Math.min(1, Math.max(0, progress.position / duration)) : 0;
 
-  // Local Queue State for Next/Prev Previews
-  const [queue, setQueue] = useState<Track[]>([]);
-  const [activeIndex, setActiveIndex] = useState<number>(0);
+  // Queue State for Next/Prev Previews
+  const [localQueue, setLocalQueue] = useState<Track[]>([]);
+  const [localActiveIndex, setLocalActiveIndex] = useState<number>(0);
+  const remoteQueue = useRemoteConnectStore((s) => s.remoteState.queue);
 
   useEffect(() => {
+    if (player.isRemote) return;
     const fetchQueue = async () => {
       try {
         const q = await TrackPlayer.getQueue();
         const idx = await TrackPlayer.getActiveTrackIndex();
-        setQueue(q || []);
-        setActiveIndex(idx ?? 0);
+        setLocalQueue(q || []);
+        setLocalActiveIndex(idx ?? 0);
       } catch (e) {
         console.warn('MiniPlayer queue fetch err:', e);
       }
     };
-    if (activeTrack) {
+    if (player.activeTrack) {
       fetchQueue();
     }
-  }, [activeTrack]);
+  }, [player.activeTrack, player.isRemote]);
 
-  // Shuffle artık kuyruk SIRASINA gömülü olduğu için önizlemeler doğrudan kuyruk
-  // sırasından okunur; rastgele "sonraki indeks" hesabı gerekmez.
+  const queue = player.isRemote ? (remoteQueue as any[]) : localQueue;
+  const activeIndex = player.isRemote
+    ? remoteQueue.findIndex((t) => t.id === player.activeTrack?.id)
+    : localActiveIndex;
+
   const prevTrack = useMemo(() => {
     if (queue.length <= 1) return null;
     if (activeIndex > 0) return queue[activeIndex - 1];
-    return repeatMode === RepeatMode.Queue ? queue[queue.length - 1] : null;
-  }, [queue, activeIndex, repeatMode]);
+    return player.repeatMode === RepeatMode.Queue ? queue[queue.length - 1] : null;
+  }, [queue, activeIndex, player.repeatMode]);
 
   const nextTrack = useMemo(() => {
     if (queue.length <= 1) return null;
-    if (activeIndex < queue.length - 1) return queue[activeIndex + 1];
-    return repeatMode === RepeatMode.Queue ? queue[0] : null;
-  }, [queue, activeIndex, repeatMode]);
+    if (activeIndex >= 0 && activeIndex < queue.length - 1) return queue[activeIndex + 1];
+    return player.repeatMode === RepeatMode.Queue ? queue[0] : null;
+  }, [queue, activeIndex, player.repeatMode]);
 
   // Track Meta Helper
-  const getTrackMeta = useCallback((track: Track | null) => {
-    if (!track) return { title: '', artist: '', artwork: undefined };
-    const meta = (track.id ? metadataMap[track.id] : undefined) || (track.url ? metadataMap[track.url] : undefined);
-    const keywords = getSearchKeywords(track.title || '', track.artist || '');
-    
-    const unknownArtist = t('common.unknown_artist');
-    const unknownTrack = t('common.unknown_track');
+  const getTrackMeta = useCallback(
+    (track: { id?: string; title?: string; artist?: string; url?: string; artwork?: any } | null) => {
+      if (!track) return { title: '', artist: '', artwork: undefined };
 
-    let rawArtist =
-      (meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
-        ? meta.artist.trim()
-        : '') ||
-      (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
-        ? keywords.expectedArtist
-        : (track.artist && track.artist !== 'Local Audio' && track.artist !== 'Bilinmeyen Sanatçı'
-            ? cleanYouTubeTitle(track.artist)
-            : unknownArtist));
-            
-    let rawTitle =
-      (meta?.title?.trim() ? meta.title.trim() : '') ||
-      keywords.expectedTrack ||
-      track.title ||
-      '';
+      if (player.isRemote && track.id === player.activeTrack?.id) {
+        return {
+          title: track.title || t('common.unknown_track'),
+          artist: track.artist || t('common.unknown_artist'),
+          artwork: player.artworkUri || undefined,
+        };
+      }
 
-    const title =
-      cleanDisplayTitle(rawTitle, rawArtist !== unknownArtist && rawArtist !== 'Bilinmeyen Sanatçı' ? rawArtist : undefined) ||
-      unknownTrack;
-      
-    let artworkUri =
-      meta?.artwork ||
-      (track.id ? artworkMap[track.id] : undefined) ||
-      (track.url ? artworkMap[track.url] : undefined) ||
-      (typeof track.artwork === 'string' ? track.artwork : undefined);
-      
-    return { title, artist: rawArtist, artwork: artworkUri };
-  }, [metadataMap, artworkMap, t]);
+      const meta =
+        (track.id ? metadataMap[track.id] : undefined) ||
+        (track.url ? metadataMap[track.url] : undefined);
+      const keywords = getSearchKeywords(track.title || '', track.artist || '');
 
-  const activeMeta = useMemo(() => getTrackMeta(activeTrack || null), [activeTrack, getTrackMeta]);
+      const unknownArtist = t('common.unknown_artist');
+      const unknownTrack = t('common.unknown_track');
+
+      let rawArtist =
+        (meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
+          ? meta.artist.trim()
+          : '') ||
+        (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
+          ? keywords.expectedArtist
+          : track.artist && track.artist !== 'Local Audio' && track.artist !== 'Bilinmeyen Sanatçı'
+          ? cleanYouTubeTitle(track.artist)
+          : unknownArtist);
+
+      let rawTitle =
+        (meta?.title?.trim() ? meta.title.trim() : '') ||
+        keywords.expectedTrack ||
+        track.title ||
+        '';
+
+      const title =
+        cleanDisplayTitle(
+          rawTitle,
+          rawArtist !== unknownArtist && rawArtist !== 'Bilinmeyen Sanatçı' ? rawArtist : undefined
+        ) || unknownTrack;
+
+      let artworkUri =
+        meta?.artwork ||
+        (track.id ? artworkMap[track.id] : undefined) ||
+        (track.url ? artworkMap[track.url] : undefined) ||
+        (typeof track.artwork === 'string' ? track.artwork : undefined);
+
+      return { title, artist: rawArtist, artwork: artworkUri };
+    },
+    [player.isRemote, player.activeTrack?.id, player.artworkUri, metadataMap, artworkMap, t]
+  );
+
+  const activeMeta = useMemo(() => getTrackMeta(player.activeTrack), [player.activeTrack, getTrackMeta]);
   const prevMeta = useMemo(() => getTrackMeta(prevTrack), [prevTrack, getTrackMeta]);
   const nextMeta = useMemo(() => getTrackMeta(nextTrack), [nextTrack, getTrackMeta]);
 
   const miniPanX = useMemo(() => new Animated.Value(0), []);
   const isMiniSkippingRef = useRef(false);
-  const currentTrackIdRef = useRef(activeTrack?.id);
+  const currentTrackIdRef = useRef(player.activeTrack?.id);
 
-  // Sıra artık kuyruğa gömülü: native next/prev doğru parçayı çalar
-  // (shuffle ve repeat dahil). Bu yüzden ekstra indeks hesabı yapılmaz.
   const skipNext = useCallback(async () => {
     try {
-      await TrackPlayer.skipToNext();
-      await TrackPlayer.play();
+      await player.skipToNext();
     } catch (e) {
       console.warn('Skip next failed', e);
     } finally {
-      // Ensure we reset gesture state if track doesn't change (e.g. end of queue)
       setTimeout(() => {
         if (isMiniSkippingRef.current) {
           isMiniSkippingRef.current = false;
@@ -139,11 +154,11 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
         }
       }, 500);
     }
-  }, [miniPanX]);
+  }, [miniPanX, player]);
 
   const gestureSkipPrev = useCallback(async () => {
     try {
-      await skipToPreviousTrack();
+      await player.skipToPrevious();
     } catch (e) {
       console.warn('Gesture skip prev failed', e);
     } finally {
@@ -154,47 +169,49 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
         }
       }, 500);
     }
-  }, [miniPanX]);
+  }, [miniPanX, player]);
 
   const togglePlayback = async () => {
-    if (playing) {
-      await TrackPlayer.pause();
-      if (activeTrack && progress.position > 0) {
-        TrackPlayer.getActiveTrackIndex().then((idx) => {
-          const resolvedIdx = idx ?? 0;
-          saveLastPlayback(
-            {
-              trackId: activeTrack.id || activeTrack.url,
-              trackIndex: resolvedIdx,
-              position: progress.position,
-              track: {
-                id: activeTrack.id || activeTrack.url,
-                url: activeTrack.url,
-                title: activeTrack.title,
-                artist: activeTrack.artist,
-                artwork: typeof activeTrack.artwork === 'string' ? activeTrack.artwork : undefined,
+    if (player.isPlaying) {
+      await player.pause();
+      if (!player.isRemote && player.activeTrack && progress.position > 0) {
+        TrackPlayer.getActiveTrackIndex()
+          .then((idx) => {
+            const resolvedIdx = idx ?? 0;
+            saveLastPlayback(
+              {
+                trackId: player.activeTrack!.id,
+                trackIndex: resolvedIdx,
+                position: progress.position,
+                track: {
+                  id: player.activeTrack!.id,
+                  url: (player.activeTrack as any).url || '',
+                  title: player.activeTrack!.title,
+                  artist: player.activeTrack!.artist,
+                  artwork: player.artworkUri || undefined,
+                },
               },
-            },
-            true
-          );
-          updateQueueSnapshotActiveIndex(resolvedIdx, progress.position);
-        }).catch(() => {});
+              true
+            );
+            updateQueueSnapshotActiveIndex(resolvedIdx, progress.position);
+          })
+          .catch(() => {});
       }
     } else {
-      await TrackPlayer.play();
+      await player.play();
     }
   };
 
   // When activeTrack changes, snap back to center (seamless page turn)
   useEffect(() => {
-    if (currentTrackIdRef.current !== activeTrack?.id) {
-      currentTrackIdRef.current = activeTrack?.id;
+    if (currentTrackIdRef.current !== player.activeTrack?.id) {
+      currentTrackIdRef.current = player.activeTrack?.id;
       if (isMiniSkippingRef.current) {
         miniPanX.setValue(0);
         isMiniSkippingRef.current = false;
       }
     }
-  }, [activeTrack?.id, miniPanX]);
+  }, [player.activeTrack?.id, miniPanX]);
 
   // PanResponder for gestures
   const panResponder = useMemo(
@@ -267,7 +284,7 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
     [openFullscreenPlayer, skipNext, gestureSkipPrev, miniPanX]
   );
 
-  if (!activeTrack) {
+  if (!player.activeTrack) {
     return null;
   }
 
@@ -327,14 +344,22 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
               <View style={styles.artworkBox}>
                 <TrackArtwork
                   uri={activeMeta.artwork}
-                  trackId={activeTrack.id}
-                  trackUri={activeTrack.url}
+                  trackId={player.activeTrack.id}
+                  trackUri={(player.activeTrack as any).url}
                   size={44}
                   borderRadius={8}
                   iconSize={22}
                 />
               </View>
               <View style={styles.textDetailsBox}>
+                {player.isRemote && (
+                  <View style={styles.remoteBadge}>
+                    <View style={styles.remoteBadgeDot} />
+                    <Text style={styles.remoteBadgeText} numberOfLines={1}>
+                      {player.remoteDeviceName || 'Remote'}
+                    </Text>
+                  </View>
+                )}
                 <MarqueeText text={activeMeta.title || ''} style={styles.titleText} />
                 <MarqueeText text={activeMeta.artist || ''} style={styles.artistText} />
               </View>
@@ -371,10 +396,10 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
             hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
             onPress={togglePlayback}>
             <Ionicons
-              name={playing ? 'pause' : 'play'}
+              name={player.isPlaying ? 'pause' : 'play'}
               size={24}
               color="#ffffff"
-              style={!playing ? { marginLeft: 2 } : undefined}
+              style={!player.isPlaying ? { marginLeft: 2 } : undefined}
             />
           </TouchableOpacity>
 
@@ -480,5 +505,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 4,
+  },
+  remoteBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 2,
+  },
+  remoteBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10b981',
+  },
+  remoteBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#10b981',
+    letterSpacing: 0.3,
   },
 });
