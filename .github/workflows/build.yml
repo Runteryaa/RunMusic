@@ -43,35 +43,39 @@ jobs:
         uses: actions/cache@v4
         id: cache-ndk
         with:
-          path: /usr/local/lib/android/sdk/ndk/27.1.12297006
-          key: android-ndk-27.1.12297006-${{ runner.os }}
+          path: /usr/local/lib/android/sdk/ndk
+          key: android-ndk-v27-${{ runner.os }}
 
-      - name: 🛠 Ensure Android NDK 27.1
+      - name: 🛠 Ensure Android NDK Side-by-Side (27.0 & 27.1)
         run: |
-          NDK_DIR="/usr/local/lib/android/sdk/ndk/27.1.12297006"
-          if [ -d "$NDK_DIR" ] && [ -f "$NDK_DIR/source.properties" ]; then
-            echo "✅ Android NDK 27.1.12297006 is already present."
-          else
-            echo "⚡ Installing Android NDK 27.1.12297006 with retries..."
-            SUCCESS=0
-            for attempt in {1..5}; do
-              echo "Attempt $attempt / 5..."
-              if echo "y" | ${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.1.12297006"; then
-                if [ -d "$NDK_DIR" ] && [ -f "$NDK_DIR/source.properties" ]; then
-                  SUCCESS=1
-                  echo "✅ Successfully installed Android NDK 27.1."
-                  break
+          SDK_DIR="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          for ndk_ver in "27.0.12077973" "27.1.12297006"; do
+            NDK_PATH="$SDK_DIR/ndk/$ndk_ver"
+            if [ -d "$NDK_PATH" ] && [ -f "$NDK_PATH/source.properties" ]; then
+              echo "✅ Android NDK $ndk_ver is already present."
+            else
+              echo "⚡ Installing Android NDK $ndk_ver with retries..."
+              SUCCESS=0
+              for attempt in {1..5}; do
+                echo "Attempt $attempt / 5 for NDK $ndk_ver..."
+                if echo "y" | $SDK_DIR/cmdline-tools/latest/bin/sdkmanager --install "ndk;$ndk_ver"; then
+                  if [ -d "$NDK_PATH" ] && [ -f "$NDK_PATH/source.properties" ]; then
+                    SUCCESS=1
+                    echo "✅ Successfully installed Android NDK $ndk_ver."
+                    break
+                  fi
                 fi
+                echo "⚠️ Attempt $attempt failed. Waiting 10s before retry..."
+                sleep 10
+              done
+              if [ "$SUCCESS" -ne 1 ]; then
+                echo "❌ Failed to install Android NDK $ndk_ver after 5 attempts."
+                exit 1
               fi
-              echo "⚠️ Attempt $attempt failed. Waiting 15s before retry..."
-              sleep 15
-            done
-            if [ "$SUCCESS" -ne 1 ]; then
-              echo "❌ Failed to install Android NDK 27.1 after 5 attempts."
-              exit 1
             fi
-          fi
-          echo "ANDROID_NDK_HOME=$NDK_DIR" >> $GITHUB_ENV
+          done
+          echo "Side-by-side NDK directory contents:"
+          ls -la "$SDK_DIR/ndk"
 
       - name: 📦 Install Dependencies
         run: npm install --legacy-peer-deps
@@ -101,7 +105,8 @@ jobs:
           sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
           grep -q 'reactNativeArchitectures' android/gradle.properties || echo 'reactNativeArchitectures=arm64-v8a' >> android/gradle.properties
 
-          echo "ndk.dir=/usr/local/lib/android/sdk/ndk/27.1.12297006" >> android/local.properties
+          # Remove any ndk.dir from local.properties so AGP can use side-by-side NDKs
+          sed -i '/ndk\.dir/d' android/local.properties 2>/dev/null || true
 
           TARGET_BRANCH="${GITHUB_REF_NAME}"
           if [ "$TARGET_BRANCH" = "beta" ]; then
@@ -114,7 +119,7 @@ jobs:
 
           echo "--- Configured gradle.properties, local.properties & AndroidManifest.xml ---"
           grep -E '(newArch|reactNativeArchitectures)' android/gradle.properties
-          grep -i 'ndk.dir' android/local.properties || true
+          cat android/local.properties || true
           grep -i 'EXPO_UPDATES_CHANNEL' android/app/src/main/AndroidManifest.xml || true
 
       - name: 🏗 Build APK
