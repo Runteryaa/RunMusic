@@ -3,7 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Buffer } from 'buffer';
 import type { RemoteTrackSummary } from './remoteTypes';
 import { useThemeStore } from '../../store/useThemeStore';
-import { restoreQueueIfNeeded } from '../playerBootstrap';
+import { restoreQueueIfNeeded, setupTrackPlayerIfNeeded, getTrackPlayerOptions } from '../playerBootstrap';
 
 let MusicWidgetModule: any = null;
 try {
@@ -18,6 +18,38 @@ class RemoteMediaNotificationService {
   private currentTrackId: string | null = null;
   private currentArtworkUri: string | null = null;
   private isShadowActive = false;
+  private taskQueue: (() => Promise<void>)[] = [];
+  private isProcessingTask = false;
+
+  private enqueueTask(task: () => Promise<void>): Promise<void> {
+    return new Promise((resolve) => {
+      this.taskQueue.push(async () => {
+        try {
+          await task();
+        } finally {
+          resolve();
+        }
+      });
+      if (!this.isProcessingTask) {
+        this.processTaskQueue();
+      }
+    });
+  }
+
+  private async processTaskQueue(): Promise<void> {
+    this.isProcessingTask = true;
+    while (this.taskQueue.length > 0) {
+      const task = this.taskQueue.shift();
+      if (task) {
+        try {
+          await task();
+        } catch (e) {
+          console.warn('[RemoteMediaNotification] Task error:', e);
+        }
+      }
+    }
+    this.isProcessingTask = false;
+  }
 
   /**
    * Generates a PCM 8000Hz 8-bit mono silent WAV file matching the remote track's duration.
@@ -74,68 +106,79 @@ class RemoteMediaNotificationService {
     artworkUri?: string | null,
     initialPosition = 0
   ): Promise<void> {
-    if (!track) {
-      await this.cleanupRemoteMediaNotification();
-      return;
-    }
-
-    if (this.isShadowActive && this.currentTrackId === track.id) {
-      await this.syncRemotePlaybackState(isPlaying);
-      if (artworkUri && artworkUri !== this.currentArtworkUri) {
-        await this.syncRemoteArtwork(artworkUri);
-      }
-      return;
-    }
-
-    try {
-      this.isShadowActive = true;
-      this.currentTrackId = track.id;
-      if (artworkUri !== undefined) {
-        this.currentArtworkUri = artworkUri;
+    return this.enqueueTask(async () => {
+      if (!track) {
+        await this.performCleanup();
+        return;
       }
 
-      const duration = track.duration && track.duration > 0 ? track.duration : 180;
-      const silentUri = await this.ensureSilentAudioFile(duration);
-
-      // Ensure zero volume on client device
-      await TrackPlayer.setVolume(0);
-
-      // Reset and load the remote track metadata with silent audio stream
-      await TrackPlayer.reset();
-      await TrackPlayer.add({
-        id: `remote_${track.id}`,
-        url: silentUri,
-        title: track.title,
-        artist: track.artist,
-        artwork: this.currentArtworkUri || undefined,
-        duration,
-      });
-
-      // Off repeat mode so it naturally progresses without restarting every 5 seconds
-      await TrackPlayer.setRepeatMode(RepeatMode.Off);
-      await TrackPlayer.setVolume(0);
-
-      if (initialPosition > 0) {
-        await TrackPlayer.seekTo(initialPosition);
+      if (this.isShadowActive && this.currentTrackId === track.id) {
+        await this.performPlaybackStateSync(isPlaying);
+        if (artworkUri && artworkUri !== this.currentArtworkUri) {
+          await this.performArtworkSync(artworkUri);
+        }
+        return;
       }
 
-      if (isPlaying) {
-        await TrackPlayer.play();
-      } else {
-        await TrackPlayer.pause();
-      }
+      try {
+        await setupTrackPlayerIfNeeded();
 
-      // Update home screen widget on client device
-      this.updateWidget(track.title, track.artist, this.currentArtworkUri, isPlaying);
-    } catch (e) {
-      console.warn('[RemoteMediaNotification] Failed to sync remote track:', e);
-    }
+        this.isShadowActive = true;
+        this.currentTrackId = track.id;
+        if (artworkUri !== undefined) {
+          this.currentArtworkUri = artworkUri;
+        }
+
+        const duration = track.duration && track.duration > 0 ? track.duration : 180;
+        const silentUri = await this.ensureSilentAudioFile(duration);
+
+        // Ensure zero volume on client device
+        await TrackPlayer.setVolume(0);
+
+        // Reset and load the remote track metadata with silent audio stream
+        await TrackPlayer.reset();
+        await TrackPlayer.updateOptions(getTrackPlayerOptions(true));
+        await TrackPlayer.add({
+          id: `remote_${track.id}`,
+          url: silentUri,
+          title: track.title,
+          artist: track.artist,
+          artwork: this.currentArtworkUri || undefined,
+          duration,
+        });
+
+        // Loop silent audio so it never reaches EOF and never terminates the notification
+        await TrackPlayer.setRepeatMode(RepeatMode.Track);
+        await TrackPlayer.setVolume(0);
+
+        if (initialPosition > 0) {
+          await TrackPlayer.seekTo(initialPosition);
+        }
+
+        if (isPlaying) {
+          await TrackPlayer.play();
+        } else {
+          await TrackPlayer.pause();
+        }
+
+        // Update home screen widget on client device
+        this.updateWidget(track.title, track.artist, this.currentArtworkUri, isPlaying);
+      } catch (e) {
+        console.warn('[RemoteMediaNotification] Failed to sync remote track:', e);
+      }
+    });
   }
 
   /**
    * Updates playback state (play/pause) on client's local shadow player.
    */
   public async syncRemotePlaybackState(isPlaying: boolean): Promise<void> {
+    return this.enqueueTask(async () => {
+      await this.performPlaybackStateSync(isPlaying);
+    });
+  }
+
+  private async performPlaybackStateSync(isPlaying: boolean): Promise<void> {
     if (!this.isShadowActive) return;
 
     try {
@@ -179,6 +222,12 @@ class RemoteMediaNotificationService {
    * Updates artwork for currently displayed remote notification.
    */
   public async syncRemoteArtwork(artworkLocalUri: string): Promise<void> {
+    return this.enqueueTask(async () => {
+      await this.performArtworkSync(artworkLocalUri);
+    });
+  }
+
+  private async performArtworkSync(artworkLocalUri: string): Promise<void> {
     if (!this.isShadowActive) return;
 
     try {
@@ -204,6 +253,12 @@ class RemoteMediaNotificationService {
    * Cleans up shadow player when client disconnects and restores local playback state.
    */
   public async cleanupRemoteMediaNotification(): Promise<void> {
+    return this.enqueueTask(async () => {
+      await this.performCleanup();
+    });
+  }
+
+  private async performCleanup(): Promise<void> {
     if (!this.isShadowActive) return;
 
     try {

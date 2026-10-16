@@ -54,6 +54,7 @@ export interface QueueTrack {
   title?: string;
   artist?: string;
   artwork?: string;
+  duration?: number;
 }
 
 let isNavigatingHistory = false;

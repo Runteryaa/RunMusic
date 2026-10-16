@@ -6,7 +6,6 @@ import {
   BLE_RUNMUSIC_SERVICE_UUID,
   BLE_CHAR_STATE_NOTIFY_UUID,
   BLE_CHAR_COMMAND_WRITE_UUID,
-  BLE_CHAR_QUEUE_LYRICS_UUID,
   BLE_CHAR_DEVICE_INFO_UUID,
 } from './blePeripheralService';
 import type { RemoteMessage } from './remoteTypes';
@@ -287,12 +286,16 @@ class BleCentralService {
   private setupMonitors(device: Device): void {
     this.cleanupMonitors();
 
-    // Monitor 0xfee1: State Stream (Rule 2: dedicated stateStreamParser)
+    // Monitor 0xfee1: Media Control State Stream
     const stateSub = device.monitorCharacteristicForService(
       BLE_RUNMUSIC_SERVICE_UUID,
       BLE_CHAR_STATE_NOTIFY_UUID,
       (error, characteristic) => {
-        if (error || !characteristic?.value) return;
+        if (error) {
+          console.warn('[BleCentralService] Monitor error on state char:', error);
+          return;
+        }
+        if (!characteristic?.value) return;
 
         const rawBytes = Buffer.from(characteristic.value, 'base64');
         this.stateStreamParser.feed(rawBytes, (msg) => {
@@ -301,21 +304,7 @@ class BleCentralService {
       }
     );
 
-    // Monitor 0xfee3: Queue & Lyrics (Rule 2: dedicated lyricsStreamParser)
-    const lyricsSub = device.monitorCharacteristicForService(
-      BLE_RUNMUSIC_SERVICE_UUID,
-      BLE_CHAR_QUEUE_LYRICS_UUID,
-      (error, characteristic) => {
-        if (error || !characteristic?.value) return;
-
-        const rawBytes = Buffer.from(characteristic.value, 'base64');
-        this.lyricsStreamParser.feed(rawBytes, (msg) => {
-          this.callbacks?.onMessage(msg);
-        });
-      }
-    );
-
-    this.monitorSubs.push(stateSub, lyricsSub);
+    this.monitorSubs.push(stateSub);
   }
 
   private cleanupMonitors(): void {

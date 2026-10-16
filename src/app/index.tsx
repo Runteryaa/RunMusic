@@ -145,6 +145,7 @@ export default function LibraryScreen() {
         title: info.title,
         artist: info.artist,
         artwork: metadataMap[asset.id]?.artwork || artworkMap[asset.id] || undefined,
+        duration: asset.duration,
       };
     },
     [getTrackDisplayInfo, metadataMap, artworkMap]

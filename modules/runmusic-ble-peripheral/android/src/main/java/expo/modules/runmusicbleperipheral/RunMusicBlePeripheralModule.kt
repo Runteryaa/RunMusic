@@ -171,11 +171,16 @@ class RunMusicBlePeripheralModule : Module() {
       if (descriptor.uuid == CCCD_UUID && value != null) {
         descriptor.value = value
         if (value.isNotEmpty() && (value[0].toInt() and 1) != 0) {
+          val charUuid = descriptor.characteristic?.uuid?.toString()
+            ?: if (stateNotifyChar?.descriptors?.any { it.uuid == descriptor.uuid } == true) CHAR_STATE_NOTIFY_UUID.toString()
+            else if (queueLyricsChar?.descriptors?.any { it.uuid == descriptor.uuid } == true) CHAR_QUEUE_LYRICS_UUID.toString()
+            else CHAR_STATE_NOTIFY_UUID.toString()
+
           sendEvent(
             "onClientSubscribed",
             mapOf(
               "deviceAddress" to device.address,
-              "charUuid" to (descriptor.characteristic?.uuid?.toString() ?: "")
+              "charUuid" to charUuid
             )
           )
         }
@@ -371,12 +376,15 @@ class RunMusicBlePeripheralModule : Module() {
       val promiseId = UUID.randomUUID().toString()
       pendingNotificationPromises[promiseId] = promise
 
-      // Safety timeout: resolve false if onNotificationSent never arrives within 1200ms
+      // Safety fallback timeout: resolve if onNotificationSent never arrives within 45ms
       android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-        pendingNotificationPromises.remove(promiseId)?.resolve(false)
-      }, 1200)
+        pendingNotificationPromises.remove(promiseId)?.resolve(true)
+      }, 45)
 
       try {
+        @Suppress("DEPRECATION")
+        targetChar.value = rawBytes
+
         var notifyTriggered = false
         for (device in connectedDevices) {
           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -386,8 +394,6 @@ class RunMusicBlePeripheralModule : Module() {
             }
           } else {
             @Suppress("DEPRECATION")
-            targetChar.value = rawBytes
-            @Suppress("DEPRECATION")
             val res = server.notifyCharacteristicChanged(device, targetChar, false)
             if (res) {
               notifyTriggered = true
@@ -396,7 +402,7 @@ class RunMusicBlePeripheralModule : Module() {
         }
 
         if (!notifyTriggered) {
-          // If BLE stack did not accept the notification, onNotificationSent will never fire
+          // If BLE stack did not accept the notification, resolve promise
           pendingNotificationPromises.remove(promiseId)?.resolve(false)
         }
       } catch (e: Exception) {

@@ -20,7 +20,7 @@ import {
   type LyricLine,
 } from '../lyricsService';
 import { remoteMediaNotification } from './remoteMediaNotification';
-import { blePeripheralService, BLE_CHAR_STATE_NOTIFY_UUID } from './blePeripheralService';
+import { blePeripheralService } from './blePeripheralService';
 import { bleCentralService } from './bleCentralService';
 import type { DiscoveredPeer } from './IRemoteTransport';
 import type {
@@ -54,7 +54,7 @@ class RemoteSyncManager {
 
   private broadcastToAll(message: RemoteMessage): void {
     tcpHostServer.broadcast(message);
-    if (message.type !== 'ACTIVE_ARTWORK_SYNC') {
+    if (message.type !== 'ACTIVE_ARTWORK_SYNC' && message.type !== 'QUEUE_SYNC') {
       blePeripheralService.broadcast(message).catch(() => {});
     }
   }
@@ -65,6 +65,10 @@ class RemoteSyncManager {
 
   public getIsHostActive(): boolean {
     return this.isHostActive;
+  }
+
+  public getActiveClientTransport(): 'wifi' | 'ble' {
+    return this.activeClientTransport;
   }
 
   public async startHostService(): Promise<void> {
@@ -129,11 +133,9 @@ class RemoteSyncManager {
       onCommand: (msg) => {
         this.handleHostCommand(msg, null);
       },
-      onClientSubscribed: async (info) => {
-        if (info.charUuid.toLowerCase() === BLE_CHAR_STATE_NOTIFY_UUID.toLowerCase()) {
-          const initialState = await this.buildHostInitialState();
-          blePeripheralService.broadcast(initialState).catch(() => {});
-        }
+      onClientSubscribed: async () => {
+        const initialState = await this.buildHostInitialState(true);
+        blePeripheralService.broadcast(initialState).catch(() => {});
       },
     });
 
@@ -176,7 +178,17 @@ class RemoteSyncManager {
         track: trackSummary,
         lyrics: lyricsSummary,
       };
-      this.broadcastToAll(trackChangeMsg);
+      tcpHostServer.broadcast(trackChangeMsg);
+
+      if (blePeripheralService.getIsAdvertising()) {
+        const bleTrackChange: TrackChangeMessage = {
+          type: 'TRACK_CHANGE',
+          track: trackSummary,
+          lyrics: null,
+        };
+        blePeripheralService.broadcast(bleTrackChange).catch(() => {});
+      }
+
       this.broadcastQueueSync();
 
       if (track) {
@@ -245,6 +257,7 @@ class RemoteSyncManager {
       const posMsg: PositionSyncMessage = {
         type: 'POSITION_SYNC',
         position: progress.position,
+        duration: progress.duration > 0 ? progress.duration : undefined,
         isPlaying,
         playbackRate: 1.0,
       };
@@ -281,6 +294,7 @@ class RemoteSyncManager {
           const posMsg: PositionSyncMessage = {
             type: 'POSITION_SYNC',
             position: progress.position,
+            duration: progress.duration > 0 ? progress.duration : undefined,
             isPlaying: true,
             playbackRate: 1.0,
           };
@@ -308,7 +322,7 @@ class RemoteSyncManager {
     }
   }
 
-  private async buildHostInitialState(): Promise<InitialStateMessage> {
+  private async buildHostInitialState(isBle = false): Promise<InitialStateMessage> {
     const activeTrack = await TrackPlayer.getActiveTrack();
     const playback = await TrackPlayer.getPlaybackState();
     const progress = await TrackPlayer.getProgress();
@@ -316,9 +330,29 @@ class RemoteSyncManager {
     const isShuffle = useStore.getState().isShuffle;
 
     const trackSummary = activeTrack ? this.formatTrackSummary(activeTrack) : null;
+    if (trackSummary && trackSummary.duration <= 0 && progress.duration > 0) {
+      trackSummary.duration = progress.duration;
+    }
+
+    // BLE is a dedicated media remote: omit queue and lyrics payloads (< 200 bytes per message)
+    if (isBle) {
+      return {
+        type: 'INITIAL_STATE',
+        activeTrack: trackSummary,
+        isPlaying: playback.state === State.Playing,
+        playbackRate: 1.0,
+        position: progress.position,
+        repeatMode,
+        isShuffle,
+        queue: [],
+        upNext: [],
+        lyrics: null,
+      };
+    }
+
     const lyricsSummary = activeTrack ? this.formatLyricsSummary(activeTrack) : null;
 
-    // Build queue summaries
+    // Build queue summaries for Wi-Fi (TCP) clients
     const queueTracks = await TrackPlayer.getQueue();
     const queueSummaries = queueTracks.map((t) => this.formatTrackSummary(t));
 
@@ -397,7 +431,7 @@ class RemoteSyncManager {
         queue: queueSummaries,
         upNext: upNextSummaries,
       };
-      this.broadcastToAll(queueSync);
+      tcpHostServer.broadcast(queueSync);
     });
   }
 
@@ -502,13 +536,15 @@ class RemoteSyncManager {
         break;
 
       case 'COMMAND_GET_STATE':
-        this.buildHostInitialState().then((state) => {
-          if (clientSocket) {
+        if (clientSocket) {
+          this.buildHostInitialState(false).then((state) => {
             tcpHostServer.sendToClient(clientSocket, state);
-          } else {
+          });
+        } else {
+          this.buildHostInitialState(true).then((state) => {
             blePeripheralService.broadcast(state).catch(() => {});
-          }
-        });
+          });
+        }
         break;
     }
   }
@@ -916,11 +952,20 @@ class RemoteSyncManager {
     const artworkMap = useStore.getState().artworkMap;
     const hasArtwork = !!(track.artwork || artworkMap[track.id]);
 
+    let duration = track.duration || 0;
+    if (duration <= 0) {
+      const allAssets = useStore.getState().allAssets;
+      const asset = allAssets.find((a) => a.id === track.id || a.uri === (track as any).url);
+      if (asset && asset.duration > 0) {
+        duration = asset.duration;
+      }
+    }
+
     return {
       id: track.id,
       title: track.title || 'Unknown Title',
       artist: track.artist || 'Unknown Artist',
-      duration: track.duration || 0,
+      duration,
       hasArtwork,
     };
   }

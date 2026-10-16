@@ -123,8 +123,10 @@ class BlePeripheralService {
       this.enqueueSend(async () => {
         try {
           const sendPromise = RunMusicBlePeripheralModule?.sendNotification(targetUuid, base64Chunk);
-          const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), 1500));
+          const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), 80));
           await Promise.race([sendPromise, timeoutPromise]);
+          // 15ms inter-chunk breath for Android BLE RF buffer
+          await new Promise((res) => setTimeout(res, 15));
         } catch (err) {
           console.warn('[BlePeripheralService] Notification chunk failed:', err);
         }
@@ -133,6 +135,10 @@ class BlePeripheralService {
   }
 
   private enqueueSend(task: () => Promise<void>): void {
+    // Media controls only need latest state; drop backlog if congested
+    if (this.sendQueue.length > 15) {
+      this.sendQueue = this.sendQueue.slice(-5);
+    }
     this.sendQueue.push(task);
     if (!this.isProcessingQueue) {
       this.processSendQueue();

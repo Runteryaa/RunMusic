@@ -97,6 +97,7 @@ export interface InitialStateMessage {
 export interface PositionSyncMessage {
   type: 'POSITION_SYNC';
   position: number;
+  duration?: number;
   isPlaying: boolean;
   playbackRate: number;
 }

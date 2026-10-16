@@ -233,16 +233,25 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
         // If drift is large (> 1.2s), snap immediately (scrubbing/seek). Otherwise smooth update.
         const shouldSnap = Math.abs(currentInterp - msg.position) > 1.2;
 
-        set((state) => ({
-          lastKnownPosition: msg.position,
-          clientSyncReceivedAt: now,
-          interpolatedPosition: shouldSnap ? msg.position : state.interpolatedPosition,
-          remoteState: {
-            ...state.remoteState,
-            isPlaying: msg.isPlaying,
-            playbackRate: msg.playbackRate || 1.0,
-          },
-        }));
+        set((state) => {
+          const currentTrack = state.remoteState.activeTrack;
+          const updatedTrack =
+            currentTrack && msg.duration && msg.duration > 0 && currentTrack.duration !== msg.duration
+              ? { ...currentTrack, duration: msg.duration }
+              : currentTrack;
+
+          return {
+            lastKnownPosition: msg.position,
+            clientSyncReceivedAt: now,
+            interpolatedPosition: shouldSnap ? msg.position : state.interpolatedPosition,
+            remoteState: {
+              ...state.remoteState,
+              activeTrack: updatedTrack,
+              isPlaying: msg.isPlaying,
+              playbackRate: msg.playbackRate || 1.0,
+            },
+          };
+        });
 
         if (msg.isPlaying) {
           ensureInterpolationRunning(get, set);

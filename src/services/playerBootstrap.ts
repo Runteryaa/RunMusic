@@ -1,3 +1,4 @@
+import { Platform, PermissionsAndroid } from 'react-native';
 import TrackPlayer, {
   Capability,
   AppKilledPlaybackBehavior,
@@ -85,6 +86,14 @@ export async function setupTrackPlayerIfNeeded(): Promise<boolean> {
       await TrackPlayer.setupPlayer();
     } catch {
       // Zaten başlatılmışsa devam et
+    }
+
+    if (Platform.OS === 'android' && Platform.Version >= 33) {
+      try {
+        await PermissionsAndroid.request('android.permission.POST_NOTIFICATIONS' as any);
+      } catch {
+        // ignore
+      }
     }
 
     try {
