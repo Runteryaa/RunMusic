@@ -108,9 +108,6 @@ jobs:
           # Remove any ndk.dir from local.properties so AGP can use side-by-side NDKs
           sed -i '/ndk\.dir/d' android/local.properties 2>/dev/null || true
 
-          # Ensure dummy CMakeLists.txt exists for react-native-ble-plx in old architecture
-          node scripts/ensure-ble-plx-codegen.js
-
           TARGET_BRANCH="${GITHUB_REF_NAME}"
           if [ "$TARGET_BRANCH" = "beta" ]; then
             UPDATE_CHANNEL="beta"
