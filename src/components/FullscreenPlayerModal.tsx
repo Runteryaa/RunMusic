@@ -52,6 +52,8 @@ import {
   cleanYouTubeTitle,
   cleanDisplayTitle,
   getSearchKeywords,
+  LRCLIB_HEADERS,
+  fetchGeniusLyricsByUrl,
 } from '../services/lyricsService';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import {
@@ -877,12 +879,21 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     if (player.isRemote) {
       if (!player.lyrics) return null;
       return {
-        syncedLyrics: player.lyrics.isSynced ? 'synced' : undefined,
-        plainLyrics: player.lyrics.plainLyrics,
-        parsedLines: player.lyrics.lines,
-        source: player.lyrics.source || undefined,
-        trackName: player.activeTrack?.title,
-        artistName: player.activeTrack?.artist,
+        id: player.lyrics.lrclibId
+          ? `lrclib-${player.lyrics.lrclibId}`
+          : player.lyrics.geniusId
+          ? `genius-${player.lyrics.geniusId}`
+          : undefined,
+        syncedLyrics: player.lyrics.syncedLyrics || (player.lyrics.isSynced ? 'synced' : null),
+        plainLyrics: player.lyrics.plainLyrics || null,
+        lyricsfile: player.lyrics.lyricsfile || null,
+        parsedLines: player.lyrics.lines || [],
+        source: (player.lyrics.source as any) || 'lrclib',
+        trackName: player.activeTrack?.title || '',
+        artistName: player.activeTrack?.artist || '',
+        hasWordSync:
+          !!player.lyrics.lyricsfile ||
+          player.lyrics.lines?.some((l) => !!l.words && l.words.length > 0),
       } as LyricsResult;
     }
 
@@ -917,6 +928,53 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     if (currentLyrics.hasWordSync) return true;
     return parsedLines.some((l) => !!l.words && l.words.length > 0);
   }, [currentLyrics, parsedLines]);
+
+  const remoteLyrics = player.lyrics;
+  const remoteLrclibId = remoteLyrics?.lrclibId;
+  const remoteGeniusId = remoteLyrics?.geniusId;
+  const remoteGeniusUrl = remoteLyrics?.geniusUrl;
+  const remoteHasLines = !!(remoteLyrics?.lines && remoteLyrics.lines.length > 0);
+
+  useEffect(() => {
+    if (player.isRemote && remoteLyrics && !remoteHasLines) {
+      if (remoteLrclibId) {
+        const rawId = String(remoteLrclibId).replace('lrclib-', '');
+        fetch(`https://lrclib.net/api/get/${rawId}`, { headers: LRCLIB_HEADERS })
+          .then((res) => res.json())
+          .then((d) => {
+            if (d) {
+              const lines = parseAnySyncedLyrics(d.lyricsfile, d.syncedLyrics);
+              const current = useRemoteConnectStore.getState().remoteState.lyrics;
+              if (current) {
+                useRemoteConnectStore.getState().setRemoteLyrics({
+                  ...current,
+                  lines,
+                  syncedLyrics: d.syncedLyrics,
+                  plainLyrics: d.plainLyrics,
+                  lyricsfile: d.lyricsfile,
+                  isSynced: !!d.syncedLyrics && lines.length > 0,
+                });
+              }
+            }
+          })
+          .catch(() => {});
+      } else if (remoteGeniusUrl) {
+        fetchGeniusLyricsByUrl(remoteGeniusUrl).then((plain) => {
+          if (plain) {
+            const current = useRemoteConnectStore.getState().remoteState.lyrics;
+            if (current) {
+              useRemoteConnectStore.getState().setRemoteLyrics({
+                ...current,
+                lines: [],
+                plainLyrics: plain,
+                isSynced: false,
+              });
+            }
+          }
+        });
+      }
+    }
+  }, [player.isRemote, remoteLyrics, remoteHasLines, remoteLrclibId, remoteGeniusId, remoteGeniusUrl]);
 
   const loadLyricsForTrack = async (title: string, artist?: string, force = false) => {
     if (player.isRemote || !localActiveTrack) return;
@@ -977,6 +1035,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           selectedCandidateId: result.id,
         };
         setLyrics(saveId, initialSaved, altKeys);
+        if (localActiveTrack?.id) {
+          remoteSyncManager.broadcastLyricsUpdate(localActiveTrack.id);
+        }
       }
     } catch (e) {
       console.warn('Failed to load lyrics', e);
@@ -1121,7 +1182,16 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   };
 
   const handleSelectCandidate = async (candidate: LyricsCandidate) => {
-    if (player.isRemote || !localActiveTrack) return;
+    if (player.isRemote) {
+      if (player.activeTrack) {
+        setResolvingCandidateId(candidate.id);
+        remoteSyncManager.sendSelectLyrics(player.activeTrack.id, candidate);
+        setIsManualSearchOpen(false);
+        setResolvingCandidateId(null);
+      }
+      return;
+    }
+    if (!localActiveTrack) return;
     setResolvingCandidateId(candidate.id);
     try {
       const resolved = await resolveCandidateToLyricsResult(candidate, candidatesList);
@@ -1142,6 +1212,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           candidates: candidatesList.length > 0 ? candidatesList : resolved.candidates,
         };
         setLyrics(saveId, selectedResult, altKeys);
+        if (localActiveTrack?.id) {
+          remoteSyncManager.broadcastLyricsUpdate(localActiveTrack.id);
+        }
         setIsManualSearchOpen(false);
       }
     } catch (e) {

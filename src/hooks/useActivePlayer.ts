@@ -9,7 +9,7 @@ import { useStore } from '../store/useStore';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import { skipToPreviousTrack, setShuffle as setLocalShuffle } from '../services/queueController';
 import { findLyricsInCache } from '../services/persistSanitize';
-import { parseAnySyncedLyrics, type LyricLine } from '../services/lyricsService';
+import { parseAnySyncedLyrics, getLyricsCacheKeys, type LyricLine } from '../services/lyricsService';
 import type { RemoteTrackSummary, RemoteLyricsSummary } from '../services/remote/remoteTypes';
 
 export interface ActivePlayerState {
@@ -185,17 +185,42 @@ export function useActivePlayer(): ActivePlayerState {
     };
     localArtworkUri = localActiveTrack.artwork || localArtworkMap[localActiveTrack.id] || null;
 
-    const cached = findLyricsInCache(useStore.getState().lyricsCache, [localActiveTrack.id]);
+    const keys = getLyricsCacheKeys({
+      id: localActiveTrack.id,
+      url: localActiveTrack.url,
+      title: localActiveTrack.title,
+      artist: localActiveTrack.artist,
+      rawTitle: localActiveTrack.title,
+    });
+    const cached = findLyricsInCache(useStore.getState().lyricsCache, keys);
     if (cached) {
       let lines: LyricLine[] = cached.parsedLines || [];
-      if (lines.length === 0 && cached.syncedLyrics) {
-        lines = parseAnySyncedLyrics(cached.syncedLyrics);
+      if (lines.length === 0 && (cached.syncedLyrics || cached.lyricsfile)) {
+        lines = parseAnySyncedLyrics(cached.lyricsfile, cached.syncedLyrics);
       }
+      let lrclibId: string | number | null = null;
+      let geniusId: string | number | null = null;
+      let geniusUrl: string | null = null;
+
+      if (cached.source === 'lrclib' && cached.id) {
+        lrclibId = cached.id.replace('lrclib-', '');
+      } else if (cached.source === 'genius') {
+        if (cached.id) geniusId = cached.id.replace('genius-', '');
+        const candidate = cached.candidates?.find((c) => c.id === cached.id);
+        if (candidate?.geniusUrl) geniusUrl = candidate.geniusUrl;
+      }
+
       localLyricsSummary = {
+        trackId: localActiveTrack.id,
         lines,
         source: cached.source || null,
-        isSynced: !!cached.syncedLyrics && lines.length > 0,
+        isSynced: (!!cached.syncedLyrics || !!cached.lyricsfile) && lines.length > 0,
         plainLyrics: cached.plainLyrics || undefined,
+        syncedLyrics: cached.syncedLyrics || undefined,
+        lyricsfile: cached.lyricsfile || undefined,
+        lrclibId,
+        geniusId,
+        geniusUrl,
       };
     }
   }

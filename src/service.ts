@@ -7,6 +7,8 @@ import {
   getIsNavigatingHistory,
 } from './services/queueController';
 import { useThemeStore } from './store/useThemeStore';
+import { useRemoteConnectStore } from './store/useRemoteConnectStore';
+import { remoteSyncManager } from './services/remote/remoteSyncManager';
 
 let MusicWidgetModule: any = null;
 try {
@@ -50,6 +52,10 @@ export default async function playbackService() {
   restoreQueueIfNeeded().catch(() => {});
 
   TrackPlayer.addEventListener(Event.RemotePlay, async () => {
+    if (useRemoteConnectStore.getState().isRemoteConnected()) {
+      remoteSyncManager.sendPlay();
+      return;
+    }
     try {
       await restoreQueueIfNeeded();
       await TrackPlayer.play();
@@ -58,6 +64,10 @@ export default async function playbackService() {
     }
   });
   TrackPlayer.addEventListener(Event.RemotePause, async () => {
+    if (useRemoteConnectStore.getState().isRemoteConnected()) {
+      remoteSyncManager.sendPause();
+      return;
+    }
     try {
       await TrackPlayer.pause();
       await persistCurrentPlaybackOnPause();
@@ -66,6 +76,10 @@ export default async function playbackService() {
     }
   });
   TrackPlayer.addEventListener(Event.RemoteNext, async () => {
+    if (useRemoteConnectStore.getState().isRemoteConnected()) {
+      remoteSyncManager.sendSkipToNext();
+      return;
+    }
     try {
       await restoreQueueIfNeeded();
       await TrackPlayer.skipToNext();
@@ -75,6 +89,10 @@ export default async function playbackService() {
     }
   });
   TrackPlayer.addEventListener(Event.RemotePrevious, async () => {
+    if (useRemoteConnectStore.getState().isRemoteConnected()) {
+      remoteSyncManager.sendSkipToPrevious();
+      return;
+    }
     try {
       await restoreQueueIfNeeded();
       await skipToPreviousTrack();
@@ -83,6 +101,12 @@ export default async function playbackService() {
     }
   });
   TrackPlayer.addEventListener(Event.RemoteSeek, async (event) => {
+    if (useRemoteConnectStore.getState().isRemoteConnected()) {
+      if (typeof event.position === 'number') {
+        remoteSyncManager.sendSeek(event.position);
+      }
+      return;
+    }
     try {
       if (typeof event.position === 'number') {
         await TrackPlayer.seekTo(event.position);
@@ -95,6 +119,9 @@ export default async function playbackService() {
   // Parça değiştiğinde (otomatik geçiş, next/prev, remote vb.) konumu ve aktif indeksi anında kaydet.
   // Bu sayede uygulama kapatılıp açıldığında karışık (shuffled) veya düz kuyruk kaldığı yerden devam eder.
   TrackPlayer.addEventListener(Event.PlaybackActiveTrackChanged, async (event) => {
+    if (useRemoteConnectStore.getState().isRemoteConnected()) {
+      return; // Uzak bağlantı gölge parçası yerel geçmişe veya son çalınanlara kaydedilmez
+    }
     try {
       if (event.lastTrack && !getIsNavigatingHistory()) {
         recordTrackToHistory(event.lastTrack);
@@ -157,6 +184,21 @@ export default async function playbackService() {
 
   if (MusicWidgetModule && MusicWidgetModule.addListener) {
     MusicWidgetModule.addListener('onWidgetAction', async (event: { action: string }) => {
+      if (useRemoteConnectStore.getState().isRemoteConnected()) {
+        if (event.action === 'play_pause') {
+          const isPlaying = useRemoteConnectStore.getState().remoteState.isPlaying;
+          if (isPlaying) {
+            remoteSyncManager.sendPause();
+          } else {
+            remoteSyncManager.sendPlay();
+          }
+        } else if (event.action === 'next') {
+          remoteSyncManager.sendSkipToNext();
+        } else if (event.action === 'prev') {
+          remoteSyncManager.sendSkipToPrevious();
+        }
+        return;
+      }
       try {
         await restoreQueueIfNeeded();
         if (event.action === 'play_pause') {

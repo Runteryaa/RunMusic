@@ -12,7 +12,14 @@ import { useRemoteConnectStore } from '../../store/useRemoteConnectStore';
 import { useStore } from '../../store/useStore';
 import { skipToPreviousTrack, moveUpNext, removeQueueItem, setShuffle } from '../queueController';
 import { findLyricsInCache } from '../persistSanitize';
-import { parseAnySyncedLyrics, type LyricLine } from '../lyricsService';
+import {
+  parseAnySyncedLyrics,
+  getLyricsCacheKeys,
+  fetchLyricsOnline,
+  resolveCandidateToLyricsResult,
+  type LyricLine,
+} from '../lyricsService';
+import { remoteMediaNotification } from './remoteMediaNotification';
 import type {
   RemoteMessage,
   RemoteTrackSummary,
@@ -21,10 +28,12 @@ import type {
   PositionSyncMessage,
   StateChangeMessage,
   TrackChangeMessage,
-  QueueSyncMessage,
+  LyricsSyncMessage,
   ActiveArtworkSyncMessage,
+  QueueSyncMessage,
   LibraryQueryMessage,
   LibraryResultMessage,
+  CommandSelectLyricsMessage,
   DiscoveredHost,
   TrustedClient,
 } from './remoteTypes';
@@ -126,7 +135,7 @@ class RemoteSyncManager {
       if (!this.isHostActive) return;
       const track = event.track ?? null;
       const trackSummary = track ? this.formatTrackSummary(track) : null;
-      const lyricsSummary = track ? this.formatLyricsSummary(track.id) : null;
+      const lyricsSummary = track ? this.formatLyricsSummary(track) : null;
 
       const trackChangeMsg: TrackChangeMessage = {
         type: 'TRACK_CHANGE',
@@ -136,6 +145,40 @@ class RemoteSyncManager {
       tcpHostServer.broadcast(trackChangeMsg);
 
       if (track) {
+        // If lyrics not in cache and autoFetchLyrics is enabled, fetch in background and broadcast
+        if (!lyricsSummary && useStore.getState().preferences?.autoFetchLyrics) {
+          const meta = useStore.getState().metadataMap[track.id];
+          const title = meta?.title || track.title || '';
+          const artist = meta?.artist || track.artist || '';
+          if (title) {
+            fetchLyricsOnline(title, artist, useStore.getState().preferences.lyricsSourcePreference)
+              .then((result) => {
+                if (result) {
+                  const altKeys = getLyricsCacheKeys({
+                    id: track.id,
+                    url: track.url,
+                    title,
+                    artist,
+                    rawTitle: track.title,
+                  });
+                  useStore.getState().setLyrics(track.id, result, altKeys);
+                  const updated = this.formatLyricsSummary(track);
+                  if (updated) {
+                    const lyricsMsg: LyricsSyncMessage = {
+                      type: 'LYRICS_SYNC',
+                      trackId: track.id,
+                      lyrics: updated,
+                    };
+                    tcpHostServer.broadcast(lyricsMsg);
+                  }
+                }
+              })
+              .catch((err) => {
+                console.warn('[RemoteSyncManager] Background host lyrics fetch error:', err);
+              });
+          }
+        }
+
         const artworkBase64 = await this.getCompressedArtworkBase64(track.id);
         if (artworkBase64) {
           const artMsg: ActiveArtworkSyncMessage = {
@@ -224,7 +267,7 @@ class RemoteSyncManager {
     const isShuffle = useStore.getState().isShuffle;
 
     const trackSummary = activeTrack ? this.formatTrackSummary(activeTrack) : null;
-    const lyricsSummary = activeTrack ? this.formatLyricsSummary(activeTrack.id) : null;
+    const lyricsSummary = activeTrack ? this.formatLyricsSummary(activeTrack) : null;
 
     // Build queue summaries
     const queueTracks = await TrackPlayer.getQueue();
@@ -346,7 +389,30 @@ class RemoteSyncManager {
       case 'REQUEST_ARTWORK':
         this.handleArtworkRequest(msg.trackId, clientSocket);
         break;
+
+      case 'COMMAND_SELECT_LYRICS':
+        this.handleClientSelectLyrics(msg);
+        break;
     }
+  }
+
+  private handleClientSelectLyrics(msg: CommandSelectLyricsMessage): void {
+    resolveCandidateToLyricsResult(msg.candidate as any).then((result) => {
+      if (result) {
+        const allAssets = useStore.getState().allAssets;
+        const track = allAssets.find((a) => a.id === msg.trackId);
+        const meta = useStore.getState().metadataMap[msg.trackId];
+        const altKeys = getLyricsCacheKeys({
+          id: msg.trackId,
+          url: track?.uri,
+          title: meta?.title || msg.candidate.trackName,
+          artist: meta?.artist || msg.candidate.artistName,
+          rawTitle: track?.filename,
+        });
+        useStore.getState().setLyrics(msg.trackId, result, altKeys);
+        this.broadcastLyricsUpdate(msg.trackId);
+      }
+    });
   }
 
   private handleLibraryQuery(msg: LibraryQueryMessage, clientSocket: any): void {
@@ -431,6 +497,7 @@ class RemoteSyncManager {
       onStatusChange: (status: ClientConnectionStatus, error?: string) => {
         useRemoteConnectStore.getState().setConnectionStatus(status, error);
         if (status === 'disconnected' || status === 'error') {
+          remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
           useRemoteConnectStore.getState().setMode('idle');
         }
       },
@@ -461,6 +528,7 @@ class RemoteSyncManager {
   }
 
   public disconnectClient(): void {
+    remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
     tcpClient.disconnect();
     useRemoteConnectStore.getState().resetRemoteState();
   }
@@ -469,10 +537,51 @@ class RemoteSyncManager {
     tcpClient.sendMessage(message);
   }
 
+  public sendPlay(): void {
+    this.sendClientCommand({ type: 'COMMAND_PLAY' });
+  }
+
+  public sendPause(): void {
+    this.sendClientCommand({ type: 'COMMAND_PAUSE' });
+  }
+
+  public sendSkipToNext(): void {
+    this.sendClientCommand({ type: 'COMMAND_SKIP_NEXT' });
+  }
+
+  public sendSkipToPrevious(): void {
+    this.sendClientCommand({ type: 'COMMAND_SKIP_PREVIOUS' });
+  }
+
+  public sendSeek(position: number): void {
+    this.sendClientCommand({ type: 'COMMAND_SEEK', position });
+  }
+
+  public sendSelectLyrics(trackId: string, candidate: any): void {
+    const msg: CommandSelectLyricsMessage = {
+      type: 'COMMAND_SELECT_LYRICS',
+      trackId,
+      candidate: {
+        id: candidate.id,
+        source: candidate.source,
+        trackName: candidate.trackName,
+        artistName: candidate.artistName,
+        hasSynced: candidate.hasSynced,
+        hasWordSync: candidate.hasWordSync,
+        syncedLyrics: candidate.syncedLyrics,
+        plainLyrics: candidate.plainLyrics,
+        lyricsfile: candidate.lyricsfile,
+        geniusUrl: candidate.geniusUrl,
+      },
+    };
+    this.sendClientCommand(msg);
+  }
+
   private async handleClientIncomingMessage(msg: RemoteMessage): Promise<void> {
     switch (msg.type) {
       case 'INITIAL_STATE':
         useRemoteConnectStore.getState().setRemoteInitialState(msg);
+        remoteMediaNotification.syncRemoteTrackToLocalPlayer(msg.activeTrack, msg.isPlaying, null).catch(() => {});
         break;
 
       case 'POSITION_SYNC':
@@ -481,10 +590,24 @@ class RemoteSyncManager {
 
       case 'TRACK_CHANGE':
         useRemoteConnectStore.getState().setRemoteTrackChange(msg);
+        remoteMediaNotification
+          .syncRemoteTrackToLocalPlayer(
+            msg.track,
+            useRemoteConnectStore.getState().remoteState.isPlaying,
+            useRemoteConnectStore.getState().remoteState.artworkUri
+          )
+          .catch(() => {});
         break;
 
       case 'STATE_CHANGE':
         useRemoteConnectStore.getState().setRemoteStateChange(msg);
+        if (msg.isPlaying !== undefined) {
+          remoteMediaNotification.syncRemotePlaybackState(msg.isPlaying).catch(() => {});
+        }
+        break;
+
+      case 'LYRICS_SYNC':
+        useRemoteConnectStore.getState().setRemoteLyrics(msg.lyrics);
         break;
 
       case 'QUEUE_SYNC':
@@ -495,6 +618,9 @@ class RemoteSyncManager {
         if (msg.base64) {
           const fileUri = await this.saveRemoteArtworkToFile(msg.trackId, msg.base64);
           useRemoteConnectStore.getState().setRemoteArtworkUri(fileUri);
+          if (fileUri) {
+            remoteMediaNotification.syncRemoteArtwork(fileUri).catch(() => {});
+          }
         }
         break;
 
@@ -562,21 +688,67 @@ class RemoteSyncManager {
     };
   }
 
-  private formatLyricsSummary(trackId: string): RemoteLyricsSummary | null {
-    const result = findLyricsInCache(useStore.getState().lyricsCache, [trackId]);
+  public formatLyricsSummary(track: Track | null): RemoteLyricsSummary | null {
+    if (!track) return null;
+    const meta = useStore.getState().metadataMap[track.id];
+    const title = meta?.title || track.title || '';
+    const artist = meta?.artist || track.artist || '';
+    const keys = getLyricsCacheKeys({
+      id: track.id,
+      url: track.url,
+      title,
+      artist,
+      rawTitle: track.title,
+    });
+    const result = findLyricsInCache(useStore.getState().lyricsCache, keys);
     if (!result) return null;
 
     let lines: LyricLine[] = result.parsedLines || [];
-    if (lines.length === 0 && result.syncedLyrics) {
-      lines = parseAnySyncedLyrics(result.syncedLyrics);
+    if (lines.length === 0 && (result.syncedLyrics || result.lyricsfile)) {
+      lines = parseAnySyncedLyrics(result.lyricsfile, result.syncedLyrics);
+    }
+
+    let lrclibId: string | number | null = null;
+    let geniusId: string | number | null = null;
+    let geniusUrl: string | null = null;
+
+    if (result.source === 'lrclib' && result.id) {
+      lrclibId = result.id.replace('lrclib-', '');
+    } else if (result.source === 'genius') {
+      if (result.id) geniusId = result.id.replace('genius-', '');
+      const candidate = result.candidates?.find((c) => c.id === result.id);
+      if (candidate?.geniusUrl) geniusUrl = candidate.geniusUrl;
     }
 
     return {
+      trackId: track.id,
       lines,
       source: result.source || null,
-      isSynced: !!result.syncedLyrics && lines.length > 0,
+      isSynced: (!!result.syncedLyrics || !!result.lyricsfile) && lines.length > 0,
       plainLyrics: result.plainLyrics || undefined,
+      syncedLyrics: result.syncedLyrics || undefined,
+      lyricsfile: result.lyricsfile || undefined,
+      lrclibId,
+      geniusId,
+      geniusUrl,
     };
+  }
+
+  public broadcastLyricsUpdate(trackId: string): void {
+    if (!this.isHostActive) return;
+    TrackPlayer.getActiveTrack().then((activeTrack) => {
+      if (activeTrack && activeTrack.id === trackId) {
+        const updated = this.formatLyricsSummary(activeTrack);
+        if (updated) {
+          const lyricsMsg: LyricsSyncMessage = {
+            type: 'LYRICS_SYNC',
+            trackId,
+            lyrics: updated,
+          };
+          tcpHostServer.broadcast(lyricsMsg);
+        }
+      }
+    });
   }
 
   private async getCompressedArtworkBase64(trackId: string): Promise<string | null> {

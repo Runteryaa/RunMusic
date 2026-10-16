@@ -14,10 +14,16 @@ export interface RemoteTrackSummary {
 }
 
 export interface RemoteLyricsSummary {
+  trackId?: string;
   lines: LyricLine[];
-  source?: string | null;
+  source?: 'lrclib' | 'genius' | 'custom' | string | null;
   isSynced: boolean;
   plainLyrics?: string;
+  syncedLyrics?: string | null;
+  lyricsfile?: string | null;
+  lrclibId?: string | number | null;
+  geniusId?: string | number | null;
+  geniusUrl?: string | null;
 }
 
 export interface DiscoveredHost {
@@ -109,6 +115,12 @@ export interface TrackChangeMessage {
   lyrics: RemoteLyricsSummary | null;
 }
 
+export interface LyricsSyncMessage {
+  type: 'LYRICS_SYNC';
+  trackId: string;
+  lyrics: RemoteLyricsSummary | null;
+}
+
 export interface ActiveArtworkSyncMessage {
   type: 'ACTIVE_ARTWORK_SYNC';
   trackId: string;
@@ -192,6 +204,23 @@ export interface CommandPlayLibraryTrackMessage {
   trackId: string;
 }
 
+export interface CommandSelectLyricsMessage {
+  type: 'COMMAND_SELECT_LYRICS';
+  trackId: string;
+  candidate: {
+    id: string;
+    source: 'lrclib' | 'genius';
+    trackName: string;
+    artistName: string;
+    hasSynced: boolean;
+    hasWordSync?: boolean;
+    syncedLyrics?: string | null;
+    plainLyrics?: string | null;
+    lyricsfile?: string | null;
+    geniusUrl?: string;
+  };
+}
+
 export interface RequestArtworkMessage {
   type: 'REQUEST_ARTWORK';
   trackId: string;
@@ -214,6 +243,7 @@ export type RemoteMessage =
   | PositionSyncMessage
   | StateChangeMessage
   | TrackChangeMessage
+  | LyricsSyncMessage
   | ActiveArtworkSyncMessage
   | QueueSyncMessage
   | LibraryQueryMessage
@@ -229,5 +259,6 @@ export type RemoteMessage =
   | CommandQueueRemoveMessage
   | CommandPlayTrackMessage
   | CommandPlayLibraryTrackMessage
+  | CommandSelectLyricsMessage
   | RequestArtworkMessage
   | ArtworkResponseMessage;

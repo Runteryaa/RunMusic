@@ -56,7 +56,7 @@ interface RemoteConnectStoreState {
   clientSyncReceivedAt: number;
   interpolatedPosition: number;
 
-  // Actions
+  isRemoteConnected: () => boolean;
   setServiceEnabled: (enabled: boolean) => void;
   setCustomDeviceName: (name: string) => void;
   addTrustedDevice: (client: TrustedClient) => void;
@@ -75,6 +75,7 @@ interface RemoteConnectStoreState {
   setRemoteStateChange: (msg: StateChangeMessage) => void;
   setRemoteQueueSync: (msg: QueueSyncMessage) => void;
   setRemoteArtworkUri: (uri: string | null) => void;
+  setRemoteLyrics: (lyrics: RemoteLyricsSummary | null) => void;
 
   // Optimistic setters
   setOptimisticIsPlaying: (playing: boolean) => void;
@@ -156,7 +157,10 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       clientSyncReceivedAt: 0,
       interpolatedPosition: 0,
 
-      // Actions
+      isRemoteConnected: () => {
+        const s = get();
+        return s.mode === 'client' && s.connectionStatus === 'connected';
+      },
       setServiceEnabled: (enabled) => set({ isServiceEnabled: enabled }),
       setCustomDeviceName: (name) => set({ customDeviceName: name.trim() || DEFAULT_DEVICE_NAME }),
 
@@ -283,6 +287,15 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
           remoteState: {
             ...state.remoteState,
             artworkUri: uri,
+          },
+        }));
+      },
+
+      setRemoteLyrics: (lyrics) => {
+        set((state) => ({
+          remoteState: {
+            ...state.remoteState,
+            lyrics,
           },
         }));
       },
