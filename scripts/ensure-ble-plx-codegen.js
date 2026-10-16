@@ -10,7 +10,9 @@ const bleAndroidDir = path.join(
 );
 
 const cmakeContent = `cmake_minimum_required(VERSION 3.13)
-add_library(react_codegen_BlePlx INTERFACE)
+project(react_codegen_BlePlx)
+file(WRITE \${CMAKE_CURRENT_BINARY_DIR}/dummy.cpp "// dummy\\n")
+add_library(react_codegen_BlePlx STATIC \${CMAKE_CURRENT_BINARY_DIR}/dummy.cpp)
 `;
 
 const dirsToCreate = [
@@ -22,7 +24,7 @@ for (const dir of dirsToCreate) {
   try {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'CMakeLists.txt'), cmakeContent, 'utf8');
-    console.log('[ensure-ble-plx-codegen] Wrote CMakeLists.txt to:', dir);
+    console.log('[ensure-ble-plx-codegen] Wrote STATIC CMakeLists.txt to:', dir);
   } catch (err) {
     console.warn('[ensure-ble-plx-codegen] Warning for', dir, ':', err.message);
   }
