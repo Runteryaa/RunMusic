@@ -75,6 +75,9 @@ function MainAppLayout() {
       });
     } else {
       remoteSyncManager.stopHostService();
+      if (useRemoteConnectStore.getState().mode === 'client') {
+        remoteSyncManager.disconnectClient();
+      }
     }
   }, [isRemoteServiceEnabled]);
 

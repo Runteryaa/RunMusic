@@ -16,6 +16,7 @@ import {
   PanResponder,
   BackHandler,
   Alert,
+  Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -101,6 +102,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const remoteState = useRemoteConnectStore((s) => s.remoteState);
   const discoveredHosts = useRemoteConnectStore((s) => s.discoveredHosts);
   const setDiscoveredHosts = useRemoteConnectStore((s) => s.setDiscoveredHosts);
+  const isRemoteServiceEnabled = useRemoteConnectStore((s) => s.isServiceEnabled);
+  const setRemoteServiceEnabled = useRemoteConnectStore((s) => s.setServiceEnabled);
   const remoteMode = useRemoteConnectStore((s) => s.mode);
   const remoteConnectionStatus = useRemoteConnectStore((s) => s.connectionStatus);
   const connectedDeviceName = useRemoteConnectStore((s) => s.connectedDeviceName);
@@ -110,10 +113,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const [manualPort, setManualPort] = useState(RUNMUSIC_TCP_PORT.toString());
 
   useEffect(() => {
-    if (!isConnectMode) return;
-
-    if (!remoteSyncManager.getIsHostActive() && remoteMode !== 'client') {
-      remoteSyncManager.startHostService().catch(() => {});
+    if (!isConnectMode || !isRemoteServiceEnabled) {
+      setDiscoveredHosts([]);
+      return;
     }
 
     const unsubscribe = udpDiscoveryService.startClientListener((hosts) => {
@@ -123,7 +125,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     return () => {
       unsubscribe();
     };
-  }, [isConnectMode, remoteMode, setDiscoveredHosts]);
+  }, [isConnectMode, isRemoteServiceEnabled, setDiscoveredHosts]);
 
   const handleSelectLocalDevice = useCallback(() => {
     if (remoteMode === 'client') {
@@ -2427,6 +2429,30 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             </View>
 
             <View style={styles.connectBody}>
+              {/* Connect Aç/Kapa Switch Satırı */}
+              <View
+                style={[
+                  styles.connectToggleCard,
+                  { backgroundColor: theme.surface },
+                ]}>
+                <View style={{ flex: 1, marginRight: 12 }}>
+                  <Text style={styles.connectToggleTitle}>Wi-Fi Kumandası</Text>
+                  <Text style={styles.connectToggleHint}>
+                    {isRemoteServiceEnabled
+                      ? 'Cihazlar bu telefonu görebilir ve bağlanabilir'
+                      : 'Bağlantı servisi kapalı'}
+                  </Text>
+                </View>
+                <Switch
+                  value={isRemoteServiceEnabled}
+                  onValueChange={(val) => {
+                    setRemoteServiceEnabled(val);
+                  }}
+                  trackColor={{ false: '#3f3f46', true: theme.primary }}
+                  thumbColor="#ffffff"
+                />
+              </View>
+
               {/* Bu Telefon (Yerel Cihaz) */}
               <TouchableOpacity
                 style={[
@@ -2479,13 +2505,28 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 style={styles.connectList}
                 showsVerticalScrollIndicator={false}
                 ListEmptyComponent={
-                  <View style={styles.connectEmptyContainer}>
-                    <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 6 }} />
-                    <Text style={styles.connectEmptyTitle}>Cihazlar aranıyor...</Text>
-                    <Text style={styles.connectEmptySubtext}>
-                      {"Diğer cihazda da RunMusic'i açın. Aynı Wi-Fi ağına bağlı olmalıdır."}
-                    </Text>
-                  </View>
+                  !isRemoteServiceEnabled ? (
+                    <View style={styles.connectEmptyContainer}>
+                      <Ionicons
+                        name="power-outline"
+                        size={26}
+                        color="rgba(255, 255, 255, 0.35)"
+                        style={{ marginBottom: 6 }}
+                      />
+                      <Text style={styles.connectEmptyTitle}>Bağlantı Servisi Kapalı</Text>
+                      <Text style={styles.connectEmptySubtext}>
+                        Diğer cihazları görmek ve bu cihazı kontrol edilebilir kılmak için yukarıdaki anahtarı açın.
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.connectEmptyContainer}>
+                      <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 6 }} />
+                      <Text style={styles.connectEmptyTitle}>Cihazlar aranıyor...</Text>
+                      <Text style={styles.connectEmptySubtext}>
+                        {"Diğer cihazda da RunMusic'i açın. Aynı Wi-Fi ağına bağlı olmalıdır."}
+                      </Text>
+                    </View>
+                  )
                 }
                 renderItem={({ item }) => {
                   const isThisConnected = player.isRemote && connectedDeviceName === item.deviceName;
@@ -2547,50 +2588,52 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               />
 
               {/* Manuel IP Toggle / Giriş */}
-              {showManualIp ? (
-                <View style={[styles.connectManualBox, { backgroundColor: theme.surface }]}>
-                  <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
-                    <TextInput
-                      style={[styles.connectInput, { flex: 2 }]}
-                      placeholder="IP (örn. 192.168.1.50)"
-                      placeholderTextColor="#71717a"
-                      keyboardType="numbers-and-punctuation"
-                      value={manualIp}
-                      onChangeText={setManualIp}
-                      autoCapitalize="none"
-                    />
-                    <TextInput
-                      style={[styles.connectInput, { flex: 1 }]}
-                      placeholder="Port"
-                      placeholderTextColor="#71717a"
-                      keyboardType="numeric"
-                      value={manualPort}
-                      onChangeText={setManualPort}
-                    />
+              {isRemoteServiceEnabled && (
+                showManualIp ? (
+                  <View style={[styles.connectManualBox, { backgroundColor: theme.surface }]}>
+                    <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
+                      <TextInput
+                        style={[styles.connectInput, { flex: 2 }]}
+                        placeholder="IP (örn. 192.168.1.50)"
+                        placeholderTextColor="#71717a"
+                        keyboardType="numbers-and-punctuation"
+                        value={manualIp}
+                        onChangeText={setManualIp}
+                        autoCapitalize="none"
+                      />
+                      <TextInput
+                        style={[styles.connectInput, { flex: 1 }]}
+                        placeholder="Port"
+                        placeholderTextColor="#71717a"
+                        keyboardType="numeric"
+                        value={manualPort}
+                        onChangeText={setManualPort}
+                      />
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+                      <TouchableOpacity
+                        style={styles.connectCancelBtn}
+                        onPress={() => setShowManualIp(false)}>
+                        <Text style={styles.connectCancelText}>İptal</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.connectSubmitBtn, { backgroundColor: theme.primary }]}
+                        onPress={handleManualConnect}
+                        disabled={!manualIp.trim()}>
+                        <Text style={styles.connectSubmitText}>Bağlan</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
-                    <TouchableOpacity
-                      style={styles.connectCancelBtn}
-                      onPress={() => setShowManualIp(false)}>
-                      <Text style={styles.connectCancelText}>İptal</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.connectSubmitBtn, { backgroundColor: theme.primary }]}
-                      onPress={handleManualConnect}
-                      disabled={!manualIp.trim()}>
-                      <Text style={styles.connectSubmitText}>Bağlan</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  style={styles.connectManualToggle}
-                  onPress={() => setShowManualIp(true)}>
-                  <Ionicons name="add-circle-outline" size={16} color={theme.primary} style={{ marginRight: 6 }} />
-                  <Text style={[styles.connectManualToggleText, { color: theme.primary }]}>
-                    Manuel IP ile Bağlan
-                  </Text>
-                </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.connectManualToggle}
+                    onPress={() => setShowManualIp(true)}>
+                    <Ionicons name="add-circle-outline" size={16} color={theme.primary} style={{ marginRight: 6 }} />
+                    <Text style={[styles.connectManualToggleText, { color: theme.primary }]}>
+                      Manuel IP ile Bağlan
+                    </Text>
+                  </TouchableOpacity>
+                )
               )}
             </View>
           </Animated.View>
@@ -2757,7 +2800,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <TouchableOpacity
                 style={[
                   styles.appleSubUtilBtn,
-                  (isConnectMode || player.isRemote) && {
+                  isConnectMode && {
                     backgroundColor: theme.surface,
                     borderRadius: 20,
                   },
@@ -2765,14 +2808,14 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 onPress={toggleConnectMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Ionicons
-                  name={player.isRemote ? 'radio' : 'radio-outline'}
+                  name={isRemoteServiceEnabled || player.isRemote ? 'radio' : 'radio-outline'}
                   size={20}
                   color={
-                    player.isRemote
+                    isRemoteServiceEnabled || player.isRemote
                       ? theme.primary
                       : isConnectMode
                         ? '#ffffff'
-                        : 'rgba(255, 255, 255, 0.5)'
+                        : 'rgba(255, 255, 255, 0.45)'
                   }
                 />
               </TouchableOpacity>
@@ -3923,6 +3966,25 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 4,
     paddingVertical: 4,
+  },
+  connectToggleCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    marginBottom: 8,
+  },
+  connectToggleTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  connectToggleHint: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.5)',
+    marginTop: 1,
   },
   connectDeviceItem: {
     flexDirection: 'row',

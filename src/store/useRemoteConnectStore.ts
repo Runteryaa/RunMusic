@@ -137,7 +137,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
   persist(
     (set, get) => ({
       // Persisted defaults
-      isServiceEnabled: true,
+      isServiceEnabled: false,
       customDeviceName: DEFAULT_DEVICE_NAME,
       trustedDevices: [],
       lastConnectedHostIp: null,
@@ -161,7 +161,12 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
         const s = get();
         return s.mode === 'client' && s.connectionStatus === 'connected';
       },
-      setServiceEnabled: (enabled) => set({ isServiceEnabled: enabled }),
+      setServiceEnabled: (enabled) => {
+        set({ isServiceEnabled: enabled });
+        if (!enabled) {
+          set({ discoveredHosts: [] });
+        }
+      },
       setCustomDeviceName: (name) => set({ customDeviceName: name }),
 
       addTrustedDevice: (client) => {
@@ -361,11 +366,11 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
     {
       name: 'runmusic_remote_connect_storage',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 1,
+      version: 2,
       migrate: (persistedState: any, version: number) => {
         if (!persistedState) return persistedState;
-        if (version < 1 || persistedState.isServiceEnabled === undefined) {
-          persistedState.isServiceEnabled = true;
+        if (version < 2 || persistedState.isServiceEnabled === undefined) {
+          persistedState.isServiceEnabled = false;
         }
         return persistedState;
       },
