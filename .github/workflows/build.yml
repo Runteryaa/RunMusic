@@ -95,7 +95,9 @@ jobs:
           EAS_SKIP_AUTO_FINGERPRINT: 1
 
       - name: 🛠 Prebuild Android
-        run: npx expo prebuild --platform android
+        run: |
+          node ./scripts/patch-ble-plx.js
+          npx expo prebuild --platform android
 
       - name: 🔧 Configure Build (Disable New Arch & Speed up with arm64-v8a only)
         run: |
