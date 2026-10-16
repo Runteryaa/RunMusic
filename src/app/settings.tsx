@@ -13,12 +13,15 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library/legacy';
+import TrackPlayer from 'react-native-track-player';
 import { Ionicons } from '@expo/vector-icons';
 import * as Updates from 'expo-updates';
 import Constants from 'expo-constants';
 import { useStore, DEFAULT_PREFERENCES } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
+import { saveCachedLibrary } from '../services/libraryStorage';
 import { cleanDisplayTitle, type LyricsSourcePreference } from '../services/lyricsService';
 import { getSortOptionLabel, type SortOption } from '../services/librarySort';
 import { PRESET_THEME_COLORS } from '../constants/theme';
@@ -228,6 +231,112 @@ export default function SettingsScreen() {
               minSizeMB: null,
               maxSizeMB: null,
             });
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteHiddenTrack = (item: { id: string; asset?: MediaLibrary.Asset; title: string }) => {
+    Alert.alert(
+      t('library.delete_confirm_title'),
+      t('library.delete_confirm_msg'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('common.delete'),
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const success = await MediaLibrary.deleteAssetsAsync([item.id]);
+              if (success) {
+                unhideTrack(item.id);
+                const currentAssets = useStore.getState().allAssets;
+                const updatedAssets = currentAssets.filter((a) => a.id !== item.id);
+                useStore.getState().setAllAssets(updatedAssets);
+                saveCachedLibrary(useStore.getState().library).catch(() => {});
+
+                try {
+                  const currentActive = await TrackPlayer.getActiveTrack();
+                  if (currentActive && (currentActive.id === item.id || (item.asset?.uri && currentActive.url === item.asset.uri))) {
+                    try {
+                      await TrackPlayer.skipToNext();
+                    } catch {
+                      await TrackPlayer.pause();
+                    }
+                  }
+                  const queue = await TrackPlayer.getQueue();
+                  const trackIdx = queue.findIndex((t) => t.id === item.id || (item.asset?.uri && t.url === item.asset.uri));
+                  if (trackIdx !== -1) {
+                    await TrackPlayer.remove(trackIdx);
+                  }
+                } catch (e) {
+                  console.warn('TrackPlayer update on delete failed', e);
+                }
+
+                Alert.alert(t('common.success'), t('library.delete_success'));
+              } else {
+                Alert.alert(t('common.error'), t('library.delete_error_permission'));
+              }
+            } catch (e) {
+              console.error('Failed to delete asset', e);
+              Alert.alert(t('common.error'), t('library.delete_error_generic'));
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAllHiddenTracks = () => {
+    if (hiddenTrackItems.length === 0) return;
+    Alert.alert(
+      t('settings.delete_all_hidden_confirm_title'),
+      t('settings.delete_all_hidden_confirm_msg', { count: hiddenTrackItems.length }),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('common.delete'),
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const idsToDelete = hiddenTrackItems.map((item) => item.id);
+              const success = await MediaLibrary.deleteAssetsAsync(idsToDelete);
+              if (success) {
+                unhideAllTracks();
+                const currentAssets = useStore.getState().allAssets;
+                const idSet = new Set(idsToDelete);
+                const updatedAssets = currentAssets.filter((a) => !idSet.has(a.id));
+                useStore.getState().setAllAssets(updatedAssets);
+                saveCachedLibrary(useStore.getState().library).catch(() => {});
+
+                try {
+                  const currentActive = await TrackPlayer.getActiveTrack();
+                  if (currentActive && idSet.has(currentActive.id)) {
+                    try {
+                      await TrackPlayer.skipToNext();
+                    } catch {
+                      await TrackPlayer.pause();
+                    }
+                  }
+                  const queue = await TrackPlayer.getQueue();
+                  for (let i = queue.length - 1; i >= 0; i--) {
+                    if (idSet.has(queue[i].id)) {
+                      await TrackPlayer.remove(i);
+                    }
+                  }
+                } catch (e) {
+                  console.warn('TrackPlayer update on delete all failed', e);
+                }
+
+                Alert.alert(t('common.success'), t('settings.delete_all_hidden_success'));
+              } else {
+                Alert.alert(t('common.error'), t('library.delete_error_permission'));
+              }
+            } catch (e) {
+              console.error('Failed to delete all assets', e);
+              Alert.alert(t('common.error'), t('library.delete_error_generic'));
+            }
           },
         },
       ]
@@ -784,12 +893,23 @@ export default function SettingsScreen() {
                   <Text style={styles.smallMuted}>
                     {hiddenTrackItems.length} {t('settings.hidden_tracks_count')}
                   </Text>
-                  <TouchableOpacity style={styles.smallBtn} activeOpacity={0.7} onPress={unhideAllTracks}>
-                    <Ionicons name="refresh" size={14} color={theme.primary} />
-                    <Text style={[styles.smallBtnText, { color: theme.primary }]}>
-                      {t('settings.restore_all')}
-                    </Text>
-                  </TouchableOpacity>
+                  <View style={styles.hiddenTrackActions}>
+                    <TouchableOpacity style={styles.smallBtn} activeOpacity={0.7} onPress={unhideAllTracks}>
+                      <Ionicons name="refresh" size={14} color={theme.primary} />
+                      <Text style={[styles.smallBtnText, { color: theme.primary }]}>
+                        {t('settings.restore_all')}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.smallBtn, styles.deleteBtn]}
+                      activeOpacity={0.7}
+                      onPress={handleDeleteAllHiddenTracks}>
+                      <Ionicons name="trash-outline" size={14} color="#ef4444" />
+                      <Text style={[styles.smallBtnText, { color: '#ef4444' }]}>
+                        {t('settings.delete_all_hidden')}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
                 {hiddenTrackItems.map((item) => (
                   <View key={item.id} style={styles.hiddenTrackItem}>
@@ -814,15 +934,26 @@ export default function SettingsScreen() {
                         </Text>
                       ) : null}
                     </View>
-                    <TouchableOpacity
-                      style={styles.smallBtn}
-                      activeOpacity={0.7}
-                      onPress={() => unhideTrack(item.id)}>
-                      <Ionicons name="eye-outline" size={15} color={theme.primary} />
-                      <Text style={[styles.smallBtnText, { color: theme.primary }]}>
-                        {t('settings.restore')}
-                      </Text>
-                    </TouchableOpacity>
+                    <View style={styles.hiddenTrackActions}>
+                      <TouchableOpacity
+                        style={styles.smallBtn}
+                        activeOpacity={0.7}
+                        onPress={() => unhideTrack(item.id)}>
+                        <Ionicons name="eye-outline" size={15} color={theme.primary} />
+                        <Text style={[styles.smallBtnText, { color: theme.primary }]}>
+                          {t('settings.restore')}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.smallBtn, styles.deleteBtn]}
+                        activeOpacity={0.7}
+                        onPress={() => handleDeleteHiddenTrack(item)}>
+                        <Ionicons name="trash-outline" size={15} color="#ef4444" />
+                        <Text style={[styles.smallBtnText, { color: '#ef4444' }]}>
+                          {t('common.delete')}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 ))}
               </>
@@ -1291,6 +1422,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     gap: 5,
   },
+  deleteBtn: {
+    backgroundColor: '#ef44441a',
+    borderWidth: 1,
+    borderColor: '#ef444433',
+  },
   smallBtnText: {
     fontSize: 12,
     fontWeight: '600',
@@ -1319,6 +1455,11 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#27272a44',
+  },
+  hiddenTrackActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   hiddenTrackInfo: {
     flex: 1,
