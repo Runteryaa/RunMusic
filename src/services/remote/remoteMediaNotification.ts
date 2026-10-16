@@ -14,32 +14,34 @@ try {
 }
 
 class RemoteMediaNotificationService {
-  private silentWavPath: string | null = null;
+  private activeSilentSlot: 'a' | 'b' = 'a';
   private currentTrackId: string | null = null;
   private currentArtworkUri: string | null = null;
   private isShadowActive = false;
 
   /**
-   * Generates a 5-second PCM 8000Hz 8-bit mono silent WAV file in cacheDirectory if not already present.
+   * Generates a PCM 8000Hz 8-bit mono silent WAV file matching the remote track's duration.
+   * Alternates between two file slots ('a' and 'b') to ensure ExoPlayer refreshes duration.
    */
-  public async ensureSilentAudioFile(): Promise<string> {
-    if (this.silentWavPath) {
-      const exists = await FileSystem.getInfoAsync(this.silentWavPath);
-      if (exists.exists) return this.silentWavPath;
-    }
+  public async ensureSilentAudioFile(durationSec = 180): Promise<string> {
+    const safeDuration = Math.max(10, Math.min(Math.ceil(durationSec), 1800));
 
-    const path = `${FileSystem.cacheDirectory}remote_silent.wav`;
-    const info = await FileSystem.getInfoAsync(path);
-    if (info.exists) {
-      this.silentWavPath = path;
-      return path;
+    // Toggle slot to bust any ExoPlayer file metadata caching
+    this.activeSilentSlot = this.activeSilentSlot === 'a' ? 'b' : 'a';
+    const path = `${FileSystem.cacheDirectory}remote_silent_${this.activeSilentSlot}.wav`;
+    const otherPath = `${FileSystem.cacheDirectory}remote_silent_${this.activeSilentSlot === 'a' ? 'b' : 'a'}.wav`;
+
+    // Remove old slot file to keep storage clean
+    try {
+      await FileSystem.deleteAsync(otherPath, { idempotent: true });
+    } catch {
+      // ignore
     }
 
     const sampleRate = 8000;
     const numChannels = 1;
     const bitsPerSample = 8;
-    const durationSec = 5;
-    const dataSize = sampleRate * numChannels * (bitsPerSample / 8) * durationSec; // 40,000 bytes
+    const dataSize = sampleRate * numChannels * (bitsPerSample / 8) * safeDuration;
     const chunkSize = 36 + dataSize;
 
     const header = Buffer.alloc(44);
@@ -65,18 +67,18 @@ class RemoteMediaNotificationService {
       encoding: FileSystem.EncodingType.Base64,
     });
 
-    this.silentWavPath = path;
     return path;
   }
 
   /**
    * Synchronizes the host's playing track into the client's local TrackPlayer at volume 0
-   * so Android displays the native notification, lock screen controls, and widget.
+   * so Android displays the native notification, lock screen controls, and widget with exact duration.
    */
   public async syncRemoteTrackToLocalPlayer(
     track: RemoteTrackSummary | null,
     isPlaying: boolean,
-    artworkUri?: string | null
+    artworkUri?: string | null,
+    initialPosition = 0
   ): Promise<void> {
     if (!track) {
       await this.cleanupRemoteMediaNotification();
@@ -90,7 +92,8 @@ class RemoteMediaNotificationService {
         this.currentArtworkUri = artworkUri;
       }
 
-      const silentUri = await this.ensureSilentAudioFile();
+      const duration = track.duration && track.duration > 0 ? track.duration : 180;
+      const silentUri = await this.ensureSilentAudioFile(duration);
 
       // Ensure zero volume on client device
       await TrackPlayer.setVolume(0);
@@ -103,12 +106,16 @@ class RemoteMediaNotificationService {
         title: track.title,
         artist: track.artist,
         artwork: this.currentArtworkUri || undefined,
-        duration: track.duration,
+        duration,
       });
 
-      // Loop silent stream so it never ends or disappears
-      await TrackPlayer.setRepeatMode(RepeatMode.Track);
+      // Off repeat mode so it naturally progresses without restarting every 5 seconds
+      await TrackPlayer.setRepeatMode(RepeatMode.Off);
       await TrackPlayer.setVolume(0);
+
+      if (initialPosition > 0) {
+        await TrackPlayer.seekTo(initialPosition);
+      }
 
       if (isPlaying) {
         await TrackPlayer.play();
@@ -152,6 +159,21 @@ class RemoteMediaNotificationService {
   }
 
   /**
+   * Resynchronizes local TrackPlayer position if drift from host exceeds 2 seconds.
+   */
+  public async syncRemotePosition(position: number): Promise<void> {
+    if (!this.isShadowActive || typeof position !== 'number' || position < 0) return;
+    try {
+      const progress = await TrackPlayer.getProgress();
+      if (Math.abs(progress.position - position) > 2) {
+        await TrackPlayer.seekTo(position);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
    * Updates artwork for currently displayed remote notification.
    */
   public async syncRemoteArtwork(artworkLocalUri: string): Promise<void> {
@@ -189,6 +211,15 @@ class RemoteMediaNotificationService {
 
       await TrackPlayer.reset();
       await TrackPlayer.setVolume(1);
+
+      // Clean up temporary wav files
+      try {
+        await FileSystem.deleteAsync(`${FileSystem.cacheDirectory}remote_silent_a.wav`, { idempotent: true });
+        await FileSystem.deleteAsync(`${FileSystem.cacheDirectory}remote_silent_b.wav`, { idempotent: true });
+        await FileSystem.deleteAsync(`${FileSystem.cacheDirectory}remote_silent.wav`, { idempotent: true });
+      } catch {
+        // ignore
+      }
 
       // Restore user's local music queue and playback state
       await restoreQueueIfNeeded();

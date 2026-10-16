@@ -104,6 +104,11 @@ export default async function playbackService() {
     if (useRemoteConnectStore.getState().isRemoteConnected()) {
       if (typeof event.position === 'number') {
         remoteSyncManager.sendSeek(event.position);
+        try {
+          await TrackPlayer.seekTo(event.position);
+        } catch {
+          // ignore
+        }
       }
       return;
     }

@@ -585,11 +585,14 @@ class RemoteSyncManager {
     switch (msg.type) {
       case 'INITIAL_STATE':
         useRemoteConnectStore.getState().setRemoteInitialState(msg);
-        remoteMediaNotification.syncRemoteTrackToLocalPlayer(msg.activeTrack, msg.isPlaying, null).catch(() => {});
+        remoteMediaNotification
+          .syncRemoteTrackToLocalPlayer(msg.activeTrack, msg.isPlaying, null, msg.position)
+          .catch(() => {});
         break;
 
       case 'POSITION_SYNC':
         useRemoteConnectStore.getState().setRemotePositionSync(msg);
+        remoteMediaNotification.syncRemotePosition(msg.position).catch(() => {});
         break;
 
       case 'TRACK_CHANGE':
@@ -598,7 +601,8 @@ class RemoteSyncManager {
           .syncRemoteTrackToLocalPlayer(
             msg.track,
             useRemoteConnectStore.getState().remoteState.isPlaying,
-            useRemoteConnectStore.getState().remoteState.artworkUri
+            useRemoteConnectStore.getState().remoteState.artworkUri,
+            0
           )
           .catch(() => {});
         break;
