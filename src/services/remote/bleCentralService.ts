@@ -119,6 +119,15 @@ class BleCentralService {
   public async connect(peer: DiscoveredPeer): Promise<void> {
     const manager = this.getManager();
 
+    if (this.connectedDevice) {
+      try {
+        await this.connectedDevice.cancelConnection();
+      } catch {
+        // ignore
+      }
+      this.cleanup();
+    }
+
     try {
       manager.stopDeviceScan();
     } catch {
@@ -170,9 +179,10 @@ class BleCentralService {
       }
 
       // Listen for disconnects
-      device.onDisconnected(() => {
+      device.onDisconnected((error) => {
+        console.warn('[BleCentralService] BLE Device disconnected:', error?.message);
         this.cleanup();
-        this.setStatus('disconnected');
+        this.setStatus('disconnected', error?.message);
       });
 
       // Start monitoring state & lyrics characteristics

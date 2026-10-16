@@ -1,5 +1,6 @@
 import dgram from 'react-native-udp';
 import { Buffer } from 'buffer';
+import RunMusicBlePeripheralModule from '../../../modules/runmusic-ble-peripheral';
 import {
   RUNMUSIC_BEACON_PORT,
   RUNMUSIC_TCP_PORT,
@@ -12,12 +13,57 @@ export const RUNMUSIC_MULTICAST_GROUP = '239.255.255.250';
 
 export type DiscoveredHostsListener = (hosts: DiscoveredHost[]) => void;
 
+let multicastLockCount = 0;
+
+function acquireWifiMulticastLock(): void {
+  multicastLockCount++;
+  if (multicastLockCount === 1) {
+    try {
+      RunMusicBlePeripheralModule?.acquireMulticastLock();
+    } catch (err) {
+      console.warn('[UDPDiscovery] Failed to acquire native multicast lock:', err);
+    }
+  }
+}
+
+function releaseWifiMulticastLock(): void {
+  if (multicastLockCount > 0) {
+    multicastLockCount--;
+    if (multicastLockCount === 0) {
+      try {
+        RunMusicBlePeripheralModule?.releaseMulticastLock();
+      } catch (err) {
+        console.warn('[UDPDiscovery] Failed to release native multicast lock:', err);
+      }
+    }
+  }
+}
+
+function getBroadcastTargets(): string[] {
+  const targets = new Set<string>();
+  // 1. Multicast Group (works across APs supporting IGMP)
+  targets.add(RUNMUSIC_MULTICAST_GROUP);
+
+  // 2. Subnet Directed Broadcast Addresses (e.g. 192.168.1.255)
+  try {
+    const subnets = RunMusicBlePeripheralModule?.getSubnetBroadcastAddresses() || [];
+    for (const s of subnets) {
+      if (s && s.trim()) targets.add(s.trim());
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3. Fallback limited broadcast
+  targets.add('255.255.255.255');
+  return Array.from(targets);
+}
+
 class UDPDiscoveryService {
-  private broadcastSocket: any = null;
-  private listenSocket: any = null;
+  private socket: any = null;
+  private isSocketBound = false;
   private beaconIntervalId: ReturnType<typeof setInterval> | null = null;
   private cleanupIntervalId: ReturnType<typeof setInterval> | null = null;
-  private delayedCloseTimeout: ReturnType<typeof setTimeout> | null = null;
 
   private isHostBeaconDesired = false;
   private savedDeviceId: string | null = null;
@@ -31,108 +77,127 @@ class UDPDiscoveryService {
   private listeners: Set<DiscoveredHostsListener> = new Set();
 
   /**
-   * START HOST BEACON BROADCASTER
-   * Periodically broadcasts discovery beacon on 239.255.255.250 (Multicast) & 255.255.255.255 (Broadcast)
+   * Ensures the single unified UDP socket on RUNMUSIC_BEACON_PORT (8944)
+   * is bound, broadcast enabled, and multicast group joined.
    */
-  public startHostBeacon(deviceId: string, deviceName: string, tcpPort = RUNMUSIC_TCP_PORT): void {
-    this.isHostBeaconDesired = true;
-    this.savedDeviceId = deviceId;
-    this.savedDeviceName = deviceName;
-    this.savedPort = tcpPort;
-
-    this.stopHostBeaconSocketOnly();
-    this.myDeviceId = deviceId;
+  private ensureSocket(): void {
+    if (this.socket) return;
 
     try {
+      acquireWifiMulticastLock();
       const socket: any = dgram.createSocket({ type: 'udp4' } as any);
-      this.broadcastSocket = socket;
+      this.socket = socket;
+      this.isSocketBound = false;
 
       socket.on('error', (err: any) => {
-        console.warn('[UDPDiscovery] Host beacon socket error:', err);
-        this.stopHostBeaconSocketOnly();
-        // Self-heal: recover socket after 2s if host is still desired
-        if (this.isHostBeaconDesired && this.savedDeviceId && this.savedDeviceName) {
-          setTimeout(() => {
-            if (this.isHostBeaconDesired && this.savedDeviceId && this.savedDeviceName) {
-              this.startHostBeacon(this.savedDeviceId, this.savedDeviceName, this.savedPort);
-            }
-          }, 2000);
-        }
+        console.warn('[UDPDiscovery] Socket error:', err?.message || err);
+        this.closeSocket();
+
+        // Self-heal: retry binding if either host beacon or listeners are still active
+        setTimeout(() => {
+          if (this.isHostBeaconDesired || this.listeners.size > 0) {
+            this.ensureSocket();
+          }
+        }, 1500);
       });
 
-      // Bind to random port to broadcast
-      socket.bind(0, () => {
+      socket.on(
+        'message',
+        (msg: Buffer | Uint8Array | string, rinfo: { address: string; port: number }) => {
+          this.handleIncomingDatagram(msg, rinfo.address, rinfo.port);
+        }
+      );
+
+      socket.bind(RUNMUSIC_BEACON_PORT, () => {
+        this.isSocketBound = true;
         try {
           socket.setBroadcast(true);
         } catch (e) {
           console.warn('[UDPDiscovery] Failed to setBroadcast:', e);
         }
 
-        const beaconData: BeaconMessage = {
-          type: 'RUNMUSIC_BEACON',
-          version: PROTOCOL_VERSION,
-          deviceId,
-          deviceName,
-          port: tcpPort,
-        };
+        try {
+          socket.addMembership(RUNMUSIC_MULTICAST_GROUP);
+        } catch (err) {
+          console.warn('[UDPDiscovery] addMembership error:', err);
+        }
 
-        const payloadStr = JSON.stringify(beaconData);
-        const payloadBuf = Buffer.from(payloadStr, 'utf8');
-        this.latestBeaconPayload = payloadBuf;
+        // If client listeners are awaiting discovery, send an immediate probe
+        if (this.listeners.size > 0) {
+          this.sendProbe();
+        }
 
-        // Broadcast immediately once
-        this.sendBeacon(socket, payloadBuf);
+        // If host beacon is active, send initial beacon
+        if (this.isHostBeaconDesired && this.latestBeaconPayload) {
+          this.broadcastBeaconPayload(this.latestBeaconPayload);
+        }
+      });
 
-        // Then every 2 seconds
-        this.beaconIntervalId = setInterval(() => {
-          this.sendBeacon(socket, payloadBuf);
+      if (!this.cleanupIntervalId) {
+        this.cleanupIntervalId = setInterval(() => {
+          this.purgeExpiredHosts();
         }, 2000);
-      });
+      }
     } catch (err) {
-      console.error('[UDPDiscovery] Failed to start host beacon:', err);
+      console.error('[UDPDiscovery] Failed to create socket:', err);
     }
   }
 
-  public sendBeacon(socket: any, payloadBuf: Buffer): void {
-    if (!socket) return;
-
-    // 1. Send via Multicast group (239.255.255.250) - works even if router drops 255.255.255.255
-    try {
-      socket.send(payloadBuf, 0, payloadBuf.length, RUNMUSIC_BEACON_PORT, RUNMUSIC_MULTICAST_GROUP, (err: any) => {
-        if (err) {
-          console.warn('[UDPDiscovery] Multicast beacon error:', err?.message || err);
-        }
-      });
-    } catch (err) {
-      console.warn('[UDPDiscovery] Multicast beacon exception:', err);
-    }
-
-    // 2. Also send via Limited Broadcast (255.255.255.255)
-    try {
-      socket.send(payloadBuf, 0, payloadBuf.length, RUNMUSIC_BEACON_PORT, '255.255.255.255', (err: any) => {
-        if (err) {
-          console.warn('[UDPDiscovery] Broadcast beacon error:', err?.message || err);
-        }
-      });
-    } catch (err) {
-      console.warn('[UDPDiscovery] Broadcast beacon exception:', err);
-    }
-  }
-
-  private stopHostBeaconSocketOnly(): void {
-    if (this.beaconIntervalId) {
-      clearInterval(this.beaconIntervalId);
-      this.beaconIntervalId = null;
-    }
-    if (this.broadcastSocket) {
+  private closeSocket(): void {
+    if (this.socket) {
       try {
-        this.broadcastSocket.close();
+        this.socket.dropMembership(RUNMUSIC_MULTICAST_GROUP);
       } catch {
         // ignore
       }
-      this.broadcastSocket = null;
+      try {
+        this.socket.close();
+      } catch {
+        // ignore
+      }
+      this.socket = null;
+      this.isSocketBound = false;
     }
-    this.latestBeaconPayload = null;
+    releaseWifiMulticastLock();
+  }
+
+  /**
+   * START HOST BEACON BROADCASTER
+   */
+  public startHostBeacon(deviceId: string, deviceName: string, tcpPort = RUNMUSIC_TCP_PORT): void {
+    this.isHostBeaconDesired = true;
+    this.savedDeviceId = deviceId;
+    this.savedDeviceName = deviceName;
+    this.savedPort = tcpPort;
+    this.myDeviceId = deviceId;
+
+    const beaconData: BeaconMessage = {
+      type: 'RUNMUSIC_BEACON',
+      version: PROTOCOL_VERSION,
+      deviceId,
+      deviceName,
+      port: tcpPort,
+    };
+
+    const payloadStr = JSON.stringify(beaconData);
+    this.latestBeaconPayload = Buffer.from(payloadStr, 'utf8');
+
+    this.ensureSocket();
+
+    if (this.beaconIntervalId) {
+      clearInterval(this.beaconIntervalId);
+    }
+
+    // Broadcast immediately and every 2 seconds
+    if (this.isSocketBound && this.latestBeaconPayload) {
+      this.broadcastBeaconPayload(this.latestBeaconPayload);
+    }
+
+    this.beaconIntervalId = setInterval(() => {
+      if (this.isSocketBound && this.latestBeaconPayload) {
+        this.broadcastBeaconPayload(this.latestBeaconPayload);
+      }
+    }, 2000);
   }
 
   /**
@@ -142,128 +207,135 @@ class UDPDiscoveryService {
     this.isHostBeaconDesired = false;
     this.savedDeviceId = null;
     this.savedDeviceName = null;
-    this.stopHostBeaconSocketOnly();
+    this.latestBeaconPayload = null;
+
+    if (this.beaconIntervalId) {
+      clearInterval(this.beaconIntervalId);
+      this.beaconIntervalId = null;
+    }
+
+    // Only close socket if no client listeners are using it
+    if (this.listeners.size === 0) {
+      this.closeSocket();
+    }
   }
 
   /**
    * START CLIENT LISTENER
-   * Listens for beacons on port 8944 and aggregates discovered hosts
    */
   public startClientListener(onHostsChanged?: DiscoveredHostsListener): () => void {
-    // Cancel any pending delayed socket teardown
-    if (this.delayedCloseTimeout) {
-      clearTimeout(this.delayedCloseTimeout);
-      this.delayedCloseTimeout = null;
-    }
-
     if (onHostsChanged) {
       this.listeners.add(onHostsChanged);
       onHostsChanged(Array.from(this.discoveredHosts.values()));
     }
 
-    this.ensureListenSocket();
+    this.ensureSocket();
 
-    // Return unbind/unsubscribe callback
+    if (this.isSocketBound) {
+      this.sendProbe();
+    }
+
     return () => {
       if (onHostsChanged) {
         this.listeners.delete(onHostsChanged);
       }
-      if (this.listeners.size === 0) {
-        // Keep listen socket warm for 15 seconds to avoid EADDRINUSE on immediate reopen
-        if (this.delayedCloseTimeout) {
-          clearTimeout(this.delayedCloseTimeout);
-        }
-        this.delayedCloseTimeout = setTimeout(() => {
-          if (this.listeners.size === 0) {
-            this.stopClientListener();
-          }
-        }, 15000);
+      if (this.listeners.size === 0 && !this.isHostBeaconDesired) {
+        this.stopClientListener();
       }
     };
   }
 
-  private ensureListenSocket(): void {
-    if (!this.listenSocket) {
-      try {
-        const socket: any = dgram.createSocket({ type: 'udp4' } as any);
-        this.listenSocket = socket;
-
-        socket.on('error', (err: any) => {
-          console.warn('[UDPDiscovery] Client listener socket error:', err);
-          try {
-            socket.close();
-          } catch {
-            // ignore
-          }
-          if (this.listenSocket === socket) {
-            this.listenSocket = null;
-          }
-          // Self-heal: if listeners active, retry binding after 1.5s
-          if (this.listeners.size > 0 && !this.listenSocket) {
-            setTimeout(() => {
-              if (this.listeners.size > 0 && !this.listenSocket) {
-                this.ensureListenSocket();
-              }
-            }, 1500);
-          }
-        });
-
-        socket.on('message', (msg: Buffer | Uint8Array | string, rinfo: { address: string; port: number }) => {
-          this.handleIncomingDatagram(msg, rinfo.address);
-        });
-
-        socket.bind(RUNMUSIC_BEACON_PORT, () => {
-          try {
-            socket.setBroadcast(true);
-          } catch {
-            // ignore
-          }
-
-          try {
-            socket.addMembership(RUNMUSIC_MULTICAST_GROUP);
-          } catch (err) {
-            console.warn('[UDPDiscovery] addMembership error:', err);
-          }
-
-          // Probe immediately so active hosts reply without waiting for 2s timer
-          this.sendProbe(socket);
-        });
-
-        if (!this.cleanupIntervalId) {
-          this.cleanupIntervalId = setInterval(() => {
-            this.purgeExpiredHosts();
-          }, 2000);
-        }
-      } catch (err) {
-        console.error('[UDPDiscovery] Failed to start client listener:', err);
+  /**
+   * STOP CLIENT LISTENER
+   */
+  public stopClientListener(): void {
+    this.listeners.clear();
+    if (!this.isHostBeaconDesired) {
+      if (this.cleanupIntervalId) {
+        clearInterval(this.cleanupIntervalId);
+        this.cleanupIntervalId = null;
       }
-    } else {
-      // Listener already open, send an immediate probe
-      this.sendProbe(this.listenSocket);
+      this.closeSocket();
+      this.discoveredHosts.clear();
     }
   }
 
-  public sendProbe(socket: any = null): void {
-    const s = socket || this.listenSocket || this.broadcastSocket;
-    if (!s) return;
+  /**
+   * Sends probe datagram to multicast group, subnet directed broadcast, and limited broadcast.
+   */
+  public sendProbe(): void {
+    if (!this.socket || !this.isSocketBound) return;
+
     try {
       const probeBuf = Buffer.from(JSON.stringify({ type: 'RUNMUSIC_DISCOVERY_PROBE' }), 'utf8');
-      s.send(probeBuf, 0, probeBuf.length, RUNMUSIC_BEACON_PORT, RUNMUSIC_MULTICAST_GROUP, () => {});
-      s.send(probeBuf, 0, probeBuf.length, RUNMUSIC_BEACON_PORT, '255.255.255.255', () => {});
+      const targets = getBroadcastTargets();
+
+      for (const target of targets) {
+        try {
+          this.socket.send(probeBuf, 0, probeBuf.length, RUNMUSIC_BEACON_PORT, target, () => {});
+        } catch {
+          // ignore send error
+        }
+      }
     } catch {
       // ignore
     }
   }
 
-  private handleIncomingDatagram(rawMsg: Buffer | Uint8Array | string, remoteAddress: string): void {
+  /**
+   * Broadcasts the host beacon payload to all target broadcast addresses.
+   */
+  private broadcastBeaconPayload(payloadBuf: Buffer): void {
+    if (!this.socket || !this.isSocketBound) return;
+
+    const targets = getBroadcastTargets();
+    for (const target of targets) {
+      try {
+        this.socket.send(payloadBuf, 0, payloadBuf.length, RUNMUSIC_BEACON_PORT, target, () => {});
+      } catch {
+        // ignore send error
+      }
+    }
+  }
+
+  private handleIncomingDatagram(
+    rawMsg: Buffer | Uint8Array | string,
+    remoteAddress: string,
+    remotePort: number
+  ): void {
     try {
       const text = typeof rawMsg === 'string' ? rawMsg : Buffer.from(rawMsg).toString('utf8');
       const data = JSON.parse(text);
 
       if (data && data.type === 'RUNMUSIC_DISCOVERY_PROBE') {
-        // If this device is acting as a host and has a broadcast socket, respond immediately
-        if (this.broadcastSocket && this.latestBeaconPayload) {
-          this.sendBeacon(this.broadcastSocket, this.latestBeaconPayload);
+        // A client is probing. If this device is acting as a Host, reply IMMEDIATELY:
+        if (this.isHostBeaconDesired && this.latestBeaconPayload && this.socket && this.isSocketBound) {
+          // 1. Direct UNICAST reply to client's IP on RUNMUSIC_BEACON_PORT (bypasses all router broadcast blocks!)
+          try {
+            this.socket.send(
+              this.latestBeaconPayload,
+              0,
+              this.latestBeaconPayload.length,
+              RUNMUSIC_BEACON_PORT,
+              remoteAddress,
+              () => {}
+            );
+          } catch {
+            // ignore
+          }
+          // 2. Also send to multicast group
+          try {
+            this.socket.send(
+              this.latestBeaconPayload,
+              0,
+              this.latestBeaconPayload.length,
+              RUNMUSIC_BEACON_PORT,
+              RUNMUSIC_MULTICAST_GROUP,
+              () => {}
+            );
+          } catch {
+            // ignore
+          }
         }
         return;
       }
@@ -286,7 +358,7 @@ class UDPDiscoveryService {
         this.notifyListeners();
       }
     } catch {
-      // Ignore malformed packets from other local network services
+      // Ignore malformed packets from other network services
     }
   }
 
@@ -312,38 +384,9 @@ class UDPDiscoveryService {
       try {
         listener(list);
       } catch (err) {
-        console.warn('[UDPDiscovery] Listener notification error:', err);
+        console.warn('[UDPDiscovery] Listener error:', err);
       }
     }
-  }
-
-  /**
-   * STOP CLIENT LISTENER
-   */
-  public stopClientListener(): void {
-    if (this.delayedCloseTimeout) {
-      clearTimeout(this.delayedCloseTimeout);
-      this.delayedCloseTimeout = null;
-    }
-    if (this.cleanupIntervalId) {
-      clearInterval(this.cleanupIntervalId);
-      this.cleanupIntervalId = null;
-    }
-    if (this.listenSocket) {
-      try {
-        this.listenSocket.dropMembership(RUNMUSIC_MULTICAST_GROUP);
-      } catch {
-        // ignore
-      }
-      try {
-        this.listenSocket.close();
-      } catch {
-        // ignore
-      }
-      this.listenSocket = null;
-    }
-    this.discoveredHosts.clear();
-    this.notifyListeners();
   }
 }
 

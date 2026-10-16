@@ -119,9 +119,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const [manualPort, setManualPort] = useState(RUNMUSIC_TCP_PORT.toString());
 
   useEffect(() => {
-    if (!isConnectMode || !isRemoteServiceEnabled) {
-      setDiscoveredHosts([]);
-      setDiscoveredBlePeers([]);
+    if (!isConnectMode || !isRemoteServiceEnabled || player.isRemote) {
+      if (!player.isRemote) {
+        setDiscoveredHosts([]);
+        setDiscoveredBlePeers([]);
+      }
       return;
     }
 
@@ -143,6 +145,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   }, [
     isConnectMode,
     isRemoteServiceEnabled,
+    player.isRemote,
     activeTransportTab,
     setDiscoveredHosts,
     setDiscoveredBlePeers,
@@ -487,7 +490,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const derivedRemoteQueueSections = useMemo((): QueueSections<Track> | null => {
     if (!player.isRemote) return null;
     const currentTrackSummary = player.activeTrack;
-    const currentIndex = remoteState.queue.findIndex((t) => t.id === currentTrackSummary?.id);
+    const queueList = Array.isArray(remoteState.queue) ? remoteState.queue : [];
+    const currentIndex = queueList.findIndex((t) => t && t.id === currentTrackSummary?.id);
 
     const toTrack = (t: RemoteTrackSummary, idx: number): QueueEntry<Track> => ({
       index: idx,
@@ -847,10 +851,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   // Önceki ve sonraki şarkıyı belirleme (Kapak geçiş önizlemesi için)
   const prevTrack = useMemo(() => {
     if (player.isRemote) {
-      if (remoteState.queue.length <= 1) return null;
-      const idx = remoteState.queue.findIndex((t) => t.id === player.activeTrack?.id);
-      if (idx > 0) return remoteState.queue[idx - 1] as any;
-      if (player.repeatMode === RepeatMode.Queue) return remoteState.queue[remoteState.queue.length - 1] as any;
+      const q = Array.isArray(remoteState.queue) ? remoteState.queue : [];
+      if (q.length <= 1) return null;
+      const idx = q.findIndex((t) => t && t.id === player.activeTrack?.id);
+      if (idx > 0 && q[idx - 1]) return q[idx - 1] as any;
+      if (player.repeatMode === RepeatMode.Queue && q[q.length - 1]) return q[q.length - 1] as any;
       return null;
     }
     if (playedHistory.length > 0) {
@@ -864,10 +869,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const nextTrack = useMemo(() => {
     if (player.isRemote) {
-      if (remoteState.queue.length <= 1) return null;
-      const idx = remoteState.queue.findIndex((t) => t.id === player.activeTrack?.id);
-      if (idx >= 0 && idx < remoteState.queue.length - 1) return remoteState.queue[idx + 1] as any;
-      if (player.repeatMode === RepeatMode.Queue) return remoteState.queue[0] as any;
+      const q = Array.isArray(remoteState.queue) ? remoteState.queue : [];
+      if (q.length <= 1) return null;
+      const idx = q.findIndex((t) => t && t.id === player.activeTrack?.id);
+      if (idx >= 0 && idx < q.length - 1 && q[idx + 1]) return q[idx + 1] as any;
+      if (player.repeatMode === RepeatMode.Queue && q[0]) return q[0] as any;
       return null;
     }
     if (queue.length <= 1) return null;

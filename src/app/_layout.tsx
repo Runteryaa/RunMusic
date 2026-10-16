@@ -81,8 +81,11 @@ function MainAppLayout() {
     }
   }, [isRemoteServiceEnabled]);
 
+  const isRemoteMode = useRemoteConnectStore((s) => s.mode === 'client');
+
   // Aktif şarkının kapak görseli henüz önbellekte yoksa anında çek ve temayı tetikle
   useEffect(() => {
+    if (isRemoteMode || activeTrackId?.startsWith('remote_')) return;
     if (!artworkUri && activeTrack?.url && activeTrackId) {
       let isMounted = true;
       getArtworkAsync(activeTrack.url, activeTrackId).then((resolved) => {
@@ -94,7 +97,7 @@ function MainAppLayout() {
         isMounted = false;
       };
     }
-  }, [artworkUri, activeTrack?.url, activeTrackId, setArtwork]);
+  }, [artworkUri, activeTrack?.url, activeTrackId, setArtwork, isRemoteMode]);
 
   useEffect(() => {
     // Tercih de bağımlılık: kullanıcı "kapaktan renk türet"i açıp kapatınca

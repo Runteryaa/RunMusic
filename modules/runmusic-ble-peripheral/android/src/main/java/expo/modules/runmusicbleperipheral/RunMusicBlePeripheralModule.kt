@@ -15,12 +15,15 @@ import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Context
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.ParcelUuid
 import android.util.Base64
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -48,6 +51,7 @@ class RunMusicBlePeripheralModule : Module() {
   private val connectedDevices = CopyOnWriteArrayList<BluetoothDevice>()
   private var currentDeviceName: String = "RunMusic Device"
   private var isAdvertising = false
+  private var multicastLock: WifiManager.MulticastLock? = null
 
   // Promise queue for notification pacing
   private val pendingNotificationPromises = ConcurrentHashMap<String, Promise>()
@@ -204,6 +208,62 @@ class RunMusicBlePeripheralModule : Module() {
 
     OnDestroy {
       stopGattServerAndAdvertising()
+      try {
+        if (multicastLock?.isHeld == true) {
+          multicastLock?.release()
+        }
+      } catch (e: Exception) {}
+      multicastLock = null
+    }
+
+    Function("acquireMulticastLock") {
+      val context = appContext.reactContext ?: return@Function false
+      try {
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        if (multicastLock == null) {
+          multicastLock = wifiManager?.createMulticastLock("RunMusicUdpMulticastLock")?.apply {
+            setReferenceCounted(true)
+          }
+        }
+        multicastLock?.acquire()
+        true
+      } catch (e: Exception) {
+        false
+      }
+    }
+
+    Function("releaseMulticastLock") {
+      try {
+        if (multicastLock?.isHeld == true) {
+          multicastLock?.release()
+        }
+        true
+      } catch (e: Exception) {
+        false
+      }
+    }
+
+    Function("getSubnetBroadcastAddresses") {
+      val addresses = mutableListOf<String>()
+      try {
+        val interfaces = NetworkInterface.getNetworkInterfaces()
+        while (interfaces.hasMoreElements()) {
+          val networkInterface = interfaces.nextElement()
+          if (networkInterface.isLoopback || !networkInterface.isUp) continue
+          for (interfaceAddress in networkInterface.interfaceAddresses) {
+            val broadcast = interfaceAddress.broadcast
+            if (broadcast != null && broadcast is Inet4Address) {
+              val host = broadcast.hostAddress
+              if (!host.isNullOrEmpty() && !addresses.contains(host)) {
+                addresses.add(host)
+              }
+            }
+          }
+        }
+      } catch (e: Exception) {
+        // ignore
+      }
+      addresses
     }
 
     Function("isSupported") {

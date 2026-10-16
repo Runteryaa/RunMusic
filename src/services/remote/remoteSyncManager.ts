@@ -164,8 +164,9 @@ class RemoteSyncManager {
 
     // 1. Track change
     const subTrack = TrackPlayer.addEventListener(Event.PlaybackActiveTrackChanged, async (event) => {
-      if (!this.isHostActive) return;
+      if (!this.isHostActive || useRemoteConnectStore.getState().mode === 'client') return;
       const track = event.track ?? null;
+      if (track?.id?.startsWith('remote_')) return;
       const trackSummary = track ? this.formatTrackSummary(track) : null;
       const lyricsSummary = track ? this.formatLyricsSummary(track) : null;
 
@@ -225,7 +226,7 @@ class RemoteSyncManager {
 
     // 2. Playback state change
     const subState = TrackPlayer.addEventListener(Event.PlaybackState, async (event) => {
-      if (!this.isHostActive) return;
+      if (!this.isHostActive || useRemoteConnectStore.getState().mode === 'client') return;
       const isPlaying = event.state === State.Playing;
       const progress = await TrackPlayer.getProgress();
       const repeatMode = await TrackPlayer.getRepeatMode();
@@ -255,7 +256,7 @@ class RemoteSyncManager {
 
     // 3. Low-frequency position heartbeat (every 5000ms while active)
     this.heartbeatTimer = setInterval(async () => {
-      if (!this.isHostActive) return;
+      if (!this.isHostActive || useRemoteConnectStore.getState().mode === 'client') return;
       try {
         const playback = await TrackPlayer.getPlaybackState();
         const isPlaying = playback.state === State.Playing;
@@ -528,6 +529,15 @@ class RemoteSyncManager {
       // ignore
     }
 
+    // Stop & detach Host service so this device does not broadcast TrackPlayer events while in Client mode
+    if (this.isHostActive) {
+      this.detachHostListeners();
+      blePeripheralService.stopHost().catch(() => {});
+      udpDiscoveryService.stopHostBeacon();
+      tcpHostServer.stopServer();
+      this.isHostActive = false;
+    }
+
     useRemoteConnectStore.getState().setMode('client');
     useRemoteConnectStore.getState().setConnectedDeviceName(host.deviceName);
     useRemoteConnectStore.getState().setConnectionStatus('connecting');
@@ -543,6 +553,10 @@ class RemoteSyncManager {
           if (status === 'disconnected' || status === 'error') {
             remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
             useRemoteConnectStore.getState().setMode('idle');
+            // Resume host service if enabled
+            if (useRemoteConnectStore.getState().isServiceEnabled) {
+              this.startHostService().catch(() => {});
+            }
           }
         },
         onMessage: (message: RemoteMessage) => {
@@ -568,6 +582,10 @@ class RemoteSyncManager {
         if (status === 'disconnected' || status === 'error') {
           remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
           useRemoteConnectStore.getState().setMode('idle');
+          // Resume host service if enabled
+          if (useRemoteConnectStore.getState().isServiceEnabled) {
+            this.startHostService().catch(() => {});
+          }
         }
       },
 
@@ -604,8 +622,14 @@ class RemoteSyncManager {
       tcpClient.disconnect();
     }
     useRemoteConnectStore.getState().resetRemoteState();
+
+    // If host service was enabled in settings, resume host service
+    if (useRemoteConnectStore.getState().isServiceEnabled) {
+      this.startHostService().catch(() => {});
+    }
+
     // Send an immediate probe on disconnect so other available hosts immediately reappear in discovery
-    udpDiscoveryService.sendProbe(null);
+    udpDiscoveryService.sendProbe();
   }
 
   public sendClientCommand(message: RemoteMessage): void {

@@ -9,11 +9,13 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { useActiveTrack } from 'react-native-track-player';
+import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { MiniPlayer } from './MiniPlayer';
 import { FullscreenPlayerModal } from './FullscreenPlayerModal';
+import { ErrorBoundary } from './ErrorBoundary';
 import { usePlayTracker } from '../hooks/usePlayTracker';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -24,7 +26,12 @@ const COLLAPSED_Y = SCREEN_HEIGHT - MINI_BOTTOM - MINI_HEIGHT;
 
 export function ExpandingPlayer() {
   usePlayTracker();
-  const activeTrack = useActiveTrack();
+  const localActiveTrack = useActiveTrack();
+  const isRemote = useRemoteConnectStore(
+    (s) => s.mode === 'client' && s.connectionStatus === 'connected'
+  );
+  const remoteActiveTrack = useRemoteConnectStore((s) => s.remoteState.activeTrack);
+  const activeTrack = isRemote ? remoteActiveTrack : localActiveTrack;
   const theme = useThemeStore((s) => s.theme);
   const isFullscreenPlayerOpen = usePlayerUIStore((s) => s.isFullscreenPlayerOpen);
   const reduceMotion = useStore((s) => s.preferences.reduceMotion);
@@ -141,7 +148,9 @@ export function ExpandingPlayer() {
           fullscreenAnimatedStyle,
         ]}
         pointerEvents={isFullscreenPlayerOpen ? 'auto' : 'none'}>
-        <FullscreenPlayerModal expandAnim={rnExpandAnim} />
+        <ErrorBoundary>
+          <FullscreenPlayerModal expandAnim={rnExpandAnim} />
+        </ErrorBoundary>
       </Animated.View>
     </>
   );

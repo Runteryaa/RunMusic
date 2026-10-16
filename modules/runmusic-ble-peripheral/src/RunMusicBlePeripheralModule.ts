@@ -18,6 +18,9 @@ declare class RunMusicBlePeripheralModuleType extends NativeModule<BlePeripheral
   startAdvertising(deviceName: string): Promise<boolean>;
   stopAdvertising(): Promise<boolean>;
   sendNotification(characteristicUuid: string, valueBase64: string): Promise<boolean>;
+  acquireMulticastLock(): boolean;
+  releaseMulticastLock(): boolean;
+  getSubnetBroadcastAddresses(): string[];
 }
 
 let peripheralModule: RunMusicBlePeripheralModuleType | null = null;

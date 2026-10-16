@@ -85,6 +85,14 @@ class RemoteMediaNotificationService {
       return;
     }
 
+    if (this.isShadowActive && this.currentTrackId === track.id) {
+      await this.syncRemotePlaybackState(isPlaying);
+      if (artworkUri && artworkUri !== this.currentArtworkUri) {
+        await this.syncRemoteArtwork(artworkUri);
+      }
+      return;
+    }
+
     try {
       this.isShadowActive = true;
       this.currentTrackId = track.id;
