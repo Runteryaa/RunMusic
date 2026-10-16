@@ -43,23 +43,23 @@ jobs:
         uses: actions/cache@v4
         id: cache-ndk
         with:
-          path: /usr/local/lib/android/sdk/ndk/27.0.12077973
-          key: android-ndk-27.0.12077973-${{ runner.os }}
+          path: /usr/local/lib/android/sdk/ndk/27.1.12297006
+          key: android-ndk-27.1.12297006-${{ runner.os }}
 
-      - name: 🛠 Ensure Android NDK 27
+      - name: 🛠 Ensure Android NDK 27.1
         run: |
-          NDK_DIR="/usr/local/lib/android/sdk/ndk/27.0.12077973"
+          NDK_DIR="/usr/local/lib/android/sdk/ndk/27.1.12297006"
           if [ -d "$NDK_DIR" ] && [ -f "$NDK_DIR/source.properties" ]; then
-            echo "✅ Android NDK 27.0.12077973 is already present."
+            echo "✅ Android NDK 27.1.12297006 is already present."
           else
-            echo "⚡ Installing Android NDK 27.0.12077973 with retries..."
+            echo "⚡ Installing Android NDK 27.1.12297006 with retries..."
             SUCCESS=0
             for attempt in {1..5}; do
               echo "Attempt $attempt / 5..."
-              if echo "y" | ${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.0.12077973"; then
+              if echo "y" | ${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.1.12297006"; then
                 if [ -d "$NDK_DIR" ] && [ -f "$NDK_DIR/source.properties" ]; then
                   SUCCESS=1
-                  echo "✅ Successfully installed Android NDK 27."
+                  echo "✅ Successfully installed Android NDK 27.1."
                   break
                 fi
               fi
@@ -67,7 +67,7 @@ jobs:
               sleep 15
             done
             if [ "$SUCCESS" -ne 1 ]; then
-              echo "❌ Failed to install Android NDK 27 after 5 attempts."
+              echo "❌ Failed to install Android NDK 27.1 after 5 attempts."
               exit 1
             fi
           fi
@@ -101,7 +101,7 @@ jobs:
           sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
           grep -q 'reactNativeArchitectures' android/gradle.properties || echo 'reactNativeArchitectures=arm64-v8a' >> android/gradle.properties
 
-          echo "ndk.dir=/usr/local/lib/android/sdk/ndk/27.0.12077973" >> android/local.properties
+          echo "ndk.dir=/usr/local/lib/android/sdk/ndk/27.1.12297006" >> android/local.properties
 
           TARGET_BRANCH="${GITHUB_REF_NAME}"
           if [ "$TARGET_BRANCH" = "beta" ]; then
