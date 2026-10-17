@@ -61,8 +61,11 @@ for (const dir of searchDirs) {
       { search: /\bweak\s+let\b/g, replace: 'weak var' },
       // Remove invalid trailing commas before closing parentheses in closures/argument lists
       { search: /,(\s*\))/g, replace: '$1' },
-      // Swift 6.1 move-only push_back into std::vector<facebook::jsi::PropNameID>
-      { search: /vector\.push_back\((?:consuming:\s*)?propNameId\)/g, replace: 'vector.push_back(consume propNameId)' },
+      // Swift 6.1 cannot instantiate move-only C++ push_back, use C++ helper instead
+      {
+        search: /for\s+propertyName\s+in\s+propertyNames\s*\{[\s\S]*?vector\.push_back[^\n]+\n\s*\}/g,
+        replace: 'for propertyName in propertyNames {\n        expo.appendPropNameIdUtf8(&vector, iRuntime, std.string(propertyName))\n      }',
+      },
       // Swift 6.1 Task.immediate and Task(name:) polyfill compatibility
       {
         search: /if\s+#available\(macOS\s*26\.0[^{]+\{[\s\S]*?return\s+Task\(name:[^}]+}/g,
@@ -158,6 +161,37 @@ for (const header of hostFunctionClosureHeaders) {
     content = content.replace(
       /explicit HostFunctionClosure\(Context context, Closure closure, Deallocator deallocator\)[^;]*;/,
       `$&${factory}`
+    );
+    modified = true;
+  }
+
+  if (modified) {
+    fs.writeFileSync(header, content, 'utf8');
+    console.log(`[patch-swift-tools] Successfully patched ${header}`);
+  }
+}
+
+// 5. Patch HostObjectCallbacks.h with appendPropNameIdUtf8 helper
+const hostObjectCallbacksHeaders = [
+  path.join(__dirname, '..', 'node_modules', 'expo-modules-jsi', 'apple', 'Sources', 'ExpoModulesJSI-Cxx', 'include', 'HostObjectCallbacks.h'),
+  path.join(__dirname, '..', 'ios', 'Pods', 'Headers', 'Public', 'expo-modules-jsi', 'HostObjectCallbacks.h'),
+  path.join(__dirname, '..', 'ios', 'Pods', 'Headers', 'Private', 'expo-modules-jsi', 'HostObjectCallbacks.h'),
+];
+
+for (const header of hostObjectCallbacksHeaders) {
+  if (!fs.existsSync(header)) continue;
+  let content = fs.readFileSync(header, 'utf8');
+  let modified = false;
+
+  if (!content.includes('appendPropNameIdUtf8')) {
+    const helper = `
+inline void appendPropNameIdUtf8(HostObjectCallbacks::PropNameIds &vector, facebook::jsi::IRuntime &runtime, const std::string &name) {
+  vector.push_back(facebook::jsi::PropNameID::forUtf8(runtime, name));
+}
+`;
+    content = content.replace(
+      /}\s*\/\/\s*namespace\s+expo/,
+      `${helper}\n} // namespace expo`
     );
     modified = true;
   }
