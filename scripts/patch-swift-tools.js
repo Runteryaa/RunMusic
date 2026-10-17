@@ -386,8 +386,8 @@ for (const filePath of imagePickerFiles) {
 function patchExpoUiFiles(dir) {
   walkDir(dir, /Button\.swift$/, (file) => {
     patchFile(file, [{
-      search: /@ViewBuilder\s*\n\s*private\s+var\s+labelLessButton:\s*some\s+View\s*\{[\s\S]*?Children\(\)\s*\n\s*\}\s*\n\s*\}/g,
-      replace: '@ViewBuilder\n  private var labelLessButton: some View {\n    SwiftUI.Button(role: props.role?.toNativeRole(), action: {\n      props.onButtonPress()\n    }) {\n      Children()\n    }\n  }',
+      search: /@ViewBuilder\s*\n\s*private\s+var\s+labelLessButton[\s\S]*$/g,
+      replace: '@ViewBuilder\n  private var labelLessButton: some View {\n    SwiftUI.Button(role: props.role?.toNativeRole(), action: {\n      props.onButtonPress()\n    }) {\n      Children()\n    }\n  }\n}\n',
     }]);
   });
   walkDir(dir, /ButtonProps\.swift$/, (file) => {
