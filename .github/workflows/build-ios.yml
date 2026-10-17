@@ -28,15 +28,11 @@ jobs:
       - name: 📦 Install Dependencies
         run: npm install --legacy-peer-deps
 
-      - name: 🔍 Select Xcode Version
+      - name: 🔍 Inspect Default Xcode & SDKs
         run: |
-          echo "Available Xcode installations:"
-          ls -d /Applications/Xcode*.app || true
-          if [ -d "/Applications/Xcode_16.2.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
-          fi
           xcodebuild -version
           swift --version
+          xcodebuild -showsdks
 
       - name: 🛠 Prebuild iOS
         run: |
