@@ -319,3 +319,43 @@ findAndPatchTarballs(path.join(__dirname, '..', 'ios', 'Pods'));
 
 // Patch any extracted .swiftinterface files
 patchSwiftInterfaces(path.join(__dirname, '..', 'ios', 'Pods'));
+
+// 7. Patch expo-router iOS Toolbar files for iOS < 26 SDK compatibility
+const routerToolbarFiles = [
+  path.join(__dirname, '..', 'node_modules', 'expo-router', 'ios', 'Toolbar', 'RouterToolbarHostView.swift'),
+  path.join(__dirname, '..', 'node_modules', 'expo-router', 'ios', 'Toolbar', 'RouterToolbarItemView.swift'),
+  path.join(__dirname, '..', 'node_modules', 'expo-router', 'ios', 'Toolbar', 'RouterToolbarModule.swift'),
+];
+
+walkDir(path.join(__dirname, '..', 'ios', 'Pods'), /RouterToolbar.*\.swift$/, (file) => {
+  if (!routerToolbarFiles.includes(file)) routerToolbarFiles.push(file);
+});
+
+for (const filePath of routerToolbarFiles) {
+  patchFile(filePath, [
+    {
+      search: /if\s+#available\(iOS\s+26\.0,\s*\*\)\s*\{\s*\n\s*if\s+let\s+hidesSharedBackground\s*=\s*menu\.hidesSharedBackground/g,
+      replace: '#if false\n            if #available(iOS 26.0, *) {\n              if let hidesSharedBackground = menu.hidesSharedBackground',
+    },
+    {
+      search: /item\.sharesBackground\s*=\s*sharesBackground\s*\n\s*\}\s*\n\s*\}/g,
+      replace: 'item.sharesBackground = sharesBackground\n              }\n            }\n            #endif',
+    },
+    {
+      search: /guard\s+#available\(iOS\s+26\.0,\s*\*\),\s*let\s+controller\s*=\s*self\.host\?\.findViewController\(\)\s+else\s*\{[\s\S]*?item\s*=\s*controller\.navigationItem\.searchBarPlacementBarButtonItem/g,
+      replace: '#if false\n      guard #available(iOS 26.0, *), let controller = self.host?.findViewController() else {\n        logger?.warn("[expo-router] searchBarPlacementBarButtonItem not available")\n        currentBarButtonItem = nil\n        return\n      }\n      item = controller.navigationItem.searchBarPlacementBarButtonItem\n      #else\n      currentBarButtonItem = nil\n      return\n      #endif',
+    },
+    {
+      search: /if\s+#available\(iOS\s+26\.0,\s*\*\)\s*\{\s*\n\s*item\.hidesSharedBackground\s*=\s*hidesSharedBackground\s*\n\s*item\.sharesBackground\s*=\s*sharesBackground\s*\n\s*\}/g,
+      replace: '#if false\n    if #available(iOS 26.0, *) {\n      item.hidesSharedBackground = hidesSharedBackground\n      item.sharesBackground = sharesBackground\n    }\n    #endif',
+    },
+    {
+      search: /if\s+#available\(iOS\s+26\.0,\s*\*\)\s*\{\s*\n\s*if\s+let\s+badgeConfig\s*=\s*badgeConfiguration\s*\{[\s\S]*?item\.badge\s*=\s*nil\s*\n\s*\}\s*\n\s*\}/g,
+      replace: '#if false\n    if #available(iOS 26.0, *) {\n      // iOS 26 Badge\n    }\n    #endif',
+    },
+    {
+      search: /case\s+\.prominent:\s*\n\s*if\s+#available\(iOS\s+26\.0,\s*\*\)\s*\{\s*\n\s*return\s+\.prominent\s*\n\s*\}\s*else\s*\{\s*\n\s*return\s+\.done\s*\n\s*\}/g,
+      replace: 'case .prominent:\n      return .done',
+    },
+  ]);
+}
