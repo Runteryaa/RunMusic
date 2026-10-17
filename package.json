@@ -55,7 +55,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "postinstall": "patch-package && node ./scripts/patch-ble-plx.js"
+    "postinstall": "patch-package && node ./scripts/patch-ble-plx.js && node ./scripts/patch-swift-tools.js"
   },
   "private": true
 }
