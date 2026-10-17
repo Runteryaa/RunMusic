@@ -219,7 +219,82 @@ inline void appendPropNameIdUtf8(HostObjectCallbacks::PropNameIds &vector, faceb
   }
 }
 
-// 6. Patch any .swiftinterface files (e.g. from prebuilt xcframeworks) for Swift 6.1.2 compatibility
+// 6. Patch prebuilt xcframework tarballs and extracted .swiftinterface files for Swift 6.1.2 compatibility
+const { execSync } = require('child_process');
+
+function sanitizeSwiftInterfaceString(content) {
+  let modified = false;
+  if (content.includes('Apple Swift version 6.3')) {
+    content = content.replace(/Apple Swift version 6\.3[^\n]*/g, 'Apple Swift version 6.1.2 (swiftlang-6.1.2.1.2 clang-1700.0.13.5)');
+    content = content.replace(/-interface-compiler-version 6\.3[^\s]*/g, '-interface-compiler-version 6.1.2');
+    modified = true;
+  }
+  if (content.includes('@_Concurrency.MainActor ExpoModulesCore.AnyArgument')) {
+    content = content.replace(
+      /extension\s+UIKit\.UIView\s*:\s*@_Concurrency\.MainActor\s+ExpoModulesCore\.AnyArgument/g,
+      'extension UIKit.UIView : ExpoModulesCore.AnyArgument'
+    );
+    modified = true;
+  }
+  if (content.includes('@_Concurrency.MainActor')) {
+    content = content.replace(/@_Concurrency\.MainActor/g, '@MainActor');
+    modified = true;
+  }
+  return { content, modified };
+}
+
+function patchTarball(tbPath) {
+  const tmpDir = path.join(path.dirname(tbPath), '.tmp_tb_patch_' + Date.now());
+  try {
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    execSync(`tar -xzf "${tbPath}" -C "${tmpDir}"`);
+
+    let modifiedCount = 0;
+    function walkAndPatch(d) {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const f = path.join(d, e.name);
+        if (e.isDirectory()) walkAndPatch(f);
+        else if (e.name.endsWith('.swiftinterface')) {
+          const raw = fs.readFileSync(f, 'utf8');
+          const result = sanitizeSwiftInterfaceString(raw);
+          if (result.modified) {
+            fs.writeFileSync(f, result.content, 'utf8');
+            modifiedCount++;
+          }
+        }
+      }
+    }
+    walkAndPatch(tmpDir);
+
+    if (modifiedCount > 0) {
+      const topEntries = fs.readdirSync(tmpDir);
+      const args = topEntries.map(e => `"${e}"`).join(' ');
+      execSync(`tar -czf "${tbPath}" -C "${tmpDir}" ${args}`);
+      console.log(`[patch-swift-tools] Patched and repacked ${path.basename(tbPath)} (${modifiedCount} interfaces)`);
+    }
+  } catch (err) {
+    console.warn(`[patch-swift-tools] Warning: failed to patch tarball ${tbPath}:`, err.message);
+  } finally {
+    if (fs.existsSync(tmpDir)) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
+    }
+  }
+}
+
+function findAndPatchTarballs(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      findAndPatchTarballs(full);
+    } else if (entry.name.endsWith('.tar.gz') && (full.includes('xcframeworks') || full.includes('artifacts'))) {
+      patchTarball(full);
+    }
+  }
+}
+
 function patchSwiftInterfaces(dir) {
   if (!fs.existsSync(dir)) return;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -228,23 +303,19 @@ function patchSwiftInterfaces(dir) {
     if (entry.isDirectory()) {
       patchSwiftInterfaces(full);
     } else if (entry.name.endsWith('.swiftinterface')) {
-      let content = fs.readFileSync(full, 'utf8');
-      let modified = false;
-      if (content.includes('Apple Swift version 6.3')) {
-        content = content.replace(/Apple Swift version 6\.3[\d.]*/g, 'Apple Swift version 6.1.2');
-        content = content.replace(/-interface-compiler-version 6\.3[\d.]*/g, '-interface-compiler-version 6.1.2');
-        modified = true;
-      }
-      if (content.includes('@_Concurrency.MainActor')) {
-        content = content.replace(/@_Concurrency\.MainActor/g, '@MainActor');
-        modified = true;
-      }
-      if (modified) {
-        fs.writeFileSync(full, content, 'utf8');
+      const raw = fs.readFileSync(full, 'utf8');
+      const result = sanitizeSwiftInterfaceString(raw);
+      if (result.modified) {
+        fs.writeFileSync(full, result.content, 'utf8');
         console.log(`[patch-swift-tools] Sanitized swiftinterface: ${full}`);
       }
     }
   }
 }
 
+// Patch all prebuilt tarballs in node_modules and ios/Pods
+findAndPatchTarballs(path.join(__dirname, '..', 'node_modules'));
+findAndPatchTarballs(path.join(__dirname, '..', 'ios', 'Pods'));
+
+// Patch any extracted .swiftinterface files
 patchSwiftInterfaces(path.join(__dirname, '..', 'ios', 'Pods'));
