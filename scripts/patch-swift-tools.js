@@ -61,6 +61,19 @@ for (const dir of searchDirs) {
       { search: /\bweak\s+let\b/g, replace: 'weak var' },
       // Remove invalid trailing commas before closing parentheses in closures/argument lists
       { search: /,(\s*\))/g, replace: '$1' },
+      // Classes with mutable weak var runtime conforming to Sendable must use @unchecked Sendable
+      {
+        search: /class\s+JavaScriptPropNameID\s*:\s*JavaScriptType\s*\{/g,
+        replace: 'class JavaScriptPropNameID: JavaScriptType, @unchecked Sendable {',
+      },
+      {
+        search: /class\s+JavaScriptError\s*:\s*Error\s*,\s*Sendable\s*\{/g,
+        replace: 'class JavaScriptError: Error, @unchecked Sendable {',
+      },
+      {
+        search: /class\s+JavaScriptValue\s*:\s*JavaScriptType\s*,\s*Equatable\s*,\s*Escapable\s*\{/g,
+        replace: 'class JavaScriptValue: JavaScriptType, Equatable, Escapable, @unchecked Sendable {',
+      },
     ]);
   });
 }
@@ -73,14 +86,27 @@ const runtimeSchedulerHeaders = [
 ];
 
 for (const header of runtimeSchedulerHeaders) {
-  patchFile(header, [
-    {
-      search: /class\s+RuntimeScheduler\s*\{/g,
-      replace: 'class SWIFT_SHARED_REFERENCE(retainRuntimeScheduler, releaseRuntimeScheduler) RuntimeScheduler {',
-    },
-    {
-      search: /\}\s*SWIFT_SHARED_REFERENCE\(retainRuntimeScheduler,\s*releaseRuntimeScheduler\);/g,
-      replace: '};',
-    },
-  ]);
+  if (!fs.existsSync(header)) continue;
+  let content = fs.readFileSync(header, 'utf8');
+  let modified = false;
+
+  // Remove SWIFT_RETURNS_RETAINED from constructors (Swift 6.1 Clang forbids this attribute on constructors)
+  if (content.includes('SWIFT_RETURNS_RETAINED')) {
+    content = content.replace(/SWIFT_RETURNS_RETAINED\s+RuntimeScheduler/g, 'RuntimeScheduler');
+    modified = true;
+  }
+
+  // Forward-declare retain/release functions before class definition if not already present
+  if (!content.includes('void retainRuntimeScheduler(expo::RuntimeScheduler')) {
+    content = content.replace(
+      'namespace expo {',
+      'namespace expo { class RuntimeScheduler; }\nvoid retainRuntimeScheduler(expo::RuntimeScheduler *scheduler);\nvoid releaseRuntimeScheduler(expo::RuntimeScheduler *scheduler);\n\nnamespace expo {'
+    );
+    modified = true;
+  }
+
+  if (modified) {
+    fs.writeFileSync(header, content, 'utf8');
+    console.log(`[patch-swift-tools] Successfully patched ${header}`);
+  }
 }

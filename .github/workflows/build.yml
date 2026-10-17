@@ -1,8 +1,8 @@
 name: Build Android APK & Release
 
 on:
-  push:
-    branches: [ main, master, beta ]
+  # push:
+  #   branches: [ main, master, beta ]
   workflow_dispatch:
 
 permissions:
