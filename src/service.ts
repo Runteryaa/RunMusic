@@ -53,6 +53,8 @@ export default async function playbackService() {
 
   TrackPlayer.addEventListener(Event.RemotePlay, async () => {
     if (useRemoteConnectStore.getState().isRemoteConnected()) {
+      useRemoteConnectStore.getState().setOptimisticIsPlaying(true);
+      TrackPlayer.play().catch(() => {});
       remoteSyncManager.sendPlay();
       return;
     }
@@ -65,6 +67,8 @@ export default async function playbackService() {
   });
   TrackPlayer.addEventListener(Event.RemotePause, async () => {
     if (useRemoteConnectStore.getState().isRemoteConnected()) {
+      useRemoteConnectStore.getState().setOptimisticIsPlaying(false);
+      TrackPlayer.pause().catch(() => {});
       remoteSyncManager.sendPause();
       return;
     }

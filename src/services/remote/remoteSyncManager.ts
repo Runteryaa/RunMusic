@@ -26,6 +26,8 @@ import {
   getLyricsCacheKeys,
   fetchLyricsOnline,
   resolveCandidateToLyricsResult,
+  cleanDisplayTitle,
+  getSearchKeywords,
   type LyricLine,
 } from '../lyricsService';
 import { remoteMediaNotification } from './remoteMediaNotification';
@@ -198,6 +200,18 @@ class RemoteSyncManager {
         blePeripheralService.broadcast(bleTrackChange).catch(() => {});
       }
 
+      // Immediately synchronize position 0 on track change so client slider advances in real time without lag
+      if (trackSummary) {
+        const initialPosMsg: PositionSyncMessage = {
+          type: 'POSITION_SYNC',
+          position: 0,
+          duration: trackSummary.duration > 0 ? trackSummary.duration : undefined,
+          isPlaying: true,
+          playbackRate: 1.0,
+        };
+        this.broadcastToAll(initialPosMsg);
+      }
+
       this.broadcastQueueSync();
 
       if (track) {
@@ -292,7 +306,7 @@ class RemoteSyncManager {
       () => unsubStore(),
     ];
 
-    // 3. Low-frequency position heartbeat (every 5000ms while active)
+    // 3. High-accuracy position heartbeat (every 1500ms while active)
     this.heartbeatTimer = setInterval(async () => {
       if (!this.isHostActive || useRemoteConnectStore.getState().mode === 'client') return;
       try {
@@ -312,7 +326,7 @@ class RemoteSyncManager {
       } catch {
         // ignore
       }
-    }, 5000);
+    }, 1500);
   }
 
   private detachHostListeners(): void {
@@ -893,14 +907,23 @@ class RemoteSyncManager {
 
       case 'TRACK_CHANGE':
         useRemoteConnectStore.getState().setRemoteTrackChange(msg);
-        remoteMediaNotification
-          .syncRemoteTrackToLocalPlayer(
-            msg.track,
-            useRemoteConnectStore.getState().remoteState.isPlaying,
-            useRemoteConnectStore.getState().remoteState.artworkUri,
-            0
-          )
-          .catch(() => {});
+        {
+          const resolvedArtwork =
+            msg.track?.id
+              ? useStore.getState().artworkMap[msg.track.id] ||
+                useStore.getState().metadataMap[msg.track.id]?.artwork ||
+                useRemoteConnectStore.getState().remoteState.artworkUri ||
+                null
+              : null;
+          remoteMediaNotification
+            .syncRemoteTrackToLocalPlayer(
+              msg.track,
+              useRemoteConnectStore.getState().remoteState.isPlaying,
+              resolvedArtwork,
+              0
+            )
+            .catch(() => {});
+        }
         if (msg.track?.id && msg.track.hasArtwork && this.activeClientTransport === 'wifi') {
           this.sendClientCommand({ type: 'REQUEST_ARTWORK', trackId: msg.track.id });
         }
@@ -989,7 +1012,8 @@ class RemoteSyncManager {
 
   private formatTrackSummary(track: Track): RemoteTrackSummary {
     const artworkMap = useStore.getState().artworkMap;
-    const hasArtwork = !!(track.artwork || artworkMap[track.id]);
+    const metadata = useStore.getState().metadataMap[track.id] || useStore.getState().metadataMap[(track as any).url];
+    const hasArtwork = !!(track.artwork || artworkMap[track.id] || metadata?.artwork);
 
     let duration = track.duration || 0;
     if (duration <= 0) {
@@ -1000,25 +1024,63 @@ class RemoteSyncManager {
       }
     }
 
+    const keywords = getSearchKeywords(track.title || '');
+    const artist =
+      (metadata?.artist?.trim() && metadata.artist !== 'Local Audio' && metadata.artist !== 'Bilinmeyen Sanatçı'
+        ? metadata.artist.trim()
+        : '') ||
+      (track.artist?.trim() && track.artist !== 'Local Audio' && track.artist !== 'Bilinmeyen Sanatçı' && track.artist !== 'Unknown Artist'
+        ? track.artist.trim()
+        : '') ||
+      (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
+        ? keywords.expectedArtist
+        : '') ||
+      'Unknown Artist';
+
+    const rawTitle =
+      (metadata?.title?.trim() ? metadata.title.trim() : '') ||
+      track.title ||
+      keywords.expectedTrack ||
+      'Unknown Title';
+
+    const title = cleanDisplayTitle(rawTitle, artist !== 'Unknown Artist' ? artist : undefined) || rawTitle;
+
     return {
       id: track.id,
-      title: track.title || 'Unknown Title',
-      artist: track.artist || 'Unknown Artist',
+      title,
+      artist,
       duration,
       hasArtwork,
     };
   }
 
   private formatAssetSummary(asset: any): RemoteTrackSummary {
-    const metadata = useStore.getState().metadataMap[asset.id];
+    const meta = useStore.getState().metadataMap[asset.id] || useStore.getState().metadataMap[asset.uri];
+    const keywords = getSearchKeywords(asset.filename || '');
+    const artist =
+      (meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
+        ? meta.artist.trim()
+        : '') ||
+      (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
+        ? keywords.expectedArtist
+        : '') ||
+      'Unknown Artist';
+
+    const rawTitle =
+      (meta?.title?.trim() ? meta.title.trim() : '') ||
+      keywords.expectedTrack ||
+      asset.filename ||
+      'Unknown Title';
+
+    const title = cleanDisplayTitle(rawTitle, artist !== 'Unknown Artist' ? artist : undefined) || rawTitle;
     const artworkMap = useStore.getState().artworkMap;
 
     return {
       id: asset.id,
-      title: metadata?.title || asset.filename || 'Unknown Title',
-      artist: metadata?.artist || 'Unknown Artist',
+      title,
+      artist,
       duration: asset.duration || 0,
-      hasArtwork: !!(metadata?.artwork || artworkMap[asset.id]),
+      hasArtwork: !!(meta?.artwork || artworkMap[asset.id]),
     };
   }
 

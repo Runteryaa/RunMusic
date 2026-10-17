@@ -285,6 +285,9 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
           clientSyncReceivedAt: now,
           interpolatedPosition: 0,
         }));
+        if (get().remoteState.isPlaying) {
+          ensureInterpolationRunning(get, set);
+        }
       },
 
       setRemoteStateChange: (msg) => {

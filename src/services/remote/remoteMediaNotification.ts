@@ -123,6 +123,7 @@ class RemoteMediaNotificationService {
       try {
         await setupTrackPlayerIfNeeded();
 
+        const wasShadowActive = this.isShadowActive;
         this.isShadowActive = true;
         this.currentTrackId = track.id;
         if (artworkUri !== undefined) {
@@ -135,21 +136,36 @@ class RemoteMediaNotificationService {
         // Ensure zero volume on client device
         await TrackPlayer.setVolume(0);
 
-        // Reset and load the remote track metadata with silent audio stream
-        await TrackPlayer.reset();
-        await TrackPlayer.updateOptions(getTrackPlayerOptions(true));
-        await TrackPlayer.add({
+        const trackPayload = {
           id: `remote_${track.id}`,
           url: silentUri,
           title: track.title,
           artist: track.artist,
           artwork: this.currentArtworkUri || undefined,
           duration,
-        });
+        };
+
+        if (wasShadowActive) {
+          // Seamlessly load new track without resetting TrackPlayer/MediaSession to prevent notification flicker
+          await TrackPlayer.load(trackPayload);
+        } else {
+          // First time entering remote mode: configure and add track
+          await TrackPlayer.reset();
+          await TrackPlayer.updateOptions(getTrackPlayerOptions(true));
+          await TrackPlayer.add(trackPayload);
+        }
 
         // Loop silent audio so it never reaches EOF and never terminates the notification
         await TrackPlayer.setRepeatMode(RepeatMode.Track);
         await TrackPlayer.setVolume(0);
+
+        if (this.currentArtworkUri) {
+          TrackPlayer.updateNowPlayingMetadata({
+            artwork: this.currentArtworkUri,
+            title: track.title,
+            artist: track.artist,
+          }).catch(() => {});
+        }
 
         if (initialPosition > 0) {
           await TrackPlayer.seekTo(initialPosition);
@@ -238,6 +254,11 @@ class RemoteMediaNotificationService {
 
       const active = await TrackPlayer.getActiveTrack();
       const state = await TrackPlayer.getPlaybackState();
+      await TrackPlayer.updateNowPlayingMetadata({
+        artwork: artworkLocalUri,
+        title: active?.title || '',
+        artist: active?.artist || '',
+      });
       this.updateWidget(
         active?.title || '',
         active?.artist || '',
