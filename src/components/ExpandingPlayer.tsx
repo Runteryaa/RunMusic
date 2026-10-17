@@ -122,7 +122,7 @@ export function ExpandingPlayer() {
     };
   });
 
-  if (!activeTrack) {
+  if (!activeTrack && !isRemote) {
     return null;
   }
 

@@ -37,6 +37,7 @@ import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { useActivePlayer } from '../hooks/useActivePlayer';
 import { useActiveProgress } from '../hooks/useActiveProgress';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
+import { wsRoomClient } from '../services/remote/wsRoomClient';
 import { udpDiscoveryService } from '../services/remote/udpDiscovery';
 import { bleCentralService } from '../services/remote/bleCentralService';
 import type { DiscoveredPeer } from '../services/remote/IRemoteTransport';
@@ -119,6 +120,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const connectedClients = useRemoteConnectStore((s) => s.connectedClients);
 
   const internetRoomCode = useRemoteConnectStore((s) => s.internetRoomCode);
+  const internetHostStatus = useRemoteConnectStore((s) => s.internetHostStatus);
   const recentRooms = useRemoteConnectStore((s) => s.recentRooms);
   const removeRecentRoom = useRemoteConnectStore((s) => s.removeRecentRoom);
 
@@ -151,7 +153,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         unsubscribe();
       };
     } else if (activeTransportTab === 'internet') {
-      if (isRemoteServiceEnabled && !internetRoomCode) {
+      if (isRemoteServiceEnabled && (!wsRoomClient.isConnected() || !internetRoomCode)) {
         remoteSyncManager.startInternetHostRoom().catch(() => {});
       }
     }
@@ -161,6 +163,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     activeTransportTab,
     isRemoteServiceEnabled,
     internetRoomCode,
+    internetHostStatus,
     setDiscoveredHosts,
     setDiscoveredBlePeers,
   ]);
@@ -867,7 +870,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     : getSearchKeywords(localActiveTrack?.title || '', localActiveTrack?.artist || '');
 
   const rawArtist = player.isRemote
-    ? player.activeTrack?.artist || unknownArtist
+    ? player.activeTrack?.artist || (player.remoteDeviceName ? `Bağlandı • ${player.remoteDeviceName}` : unknownArtist)
     : (activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
         ? activeMeta.artist.trim()
         : '') ||
@@ -878,7 +881,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             : unknownArtist));
 
   const rawTitle = player.isRemote
-    ? player.activeTrack?.title || unknownTrack
+    ? player.activeTrack?.title || 'Müzik Bekleniyor'
     : (activeMeta?.title?.trim() ? activeMeta.title.trim() : '') ||
       activeKeywords.expectedTrack ||
       localActiveTrack?.title ||
@@ -2778,9 +2781,37 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                         <Text style={[styles.connectSectionLabel, { color: theme.textAccent, marginBottom: 0 }]}>
                           BU TELEFONUN ODA KODU
                         </Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#22c55e' }} />
-                          <Text style={{ fontSize: 11, color: '#22c55e', fontWeight: '600' }}>Aktif</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                          <View
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: 4,
+                              backgroundColor:
+                                internetHostStatus === 'connected'
+                                  ? '#22c55e'
+                                  : internetHostStatus === 'connecting'
+                                  ? '#f59e0b'
+                                  : '#ef4444',
+                            }}
+                          />
+                          <Text
+                            style={{
+                              fontSize: 11,
+                              color:
+                                internetHostStatus === 'connected'
+                                  ? '#22c55e'
+                                  : internetHostStatus === 'connecting'
+                                  ? '#f59e0b'
+                                  : '#ef4444',
+                              fontWeight: '600',
+                            }}>
+                            {internetHostStatus === 'connected'
+                              ? 'Canlı'
+                              : internetHostStatus === 'connecting'
+                              ? 'Bağlanıyor...'
+                              : 'Çevrimdışı'}
+                          </Text>
                         </View>
                       </View>
 
@@ -2812,6 +2843,18 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           <Ionicons name="refresh-outline" size={16} color="#ffffff" />
                           <Text style={{ color: '#ffffff', fontWeight: '600', fontSize: 12 }}>Yeni Kod</Text>
                         </TouchableOpacity>
+
+                        {internetHostStatus !== 'connected' && (
+                          <TouchableOpacity
+                            style={[styles.connectRoomBtn, { backgroundColor: `${theme.primary}35` }]}
+                            activeOpacity={0.75}
+                            onPress={() => {
+                              remoteSyncManager.startInternetHostRoom().catch(() => {});
+                            }}>
+                            <Ionicons name="link-outline" size={16} color={theme.primary} />
+                            <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>Yeniden Bağlan</Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
 
                       <Text style={[styles.connectEmptySubtext, { marginTop: 8, textAlign: 'center' }]}>

@@ -566,8 +566,8 @@ export default function SettingsScreen() {
         theme={theme}>
         <ToggleRow
           theme={theme}
-          label="RunMusic Connect (Wi-Fi & Bluetooth Kumandası)"
-          hint="Aynı Wi-Fi ağındaki veya Bluetooth kapsama alanındaki diğer RunMusic cihazlarının bu telefonu uzaktan kontrol etmesine ve müzik sözlerini görüntülemesine izin verin."
+          label="RunMusic Connect (Wi-Fi, Bluetooth & İnternet)"
+          hint="Aynı Wi-Fi ağındaki, Bluetooth kapsama alanındaki veya herhangi bir internet bağlantısındaki diğer RunMusic cihazlarının bu telefonu uzaktan kontrol etmesine izin verin."
           value={isRemoteEnabled}
           onChange={(v) => {
             setRemoteEnabled(v);

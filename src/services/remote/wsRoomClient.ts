@@ -1,3 +1,4 @@
+import { AppState, type AppStateStatus } from 'react-native';
 import { useRemoteConnectStore } from '../../store/useRemoteConnectStore';
 import type { RemoteMessage } from './remoteTypes';
 
@@ -15,6 +16,8 @@ export interface WSHostCallbacks {
 export interface WSClientCallbacks {
   onJoined?: (info: { roomCode: string; hostName: string; clientId: string }) => void;
   onMessage?: (message: RemoteMessage) => void;
+  onHostTemporarilyOffline?: () => void;
+  onHostReconnected?: () => void;
   onError?: (error: string) => void;
   onClosed?: () => void;
 }
@@ -27,6 +30,26 @@ class WSRoomClient {
   private clientCallbacks: WSClientCallbacks | null = null;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private isExplicitDisconnect = false;
+
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
+  private lastJoinPayload: any = null;
+
+  constructor() {
+    AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        this.handleAppStateActive();
+      }
+    });
+  }
+
+  private handleAppStateActive(): void {
+    if (this.isExplicitDisconnect) return;
+    if ((this.role === 'host' || this.role === 'client') && !this.isConnected()) {
+      console.log('[WSRoomClient] App foregrounded & socket closed. Triggering immediate reconnect.');
+      this.reconnectImmediately();
+    }
+  }
 
   private getRelayUrl(): string {
     const custom = useRemoteConnectStore.getState().customRelayUrl;
@@ -81,14 +104,19 @@ class WSRoomClient {
     this.role = 'host';
     this.roomCode = roomCode.toUpperCase().trim();
     this.hostCallbacks = callbacks;
+    this.reconnectAttempts = 0;
 
-    this.connectAndRegister({
+    useRemoteConnectStore.getState().setInternetHostStatus('connecting');
+
+    const payload = {
       type: 'JOIN_ROOM',
       roomCode: this.roomCode,
       role: 'host',
       deviceId,
       deviceName,
-    });
+    };
+    this.lastJoinPayload = payload;
+    this.connectAndRegister(payload);
   }
 
   // ==========================================
@@ -105,17 +133,29 @@ class WSRoomClient {
     this.role = 'client';
     this.roomCode = roomCode.toUpperCase().trim();
     this.clientCallbacks = callbacks;
+    this.reconnectAttempts = 0;
 
-    this.connectAndRegister({
+    const payload = {
       type: 'JOIN_ROOM',
       roomCode: this.roomCode,
       role: 'client',
       deviceId,
       deviceName,
-    });
+    };
+    this.lastJoinPayload = payload;
+    this.connectAndRegister(payload);
   }
 
   private connectAndRegister(joinPayload: any): void {
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        // ignore
+      }
+      this.ws = null;
+    }
+
     const url = this.getRelayUrl();
 
     try {
@@ -123,8 +163,12 @@ class WSRoomClient {
 
       this.ws.onopen = () => {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.reconnectAttempts = 0;
           this.ws.send(JSON.stringify(joinPayload));
           this.startHeartbeat();
+          if (this.role === 'host') {
+            useRemoteConnectStore.getState().setInternetHostStatus('connected');
+          }
         }
       };
 
@@ -141,6 +185,7 @@ class WSRoomClient {
         console.warn('[WSRoomClient] Socket error:', err?.message || err);
         const errMsg = err?.message || 'İnternet bağlantı sunucusuna ulaşılamadı.';
         if (this.role === 'host') {
+          useRemoteConnectStore.getState().setInternetHostStatus('connecting');
           this.hostCallbacks?.onError?.(errMsg);
         } else if (this.role === 'client') {
           this.clientCallbacks?.onError?.(errMsg);
@@ -152,25 +197,62 @@ class WSRoomClient {
         this.ws = null;
         if (!this.isExplicitDisconnect) {
           if (this.role === 'host') {
-            this.hostCallbacks?.onClosed?.();
+            useRemoteConnectStore.getState().setInternetHostStatus('connecting');
+            this.scheduleReconnect();
           } else if (this.role === 'client') {
-            this.clientCallbacks?.onClosed?.();
+            useRemoteConnectStore.getState().setConnectionStatus('connecting');
+            this.scheduleReconnect();
           }
         }
       };
     } catch (err: any) {
-      console.warn('[WSRoomClient] Connection failed:', err);
-      if (this.role === 'host') {
-        this.hostCallbacks?.onError?.(err?.message || 'Bağlantı hatası');
-      } else {
-        this.clientCallbacks?.onError?.(err?.message || 'Bağlantı hatası');
+      console.warn('[WSRoomClient] Connection failed to start:', err);
+      if (!this.isExplicitDisconnect) {
+        this.scheduleReconnect();
       }
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.isExplicitDisconnect || !this.lastJoinPayload) return;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    this.reconnectAttempts++;
+    const delay = Math.min(1500 * Math.pow(1.5, Math.min(this.reconnectAttempts - 1, 5)), 10000);
+    console.log(`[WSRoomClient] Will attempt reconnect #${this.reconnectAttempts} in ${delay}ms`);
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.isExplicitDisconnect && this.lastJoinPayload && !this.isConnected()) {
+        console.log(`[WSRoomClient] Reconnecting now (attempt #${this.reconnectAttempts})...`);
+        this.connectAndRegister(this.lastJoinPayload);
+      }
+    }, delay);
+  }
+
+  public reconnectImmediately(): void {
+    if (this.isExplicitDisconnect || !this.lastJoinPayload) return;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (!this.isConnected()) {
+      console.log('[WSRoomClient] Executing immediate reconnect');
+      this.connectAndRegister(this.lastJoinPayload);
     }
   }
 
   private handleIncoming(data: any): void {
     switch (data.type) {
+      case 'PONG':
+        // Heartbeat ack from relay server
+        break;
+
       case 'ROOM_HOSTED':
+        useRemoteConnectStore.getState().setInternetHostStatus('connected');
         this.hostCallbacks?.onHosted?.(data.roomCode);
         break;
 
@@ -194,6 +276,14 @@ class WSRoomClient {
         });
         break;
 
+      case 'HOST_TEMPORARILY_OFFLINE':
+        this.clientCallbacks?.onHostTemporarilyOffline?.();
+        break;
+
+      case 'HOST_RECONNECTED':
+        this.clientCallbacks?.onHostReconnected?.();
+        break;
+
       case 'RELAY_MESSAGE':
         if (this.role === 'host') {
           this.hostCallbacks?.onMessage?.(data.payload, data.clientId);
@@ -212,6 +302,7 @@ class WSRoomClient {
 
       case 'ROOM_CLOSED':
         if (this.role === 'client') {
+          this.isExplicitDisconnect = true;
           this.clientCallbacks?.onClosed?.();
         }
         break;
@@ -274,7 +365,7 @@ class WSRoomClient {
           // ignore
         }
       }
-    }, 25000);
+    }, 20000);
   }
 
   private stopHeartbeat(): void {
@@ -286,6 +377,12 @@ class WSRoomClient {
 
   public disconnect(): void {
     this.isExplicitDisconnect = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnectAttempts = 0;
+    this.lastJoinPayload = null;
     this.stopHeartbeat();
     if (this.ws) {
       try {
@@ -294,6 +391,9 @@ class WSRoomClient {
         // ignore
       }
       this.ws = null;
+    }
+    if (this.role === 'host') {
+      useRemoteConnectStore.getState().setInternetHostStatus('idle');
     }
     this.role = null;
     this.roomCode = null;

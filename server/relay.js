@@ -137,12 +137,19 @@ function handleRunMusicConnection(ws, initialRoomCode) {
 
   ws.on('message', (raw) => {
     try {
+      ws.isAlive = true;
       const msg = JSON.parse(raw.toString());
 
       if (msg.type === 'PING') {
+        ws.isAlive = true;
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'PONG' }));
         }
+        return;
+      }
+
+      if (msg.type === 'PONG') {
+        ws.isAlive = true;
         return;
       }
 
@@ -159,26 +166,62 @@ function handleRunMusicConnection(ws, initialRoomCode) {
 
         if (role === 'host') {
           const existing = runMusicRooms.get(normalizedCode);
-          if (existing && existing.host?.ws && existing.host.ws !== ws) {
-            existing.host.ws.send(
-              JSON.stringify({ type: 'ROOM_ERROR', error: 'Oda başka bir cihaz tarafından devralındı.' })
-            );
-            existing.host.ws.close();
+          if (existing) {
+            // Clear any pending room cleanup timer from temporary disconnection
+            if (existing.cleanupTimer) {
+              clearTimeout(existing.cleanupTimer);
+              existing.cleanupTimer = null;
+            }
+
+            if (existing.host?.ws && existing.host.ws !== ws && existing.host.ws.readyState === WebSocket.OPEN) {
+              existing.host.ws.send(
+                JSON.stringify({ type: 'ROOM_ERROR', error: 'Oda başka bir cihaz tarafından devralındı.' })
+              );
+              existing.host.ws.close();
+            }
+
+            existing.host = { ws, deviceId, deviceName };
+            existing.hostOffline = false;
+
+            ws.send(JSON.stringify({ type: 'ROOM_HOSTED', roomCode: normalizedCode }));
+            console.log(`[RunMusic] Host re-attached to existing room: ${normalizedCode} (${deviceName || deviceId})`);
+
+            // Notify existing connected clients that host is back online
+            const reconnectedMsg = JSON.stringify({ type: 'HOST_RECONNECTED' });
+            for (const [cId, client] of existing.clients.entries()) {
+              if (client.ws.readyState === WebSocket.OPEN) {
+                client.ws.send(reconnectedMsg);
+                // Also tell the reconnected host about this connected client
+                ws.send(
+                  JSON.stringify({
+                    type: 'CLIENT_CONNECTED',
+                    clientId: cId,
+                    deviceId: client.deviceId,
+                    deviceName: client.deviceName,
+                  })
+                );
+              } else {
+                existing.clients.delete(cId);
+              }
+            }
+            return;
           }
 
           runMusicRooms.set(normalizedCode, {
             host: { ws, deviceId, deviceName },
-            clients: existing ? existing.clients : new Map(),
+            clients: new Map(),
+            hostOffline: false,
+            cleanupTimer: null,
           });
 
           ws.send(JSON.stringify({ type: 'ROOM_HOSTED', roomCode: normalizedCode }));
-          console.log(`[RunMusic] Host registered for room: ${normalizedCode} (${deviceName || deviceId})`);
+          console.log(`[RunMusic] Host registered new room: ${normalizedCode} (${deviceName || deviceId})`);
           return;
         }
 
         if (role === 'client') {
           const room = runMusicRooms.get(normalizedCode);
-          if (!room || !room.host || room.host.ws.readyState !== WebSocket.OPEN) {
+          if (!room || (!room.host && !room.hostOffline)) {
             ws.send(JSON.stringify({ type: 'ROOM_ERROR', error: 'Oda bulunamadı veya Host şu an çevrimdışı.' }));
             return;
           }
@@ -190,12 +233,13 @@ function handleRunMusicConnection(ws, initialRoomCode) {
             JSON.stringify({
               type: 'ROOM_JOINED',
               roomCode: normalizedCode,
-              hostName: room.host.deviceName || 'RunMusic Host',
+              hostName: room.host?.deviceName || 'RunMusic Host',
               clientId: userClientId,
+              hostOffline: !!room.hostOffline,
             })
           );
 
-          if (room.host.ws.readyState === WebSocket.OPEN) {
+          if (room.host && room.host.ws.readyState === WebSocket.OPEN) {
             room.host.ws.send(
               JSON.stringify({
                 type: 'CLIENT_CONNECTED',
@@ -268,15 +312,34 @@ function handleRunMusicConnection(ws, initialRoomCode) {
     if (!room) return;
 
     if (userRole === 'host') {
-      console.log(`[RunMusic] Host left room: ${userRoomCode}`);
-      const closeMsg = JSON.stringify({ type: 'ROOM_CLOSED', error: 'Host odadan ayrıldı.' });
+      console.log(`[RunMusic] Host temporarily disconnected from room: ${userRoomCode}. Starting 60s grace period.`);
+      room.hostOffline = true;
+
+      // Notify clients that host is temporarily reconnecting
+      const offlineMsg = JSON.stringify({ type: 'HOST_TEMPORARILY_OFFLINE' });
       for (const client of room.clients.values()) {
         if (client.ws.readyState === WebSocket.OPEN) {
-          client.ws.send(closeMsg);
-          client.ws.close();
+          client.ws.send(offlineMsg);
         }
       }
-      runMusicRooms.delete(userRoomCode);
+
+      // Clear any prior timer
+      if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
+
+      // Start 60-second grace period before destroying room
+      room.cleanupTimer = setTimeout(() => {
+        if (room.hostOffline) {
+          console.log(`[RunMusic] Grace period expired for room: ${userRoomCode}. Closing room.`);
+          const closeMsg = JSON.stringify({ type: 'ROOM_CLOSED', error: 'Host odadan ayrıldı.' });
+          for (const client of room.clients.values()) {
+            if (client.ws.readyState === WebSocket.OPEN) {
+              client.ws.send(closeMsg);
+              client.ws.close();
+            }
+          }
+          runMusicRooms.delete(userRoomCode);
+        }
+      }, 60000);
     } else if (userRole === 'client' && userClientId) {
       console.log(`[RunMusic] Client ${userClientId} left room: ${userRoomCode}`);
       room.clients.delete(userClientId);

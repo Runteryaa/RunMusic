@@ -66,7 +66,12 @@ class RemoteSyncManager {
   private broadcastToAll(message: RemoteMessage): void {
     tcpHostServer.broadcast(message);
     if (message.type !== 'ACTIVE_ARTWORK_SYNC' && message.type !== 'QUEUE_SYNC') {
-      blePeripheralService.broadcast(message).catch(() => {});
+      if (message.type === 'TRACK_CHANGE') {
+        const bleMsg = { ...message, lyrics: null };
+        blePeripheralService.broadcast(bleMsg).catch(() => {});
+      } else {
+        blePeripheralService.broadcast(message).catch(() => {});
+      }
     }
     if (wsRoomClient.isConnected() && wsRoomClient.getRole() === 'host') {
       wsRoomClient.sendFromHost(message);
@@ -219,16 +224,7 @@ class RemoteSyncManager {
         track: trackSummary,
         lyrics: lyricsSummary,
       };
-      tcpHostServer.broadcast(trackChangeMsg);
-
-      if (blePeripheralService.getIsAdvertising()) {
-        const bleTrackChange: TrackChangeMessage = {
-          type: 'TRACK_CHANGE',
-          track: trackSummary,
-          lyrics: null,
-        };
-        blePeripheralService.broadcast(bleTrackChange).catch(() => {});
-      }
+      this.broadcastToAll(trackChangeMsg);
 
       // Immediately synchronize position 0 on track change so client slider advances in real time without lag
       if (trackSummary) {
@@ -484,7 +480,7 @@ class RemoteSyncManager {
         queue: queueSummaries,
         upNext: upNextSummaries,
       };
-      tcpHostServer.broadcast(queueSync);
+      this.broadcastToAll(queueSync);
     });
   }
 
@@ -749,6 +745,14 @@ class RemoteSyncManager {
       smartShuffle: store.isShuffle ? store.isSmartShuffle : false,
     });
 
+    const selectedSummary = this.formatAssetSummary(asset);
+    const immediateTrackChange: TrackChangeMessage = {
+      type: 'TRACK_CHANGE',
+      track: selectedSummary,
+      lyrics: null,
+    };
+    this.broadcastToAll(immediateTrackChange);
+    this.broadcastStateChange();
     this.broadcastQueueSync();
   }
 
@@ -937,6 +941,7 @@ class RemoteSyncManager {
 
   public stopInternetHostRoom(): void {
     wsRoomClient.disconnect();
+    useRemoteConnectStore.getState().setInternetHostStatus('idle');
   }
 
   public async connectToInternetRoom(roomCode: string): Promise<void> {
@@ -974,6 +979,13 @@ class RemoteSyncManager {
         useRemoteConnectStore.getState().setConnectionStatus('connected');
         useRemoteConnectStore.getState().setConnectedDeviceName(info.hostName || `Oda: ${info.roomCode}`);
         useRemoteConnectStore.getState().addRecentRoom(info.roomCode);
+      },
+      onHostTemporarilyOffline: () => {
+        useRemoteConnectStore.getState().setConnectionStatus('connecting', 'Host yeniden bağlanıyor...');
+      },
+      onHostReconnected: () => {
+        useRemoteConnectStore.getState().setConnectionStatus('connected');
+        this.sendClientCommand({ type: 'COMMAND_GET_STATE' });
       },
       onMessage: (message) => {
         this.handleClientIncomingMessage(message);

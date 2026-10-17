@@ -83,7 +83,7 @@ export default function LibraryScreen() {
   const activeTransport = remoteSyncManager.getActiveClientTransport();
   const player = useActivePlayer();
 
-  const isShowingRemoteLibrary = isRemoteConnected && activeTransport === 'wifi';
+  const isShowingRemoteLibrary = isRemoteConnected && (activeTransport === 'wifi' || activeTransport === 'internet');
 
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [hasScannedOnce, setHasScannedOnce] = useState(library.length > 0);

@@ -61,6 +61,7 @@ interface RemoteConnectStoreState {
   connectedClients: ConnectedClientInfo[];
   activeTransportTab: 'wifi' | 'ble' | 'internet';
   internetRoomCode: string | null;
+  internetHostStatus: 'idle' | 'connecting' | 'connected' | 'disconnected';
 
   // Pairing Modals
   pendingPairChallenge: PendingPairChallenge | null;
@@ -87,6 +88,7 @@ interface RemoteConnectStoreState {
   setDiscoveredBlePeers: (peers: DiscoveredPeer[]) => void;
   setActiveTransportTab: (tab: 'wifi' | 'ble' | 'internet') => void;
   setInternetRoomCode: (code: string | null) => void;
+  setInternetHostStatus: (status: 'idle' | 'connecting' | 'connected' | 'disconnected') => void;
   setCustomRelayUrl: (url: string | null) => void;
   addRecentRoom: (room: string) => void;
   removeRecentRoom: (room: string) => void;
@@ -192,6 +194,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       connectedClients: [],
       activeTransportTab: 'wifi',
       internetRoomCode: null,
+      internetHostStatus: 'idle',
       pendingPairChallenge: null,
       pendingPinVerification: null,
       remoteState: { ...initialRemotePlaybackState },
@@ -256,6 +259,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       setDiscoveredBlePeers: (peers) => set({ discoveredBlePeers: peers }),
       setActiveTransportTab: (tab) => set({ activeTransportTab: tab }),
       setInternetRoomCode: (code) => set({ internetRoomCode: code }),
+      setInternetHostStatus: (status) => set({ internetHostStatus: status }),
       setCustomRelayUrl: (url) => set({ customRelayUrl: url }),
       addRecentRoom: (room) => {
         const upper = room.trim().toUpperCase();

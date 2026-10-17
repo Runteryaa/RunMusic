@@ -285,6 +285,49 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
   );
 
   if (!player.activeTrack) {
+    if (player.isRemote) {
+      return (
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={openFullscreenPlayer}
+          style={[
+            styles.miniPlayerContainer,
+            isEmbedded && styles.miniPlayerContainerEmbedded,
+            { borderColor: theme.border || 'rgba(255, 255, 255, 0.12)' },
+          ]}>
+          <View style={styles.contentRow}>
+            <View
+              style={[
+                styles.artworkBox,
+                {
+                  width: 44,
+                  height: 44,
+                  borderRadius: 8,
+                  backgroundColor: `${theme.primary}20`,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                },
+              ]}>
+              <Ionicons name="radio-outline" size={24} color={theme.primary} />
+            </View>
+            <View style={styles.textDetailsBox}>
+              <Text style={styles.titleText} numberOfLines={1}>
+                {player.remoteDeviceName || 'Uzak Cihaz'}
+              </Text>
+              <Text style={styles.artistText} numberOfLines={1}>
+                Bağlandı • Müzik Bekleniyor
+              </Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => player.play()}
+              style={{ padding: 8, marginRight: 4 }}>
+              <Ionicons name="play" size={24} color={theme.primary} />
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      );
+    }
     return null;
   }
 
