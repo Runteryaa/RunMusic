@@ -56,6 +56,7 @@ import { wsRoomClient } from './wsRoomClient';
 class RemoteSyncManager {
   private isHostActive = false;
   private activeClientTransport: 'wifi' | 'ble' | 'internet' = 'wifi';
+  private clientConnectionSeq = 0;
   private hostSubscriptions: (() => void)[] = [];
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private pendingLibraryQueries: Map<
@@ -91,7 +92,7 @@ class RemoteSyncManager {
   }
 
   public async startHostService(): Promise<void> {
-    if (this.isHostActive) return;
+    if (this.isHostActive || useRemoteConnectStore.getState().mode === 'client') return;
 
     const deviceName = useRemoteConnectStore.getState().customDeviceName;
     const deviceId = useRemoteConnectStore.getState().localDeviceId;
@@ -175,6 +176,9 @@ class RemoteSyncManager {
         const initialState = await this.buildHostInitialState(true);
         blePeripheralService.broadcast(initialState).catch(() => {});
       },
+      onClientDisconnected: () => {
+        useRemoteConnectStore.getState().removeConnectedClient('ble_client');
+      },
     });
 
     blePeripheralService.startHost(deviceName).catch((err) => {
@@ -198,8 +202,6 @@ class RemoteSyncManager {
   }
 
   public stopHostService(): void {
-    if (!this.isHostActive) return;
-
     this.detachHostListeners();
     tcpHostServer.stopServer();
     udpDiscoveryService.stopHostBeacon();
@@ -207,7 +209,9 @@ class RemoteSyncManager {
     this.stopInternetHostRoom();
 
     useRemoteConnectStore.getState().clearConnectedClients();
-    useRemoteConnectStore.getState().setMode('idle');
+    if (useRemoteConnectStore.getState().mode === 'host') {
+      useRemoteConnectStore.getState().setMode('idle');
+    }
     this.isHostActive = false;
   }
 
@@ -777,7 +781,32 @@ class RemoteSyncManager {
   // CLIENT MANAGEMENT
   // ==========================================
 
+  public async stopAllClientTransports(): Promise<void> {
+    try {
+      tcpClient.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      await bleCentralService.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      wsRoomClient.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      await remoteMediaNotification.cleanupRemoteMediaNotification();
+    } catch {
+      // ignore
+    }
+  }
+
   public async connectToHost(host: DiscoveredHost | DiscoveredPeer): Promise<void> {
+    const currentSeq = ++this.clientConnectionSeq;
+
     // 1. Local Audio Suppression: Pause local TrackPlayer if playing
     try {
       await TrackPlayer.pause();
@@ -786,13 +815,12 @@ class RemoteSyncManager {
     }
 
     // Stop & detach Host service so this device does not broadcast TrackPlayer events while in Client mode
-    if (this.isHostActive) {
-      this.detachHostListeners();
-      blePeripheralService.stopHost().catch(() => {});
-      udpDiscoveryService.stopHostBeacon();
-      tcpHostServer.stopServer();
-      this.isHostActive = false;
-    }
+    this.stopHostService();
+
+    // Cleanly stop any existing client transports
+    await this.stopAllClientTransports();
+
+    if (this.clientConnectionSeq !== currentSeq) return;
 
     useRemoteConnectStore.getState().setMode('client');
     useRemoteConnectStore.getState().setConnectedDeviceName(host.deviceName);
@@ -801,10 +829,12 @@ class RemoteSyncManager {
     // Bluetooth Low Energy (BLE) Client connection
     if ((host as DiscoveredPeer).transport === 'ble') {
       this.activeClientTransport = 'ble';
-      tcpClient.disconnect();
 
       bleCentralService.setCallbacks({
         onStatusChange: (status: ClientConnectionStatus, error?: string) => {
+          if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'ble') {
+            return;
+          }
           useRemoteConnectStore.getState().setConnectionStatus(status, error);
           if (status === 'disconnected' || status === 'error') {
             remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
@@ -816,6 +846,9 @@ class RemoteSyncManager {
           }
         },
         onMessage: (message: RemoteMessage) => {
+          if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'ble') {
+            return;
+          }
           this.handleClientIncomingMessage(message);
         },
       });
@@ -826,7 +859,6 @@ class RemoteSyncManager {
 
     // Wi-Fi (TCP) Client connection
     this.activeClientTransport = 'wifi';
-    bleCentralService.disconnect().catch(() => {});
 
     const clientDeviceId = useRemoteConnectStore.getState().localDeviceId;
     const clientDeviceName = useRemoteConnectStore.getState().customDeviceName;
@@ -840,6 +872,9 @@ class RemoteSyncManager {
 
     tcpClient.setCallbacks({
       onStatusChange: (status: ClientConnectionStatus, error?: string) => {
+        if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'wifi') {
+          return;
+        }
         useRemoteConnectStore.getState().setConnectionStatus(status, error);
         if (status === 'disconnected' || status === 'error') {
           remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
@@ -852,10 +887,16 @@ class RemoteSyncManager {
       },
 
       onPinRequired: (verifyCallback) => {
+        if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'wifi') {
+          return;
+        }
         useRemoteConnectStore.getState().setPendingPinVerification(verifyCallback);
       },
 
       onPairSuccess: (token: string) => {
+        if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'wifi') {
+          return;
+        }
         if (hostDeviceId) {
           useRemoteConnectStore.getState().savePairedHostToken(hostDeviceId, token);
         }
@@ -869,6 +910,9 @@ class RemoteSyncManager {
       },
 
       onMessage: (message: RemoteMessage) => {
+        if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'wifi') {
+          return;
+        }
         this.handleClientIncomingMessage(message);
       },
     });
@@ -966,23 +1010,18 @@ class RemoteSyncManager {
     const formattedCode = roomCode.trim().toUpperCase().replace(/^RUN-/, '');
     if (!formattedCode) return;
 
+    const currentSeq = ++this.clientConnectionSeq;
+
     try {
       await TrackPlayer.pause();
     } catch {
       // ignore
     }
 
-    if (this.isHostActive) {
-      this.detachHostListeners();
-      blePeripheralService.stopHost().catch(() => {});
-      udpDiscoveryService.stopHostBeacon();
-      tcpHostServer.stopServer();
-      this.stopInternetHostRoom();
-      this.isHostActive = false;
-    }
+    this.stopHostService();
+    await this.stopAllClientTransports();
 
-    tcpClient.disconnect();
-    bleCentralService.disconnect().catch(() => {});
+    if (this.clientConnectionSeq !== currentSeq) return;
 
     this.activeClientTransport = 'internet';
     useRemoteConnectStore.getState().setMode('client');
@@ -994,51 +1033,59 @@ class RemoteSyncManager {
 
     wsRoomClient.joinClientRoom(formattedCode, deviceId, deviceName, {
       onJoined: (info) => {
+        if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'internet') return;
         useRemoteConnectStore.getState().setConnectionStatus('connected');
         useRemoteConnectStore.getState().setConnectedDeviceName(info.hostName || `Oda: ${info.roomCode}`);
         useRemoteConnectStore.getState().addRecentRoom(info.roomCode);
       },
       onHostTemporarilyOffline: () => {
+        if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'internet') return;
         useRemoteConnectStore.getState().setConnectionStatus('connecting', 'Host yeniden bağlanıyor...');
       },
       onHostReconnected: () => {
+        if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'internet') return;
         useRemoteConnectStore.getState().setConnectionStatus('connected');
         this.sendClientCommand({ type: 'COMMAND_GET_STATE' });
       },
       onMessage: (message) => {
+        if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'internet') return;
         this.handleClientIncomingMessage(message);
       },
       onError: (error) => {
+        if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'internet') return;
         useRemoteConnectStore.getState().setConnectionStatus('error', error);
         remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
       },
       onClosed: () => {
+        if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'internet') return;
         useRemoteConnectStore.getState().setConnectionStatus('disconnected');
         remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
+        useRemoteConnectStore.getState().setMode('idle');
+        if (useRemoteConnectStore.getState().isServiceEnabled) {
+          this.startHostService().catch(() => {});
+        }
       },
     });
   }
 
   public disconnectConnectedClient(clientId: string): void {
-    if (clientId === 'ble_client') {
+    const clients = useRemoteConnectStore.getState().connectedClients;
+    const client = clients.find((c) => c.id === clientId);
+
+    if (client?.transport === 'ble' || clientId === 'ble_client') {
       useRemoteConnectStore.getState().removeConnectedClient('ble_client');
-    } else if (clientId.startsWith('client_')) {
+    } else if (client?.transport === 'internet' || clientId.startsWith('client_')) {
       wsRoomClient.kickClient(clientId);
       useRemoteConnectStore.getState().removeConnectedClient(clientId);
     } else {
       tcpHostServer.disconnectClient(clientId);
+      useRemoteConnectStore.getState().removeConnectedClient(clientId);
     }
   }
 
-  public disconnectClient(): void {
-    remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
-    if (this.activeClientTransport === 'ble') {
-      bleCentralService.disconnect().catch(() => {});
-    } else if (this.activeClientTransport === 'internet') {
-      wsRoomClient.disconnect();
-    } else {
-      tcpClient.disconnect();
-    }
+  public async disconnectClient(): Promise<void> {
+    ++this.clientConnectionSeq;
+    await this.stopAllClientTransports();
     useRemoteConnectStore.getState().resetRemoteState();
 
     // If host service was enabled in settings, resume host service
@@ -1103,6 +1150,8 @@ class RemoteSyncManager {
   }
 
   private async handleClientIncomingMessage(msg: RemoteMessage): Promise<void> {
+    if (useRemoteConnectStore.getState().mode !== 'client') return;
+
     switch (msg.type) {
       case 'INITIAL_STATE':
         useRemoteConnectStore.getState().setRemoteInitialState(msg);

@@ -98,29 +98,34 @@ class TCPClient {
 
     try {
       this.parser.reset();
-      this.socket = TcpSocket.createConnection(
+      const currentSocket = TcpSocket.createConnection(
         {
           host: this.hostIp,
           port: this.port,
         },
         () => {
+          if (this.socket !== currentSocket) return;
           this.updateStatus('pairing');
           this.sendPairInit();
         }
       );
+      this.socket = currentSocket;
 
-      this.socket.on('data', (chunk: any) => {
+      currentSocket.on('data', (chunk: any) => {
+        if (this.socket !== currentSocket) return;
         this.parser.feed(chunk, (message: RemoteMessage) => {
           this.handleIncomingMessage(message);
         });
       });
 
-      this.socket.on('error', (err: any) => {
+      currentSocket.on('error', (err: any) => {
+        if (this.socket !== currentSocket) return;
         console.warn('[TCPClient] Socket error:', err);
         this.handleConnectionLost(err?.message || 'Socket error');
       });
 
-      this.socket.on('close', () => {
+      currentSocket.on('close', () => {
+        if (this.socket !== currentSocket) return;
         this.parser.reset();
         this.socket = null;
         if (!this.isExplicitDisconnect) {
@@ -227,12 +232,14 @@ class TCPClient {
 
   private cleanupSocket(): void {
     if (this.socket) {
+      const s = this.socket;
+      this.socket = null;
       try {
-        this.socket.destroy();
+        s.removeAllListeners?.();
+        s.destroy?.();
       } catch {
         // ignore
       }
-      this.socket = null;
     }
     this.parser.reset();
   }
@@ -244,7 +251,8 @@ class TCPClient {
       this.reconnectTimer = null;
     }
     this.cleanupSocket();
-    this.updateStatus('idle');
+    this.callbacks = null;
+    this.status = 'idle';
   }
 
   public destroy(): void {

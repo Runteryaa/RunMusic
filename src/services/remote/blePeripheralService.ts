@@ -73,19 +73,20 @@ class BlePeripheralService {
   }
 
   public async stopHost(): Promise<void> {
-    if (!this.isAdvertising) return;
     this.removeListeners();
     this.commandWriteParser.reset();
     this.queueLyricsParser.reset();
     this.sendQueue = [];
     this.isProcessingQueue = false;
 
-    try {
-      await RunMusicBlePeripheralModule?.stopAdvertising();
-    } catch (err) {
-      console.warn('[BlePeripheralService] Error stopping advertising:', err);
+    if (this.isAdvertising) {
+      try {
+        await RunMusicBlePeripheralModule?.stopAdvertising();
+      } catch (err) {
+        console.warn('[BlePeripheralService] Error stopping advertising:', err);
+      }
+      this.isAdvertising = false;
     }
-    this.isAdvertising = false;
   }
 
   /**

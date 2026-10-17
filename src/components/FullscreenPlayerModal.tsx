@@ -152,7 +152,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         unsubscribe();
       };
     } else if (activeTransportTab === 'internet') {
-      if (isRemoteServiceEnabled && !wsRoomClient.isConnected()) {
+      if (isRemoteServiceEnabled && remoteMode === 'host' && !wsRoomClient.isConnected()) {
         remoteSyncManager.startInternetHostRoom().catch(() => {});
       }
     }

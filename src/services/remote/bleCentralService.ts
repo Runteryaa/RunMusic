@@ -22,6 +22,7 @@ class BleCentralService {
   private connectedDevice: Device | null = null;
   private status: ClientConnectionStatus = 'idle';
   private callbacks: BleCentralCallbacks | null = null;
+  private isExplicitDisconnect: boolean = false;
 
   // Rule 2: Dedicated NDJSON parser instance per characteristic to avoid chunk interleaving
   private stateStreamParser: NDJSONParser = new NDJSONParser();
@@ -133,6 +134,7 @@ class BleCentralService {
       // Ignore
     }
 
+    this.isExplicitDisconnect = false;
     this.setStatus('connecting');
 
     try {
@@ -179,6 +181,10 @@ class BleCentralService {
 
       // Listen for disconnects
       device.onDisconnected((error) => {
+        if (this.isExplicitDisconnect) {
+          console.log('[BleCentralService] Explicit disconnect - ignoring onDisconnected callback');
+          return;
+        }
         console.warn('[BleCentralService] BLE Device disconnected:', error?.message);
         this.cleanup();
         this.setStatus('disconnected', error?.message);
@@ -201,6 +207,7 @@ class BleCentralService {
   }
 
   public async disconnect(): Promise<void> {
+    this.isExplicitDisconnect = true;
     const device = this.connectedDevice;
     this.cleanup();
     if (device) {
@@ -210,6 +217,7 @@ class BleCentralService {
         // Ignore
       }
     }
+    this.callbacks = null;
     this.setStatus('idle');
   }
 

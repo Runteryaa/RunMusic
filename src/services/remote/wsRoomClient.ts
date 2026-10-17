@@ -158,31 +158,37 @@ class WSRoomClient {
 
   private connectAndRegister(joinPayload: any): void {
     if (this.ws) {
+      const oldWs = this.ws;
+      this.ws = null;
       try {
-        this.ws.close();
+        oldWs.onopen = null;
+        oldWs.onmessage = null;
+        oldWs.onerror = null;
+        oldWs.onclose = null;
+        oldWs.close();
       } catch {
         // ignore
       }
-      this.ws = null;
     }
 
     const url = this.getRelayUrl();
 
     try {
-      this.ws = new WebSocket(url);
+      const currentWs = new WebSocket(url);
+      this.ws = currentWs;
 
-      this.ws.onopen = () => {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-          this.reconnectAttempts = 0;
-          this.ws.send(JSON.stringify(joinPayload));
-          this.startHeartbeat();
-          if (this.role === 'host') {
-            useRemoteConnectStore.getState().setInternetHostStatus('connected');
-          }
+      currentWs.onopen = () => {
+        if (this.ws !== currentWs || currentWs.readyState !== WebSocket.OPEN) return;
+        this.reconnectAttempts = 0;
+        currentWs.send(JSON.stringify(joinPayload));
+        this.startHeartbeat();
+        if (this.role === 'host') {
+          useRemoteConnectStore.getState().setInternetHostStatus('connected');
         }
       };
 
-      this.ws.onmessage = (event) => {
+      currentWs.onmessage = (event) => {
+        if (this.ws !== currentWs) return;
         try {
           const data = JSON.parse(event.data as string);
           this.handleIncoming(data);
@@ -191,7 +197,8 @@ class WSRoomClient {
         }
       };
 
-      this.ws.onerror = (err: any) => {
+      currentWs.onerror = (err: any) => {
+        if (this.ws !== currentWs) return;
         console.warn('[WSRoomClient] Socket error:', err?.message || err);
         const errMsg = err?.message || 'İnternet bağlantı sunucusuna ulaşılamadı.';
         if (this.role === 'host') {
@@ -202,7 +209,8 @@ class WSRoomClient {
         }
       };
 
-      this.ws.onclose = () => {
+      currentWs.onclose = () => {
+        if (this.ws !== currentWs) return;
         this.stopHeartbeat();
         this.ws = null;
         if (!this.isExplicitDisconnect) {
@@ -395,12 +403,17 @@ class WSRoomClient {
     this.lastJoinPayload = null;
     this.stopHeartbeat();
     if (this.ws) {
+      const oldWs = this.ws;
+      this.ws = null;
       try {
-        this.ws.close();
+        oldWs.onopen = null;
+        oldWs.onmessage = null;
+        oldWs.onerror = null;
+        oldWs.onclose = null;
+        oldWs.close();
       } catch {
         // ignore
       }
-      this.ws = null;
     }
     if (this.role === 'host') {
       useRemoteConnectStore.getState().setInternetHostStatus('idle');

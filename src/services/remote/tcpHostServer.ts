@@ -69,7 +69,7 @@ class TCPHostServer {
 
     try {
       this.server = TcpSocket.createServer((socket: any) => {
-        const clientId = `client_${this.nextClientId++}`;
+        const clientId = `tcp_${this.nextClientId++}`;
         const parser = new NDJSONParser();
 
         const clientData: ConnectedClient = {
@@ -226,6 +226,7 @@ class TCPHostServer {
           reason: 'DISCONNECTED_BY_HOST',
         };
         this.sendToClient(client.socket, reject);
+        client.socket.removeAllListeners?.();
         client.socket.destroy();
       } catch {
         // ignore
@@ -275,6 +276,7 @@ class TCPHostServer {
   public stopServer(): void {
     for (const client of this.clients.values()) {
       try {
+        client.socket.removeAllListeners?.();
         client.socket.destroy();
       } catch {
         // ignore
@@ -284,6 +286,7 @@ class TCPHostServer {
 
     if (this.server) {
       try {
+        this.server.removeAllListeners?.();
         this.server.close();
       } catch {
         // ignore
