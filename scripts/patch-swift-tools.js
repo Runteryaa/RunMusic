@@ -61,6 +61,12 @@ for (const dir of searchDirs) {
       { search: /\bweak\s+let\b/g, replace: 'weak var' },
       // Remove invalid trailing commas before closing parentheses in closures/argument lists
       { search: /,(\s*\))/g, replace: '$1' },
+      // Swift 6.1 extraneous argument label 'consuming:' in vector.push_back
+      { search: /vector\.push_back\(consuming:\s*propNameId\)/g, replace: 'vector.push_back(propNameId)' },
+      // Use static factory methods on shared/immortal references for Swift 6.1 constructor compatibility
+      { search: /expo\.RuntimeScheduler\(\)/g, replace: 'expo.RuntimeScheduler.create()' },
+      { search: /expo\.RuntimeScheduler\(scheduler,\s*fn\)/g, replace: 'expo.RuntimeScheduler.create(scheduler, fn)' },
+      { search: /expo\.HostFunctionClosure\(context,\s*call,\s*deallocate\)/g, replace: 'expo.HostFunctionClosure.create(context, call, deallocate)' },
       // Classes with mutable weak var runtime conforming to Sendable must use @unchecked Sendable
       {
         search: /class\s+JavaScriptPropNameID\s*:\s*JavaScriptType\s*\{/g,
@@ -90,9 +96,24 @@ for (const header of runtimeSchedulerHeaders) {
   let content = fs.readFileSync(header, 'utf8');
   let modified = false;
 
-  // Remove SWIFT_RETURNS_RETAINED from constructors (Swift 6.1 Clang forbids this attribute on constructors)
+  // Remove SWIFT_RETURNS_RETAINED from constructors
   if (content.includes('SWIFT_RETURNS_RETAINED')) {
     content = content.replace(/SWIFT_RETURNS_RETAINED\s+RuntimeScheduler/g, 'RuntimeScheduler');
+    modified = true;
+  }
+
+  // Add static factory methods
+  if (!content.includes('static RuntimeScheduler *create(')) {
+    const factoryMethods = `
+  static RuntimeScheduler *create(void *scheduler, ScheduleFn fn) noexcept SWIFT_RETURNS_RETAINED {
+    return new RuntimeScheduler(scheduler, fn);
+  }
+
+  static RuntimeScheduler *create() SWIFT_RETURNS_RETAINED {
+    return new RuntimeScheduler();
+  }
+`;
+    content = content.replace(/RuntimeScheduler\(\)\s*\{\}/, `RuntimeScheduler() {}${factoryMethods}`);
     modified = true;
   }
 
@@ -101,6 +122,37 @@ for (const header of runtimeSchedulerHeaders) {
     content = content.replace(
       'namespace expo {',
       'namespace expo { class RuntimeScheduler; }\nvoid retainRuntimeScheduler(expo::RuntimeScheduler *scheduler);\nvoid releaseRuntimeScheduler(expo::RuntimeScheduler *scheduler);\n\nnamespace expo {'
+    );
+    modified = true;
+  }
+
+  if (modified) {
+    fs.writeFileSync(header, content, 'utf8');
+    console.log(`[patch-swift-tools] Successfully patched ${header}`);
+  }
+}
+
+// 4. Patch HostFunctionClosure.h for Swift 6.1.2 constructor compatibility
+const hostFunctionClosureHeaders = [
+  path.join(__dirname, '..', 'node_modules', 'expo-modules-jsi', 'apple', 'Sources', 'ExpoModulesJSI-Cxx', 'include', 'HostFunctionClosure.h'),
+  path.join(__dirname, '..', 'ios', 'Pods', 'Headers', 'Public', 'expo-modules-jsi', 'HostFunctionClosure.h'),
+  path.join(__dirname, '..', 'ios', 'Pods', 'Headers', 'Private', 'expo-modules-jsi', 'HostFunctionClosure.h'),
+];
+
+for (const header of hostFunctionClosureHeaders) {
+  if (!fs.existsSync(header)) continue;
+  let content = fs.readFileSync(header, 'utf8');
+  let modified = false;
+
+  if (!content.includes('static HostFunctionClosure *create(')) {
+    const factory = `
+  static HostFunctionClosure *create(Context context, Closure closure, Deallocator deallocator) {
+    return new HostFunctionClosure(context, closure, deallocator);
+  }
+`;
+    content = content.replace(
+      /explicit HostFunctionClosure\(Context context, Closure closure, Deallocator deallocator\)[^;]*;/,
+      `$&${factory}`
     );
     modified = true;
   }

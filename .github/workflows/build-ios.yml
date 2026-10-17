@@ -2,7 +2,7 @@ name: Build iOS IPA & Attach to Release
 
 on:
   push:
-    branches: [ main, master, beta ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 permissions:
