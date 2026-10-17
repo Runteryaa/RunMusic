@@ -21,11 +21,17 @@ for (const file of filesToPatch) {
       modified = true;
     }
 
+    // Strip trailing commas before closing parentheses in argument lists (SE-0439 requires Swift 6.2)
+    if (/,\s*\)/.test(content)) {
+      content = content.replace(/,(\s*\))/g, '$1');
+      modified = true;
+    }
+
     if (modified) {
       fs.writeFileSync(file, content, 'utf8');
       console.log(`[patch-swift-tools] Successfully patched ${file} for Swift 6.0 compatibility`);
     } else {
-      console.log(`[patch-swift-tools] ${file} already patched or does not contain 6.2`);
+      console.log(`[patch-swift-tools] ${file} already patched or up to date`);
     }
   } else {
     console.log(`[patch-swift-tools] File not found: ${file}`);
