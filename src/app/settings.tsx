@@ -608,7 +608,7 @@ export default function SettingsScreen() {
             style={[styles.smallInput, { width: 170, textAlign: 'left', paddingHorizontal: 10 }]}
             value={customRelayUrl || ''}
             onChangeText={(val) => setCustomRelayUrl(val.trim() || null)}
-            placeholder="Varsayılan (Bulut)"
+            placeholder="connectorelay.onrender.com"
             placeholderTextColor="#71717a"
             autoCapitalize="none"
             autoCorrect={false}

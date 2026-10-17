@@ -1,7 +1,7 @@
 import { useRemoteConnectStore } from '../../store/useRemoteConnectStore';
 import type { RemoteMessage } from './remoteTypes';
 
-export const DEFAULT_RELAY_URL = 'wss://relay.runmusic.app/runmusic';
+export const DEFAULT_RELAY_URL = 'wss://connectorelay.onrender.com/runmusic';
 
 export interface WSHostCallbacks {
   onHosted?: (roomCode: string) => void;
@@ -32,7 +32,11 @@ class WSRoomClient {
     const custom = useRemoteConnectStore.getState().customRelayUrl;
     if (custom && custom.trim().length > 0) {
       let url = custom.trim();
-      if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
+      if (url.startsWith('https://')) {
+        url = url.replace('https://', 'wss://');
+      } else if (url.startsWith('http://')) {
+        url = url.replace('http://', 'ws://');
+      } else if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
         url = `wss://${url}`;
       }
       try {
