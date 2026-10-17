@@ -61,8 +61,13 @@ for (const dir of searchDirs) {
       { search: /\bweak\s+let\b/g, replace: 'weak var' },
       // Remove invalid trailing commas before closing parentheses in closures/argument lists
       { search: /,(\s*\))/g, replace: '$1' },
-      // Swift 6.1 extraneous argument label 'consuming:' in vector.push_back
-      { search: /vector\.push_back\(consuming:\s*propNameId\)/g, replace: 'vector.push_back(propNameId)' },
+      // Swift 6.1 move-only push_back into std::vector<facebook::jsi::PropNameID>
+      { search: /vector\.push_back\((?:consuming:\s*)?propNameId\)/g, replace: 'vector.push_back(consume propNameId)' },
+      // Swift 6.1 Task.immediate and Task(name:) polyfill compatibility
+      {
+        search: /if\s+#available\(macOS\s*26\.0[^{]+\{[\s\S]*?return\s+Task\(name:[^}]+}/g,
+        replace: 'return Task(priority: .high, operation: operation)',
+      },
       // Use static factory methods on shared/immortal references for Swift 6.1 constructor compatibility
       { search: /expo\.RuntimeScheduler\(\)/g, replace: 'expo.RuntimeScheduler.create()' },
       { search: /expo\.RuntimeScheduler\(scheduler,\s*fn\)/g, replace: 'expo.RuntimeScheduler.create(scheduler, fn)' },
