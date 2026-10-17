@@ -115,6 +115,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const remoteMode = useRemoteConnectStore((s) => s.mode);
   const remoteConnectionStatus = useRemoteConnectStore((s) => s.connectionStatus);
   const connectedDeviceName = useRemoteConnectStore((s) => s.connectedDeviceName);
+  const connectedClients = useRemoteConnectStore((s) => s.connectedClients);
 
   const [showManualIp, setShowManualIp] = useState(false);
   const [manualIp, setManualIp] = useState('');
@@ -2676,6 +2677,51 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 ) : null}
               </TouchableOpacity>
 
+              {/* Bağlı İstemci Cihazlar (Host Modunda) */}
+              {connectedClients.length > 0 && (
+                <View style={{ marginBottom: 10 }}>
+                  <View style={styles.connectSectionHeader}>
+                    <Text style={[styles.connectSectionLabel, { color: theme.primary, fontWeight: '700' }]}>
+                      BAĞLI CİHAZLAR ({connectedClients.length})
+                    </Text>
+                  </View>
+                  {connectedClients.map((client) => (
+                    <View
+                      key={client.id}
+                      style={[
+                        styles.connectDeviceItem,
+                        { backgroundColor: theme.surface, borderColor: `${theme.primary}55`, borderWidth: 1 },
+                      ]}>
+                      <View
+                        style={[
+                          styles.connectDeviceIcon,
+                          { backgroundColor: `${theme.primary}25` },
+                        ]}>
+                        <Ionicons
+                          name={client.transport === 'ble' ? 'bluetooth' : 'phone-portrait'}
+                          size={18}
+                          color={theme.primary}
+                        />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={[styles.connectDeviceName, { color: '#ffffff', fontWeight: '700' }]} numberOfLines={1}>
+                          {client.deviceName}
+                        </Text>
+                        <Text style={[styles.connectDeviceSubtext, { color: theme.primary }]}>
+                          {client.transport === 'ble' ? 'Bluetooth Kumandası • Bağlı' : 'Wi-Fi Kumandası • Bağlı'}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.connectKickBtn}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        onPress={() => remoteSyncManager.disconnectConnectedClient(client.id)}>
+                        <Ionicons name="close-circle-outline" size={22} color="#ef4444" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+
               {/* Bölüm Başlığı */}
               <View style={styles.connectSectionHeader}>
                 <Text style={[styles.connectSectionLabel, { color: theme.textAccent }]}>
@@ -4294,5 +4340,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  connectKickBtn: {
+    padding: 6,
+    marginLeft: 8,
   },
 });

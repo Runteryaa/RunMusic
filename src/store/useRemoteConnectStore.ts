@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -30,11 +31,21 @@ export interface RemotePlaybackState {
   artworkUri: string | null;
 }
 
+export interface ConnectedClientInfo {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  transport: 'wifi' | 'ble';
+  connectedAt: number;
+}
+
 interface RemoteConnectStoreState {
   // Persisted
+  localDeviceId: string;
   isServiceEnabled: boolean;
   customDeviceName: string;
   trustedDevices: TrustedClient[];
+  pairedHosts: Record<string, string>;
   lastConnectedHostIp: string | null;
   lastConnectedToken: string | null;
 
@@ -45,6 +56,7 @@ interface RemoteConnectStoreState {
   connectedDeviceName: string | null;
   discoveredHosts: DiscoveredHost[];
   discoveredBlePeers: DiscoveredPeer[];
+  connectedClients: ConnectedClientInfo[];
   activeTransportTab: 'wifi' | 'ble';
 
   // Pairing Modals
@@ -76,6 +88,11 @@ interface RemoteConnectStoreState {
   setConnectedDeviceName: (name: string | null) => void;
   setPendingPairChallenge: (challenge: PendingPairChallenge | null) => void;
   setPendingPinVerification: (cb: ((pin: string) => void) | null) => void;
+  addConnectedClient: (client: ConnectedClientInfo) => void;
+  removeConnectedClient: (id: string) => void;
+  clearConnectedClients: () => void;
+  savePairedHostToken: (hostKey: string, token: string) => void;
+  removePairedHost: (hostKey: string) => void;
 
   // Sync setters
   setRemoteInitialState: (msg: InitialStateMessage) => void;
@@ -148,9 +165,11 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
   persist(
     (set, get) => ({
       // Persisted defaults
+      localDeviceId: `device_${Platform.OS}_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`,
       isServiceEnabled: false,
       customDeviceName: DEFAULT_DEVICE_NAME,
       trustedDevices: [],
+      pairedHosts: {},
       lastConnectedHostIp: null,
       lastConnectedToken: null,
 
@@ -161,6 +180,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       connectedDeviceName: null,
       discoveredHosts: [],
       discoveredBlePeers: [],
+      connectedClients: [],
       activeTransportTab: 'wifi',
       pendingPairChallenge: null,
       pendingPinVerification: null,
@@ -179,7 +199,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       setServiceEnabled: (enabled) => {
         set({ isServiceEnabled: enabled });
         if (!enabled) {
-          set({ discoveredHosts: [], discoveredBlePeers: [] });
+          set({ discoveredHosts: [], discoveredBlePeers: [], connectedClients: [] });
         }
       },
       setCustomDeviceName: (name) => set({ customDeviceName: name }),
@@ -191,6 +211,35 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
 
       removeTrustedDevice: (deviceId) => {
         set({ trustedDevices: get().trustedDevices.filter((c) => c.deviceId !== deviceId) });
+      },
+
+      addConnectedClient: (client) => {
+        const filtered = get().connectedClients.filter((c) => c.id !== client.id);
+        set({ connectedClients: [...filtered, client] });
+      },
+
+      removeConnectedClient: (id) => {
+        set({ connectedClients: get().connectedClients.filter((c) => c.id !== id) });
+      },
+
+      clearConnectedClients: () => {
+        set({ connectedClients: [] });
+      },
+
+      savePairedHostToken: (hostKey, token) => {
+        set({
+          pairedHosts: {
+            ...get().pairedHosts,
+            [hostKey]: token,
+          },
+          lastConnectedToken: token,
+        });
+      },
+
+      removePairedHost: (hostKey) => {
+        const next = { ...get().pairedHosts };
+        delete next[hostKey];
+        set({ pairedHosts: next });
       },
 
       setDiscoveredHosts: (hosts) => set({ discoveredHosts: hosts }),
@@ -404,18 +453,26 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
     {
       name: 'runmusic_remote_connect_storage',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 2,
+      version: 3,
       migrate: (persistedState: any, version: number) => {
         if (!persistedState) return persistedState;
         if (version < 2 || persistedState.isServiceEnabled === undefined) {
           persistedState.isServiceEnabled = false;
         }
+        if (version < 3 || !persistedState.localDeviceId) {
+          persistedState.localDeviceId = `device_${Platform.OS}_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`;
+        }
+        if (!persistedState.pairedHosts) {
+          persistedState.pairedHosts = {};
+        }
         return persistedState;
       },
       partialize: (state) => ({
+        localDeviceId: state.localDeviceId,
         isServiceEnabled: state.isServiceEnabled,
         customDeviceName: state.customDeviceName.trim() || DEFAULT_DEVICE_NAME,
         trustedDevices: state.trustedDevices,
+        pairedHosts: state.pairedHosts,
         lastConnectedHostIp: state.lastConnectedHostIp,
         lastConnectedToken: state.lastConnectedToken,
       }),

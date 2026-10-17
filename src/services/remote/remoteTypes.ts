@@ -77,7 +77,7 @@ export interface PairSuccessMessage {
 
 export interface PairFailureMessage {
   type: 'PAIR_FAILURE';
-  reason: 'INVALID_PIN' | 'REJECTED' | 'UNAUTHORIZED';
+  reason: 'INVALID_PIN' | 'REJECTED' | 'UNAUTHORIZED' | 'DISCONNECTED_BY_HOST';
 }
 
 // Host -> Client State Synchronization

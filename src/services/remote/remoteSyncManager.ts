@@ -1,4 +1,3 @@
-import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import TrackPlayer, {
   Event,
@@ -86,13 +85,13 @@ class RemoteSyncManager {
     if (this.isHostActive) return;
 
     const deviceName = useRemoteConnectStore.getState().customDeviceName;
-    const deviceId = `device_${Platform.OS}_${Date.now()}`;
+    const deviceId = useRemoteConnectStore.getState().localDeviceId;
 
     // Configure TCP Server Handlers
     tcpHostServer.setHandlers({
       validateToken: (token: string, clientDeviceId: string) => {
         const trusted = useRemoteConnectStore.getState().trustedDevices;
-        return trusted.some((c) => c.token === token && c.deviceId === clientDeviceId);
+        return trusted.some((c) => c.token === token && (c.deviceId === clientDeviceId || !c.deviceId));
       },
 
       generateToken: (clientDeviceId: string, clientDeviceName: string) => {
@@ -111,7 +110,15 @@ class RemoteSyncManager {
         useRemoteConnectStore.getState().setPendingPairChallenge(challenge);
       },
 
-      onClientAuthorized: async (clientSocket) => {
+      onClientAuthorized: async (clientSocket, clientInfo) => {
+        useRemoteConnectStore.getState().addConnectedClient({
+          id: clientInfo.id,
+          deviceId: clientInfo.deviceId,
+          deviceName: clientInfo.deviceName,
+          transport: 'wifi',
+          connectedAt: Date.now(),
+        });
+
         // Send initial state dump immediately
         const initialState = await this.buildHostInitialState();
         tcpHostServer.sendToClient(clientSocket, initialState);
@@ -131,6 +138,10 @@ class RemoteSyncManager {
         }
       },
 
+      onClientDisconnected: (clientId) => {
+        useRemoteConnectStore.getState().removeConnectedClient(clientId);
+      },
+
       onCommand: (message, clientSocket) => {
         this.handleHostCommand(message, clientSocket);
       },
@@ -145,6 +156,13 @@ class RemoteSyncManager {
         this.handleHostCommand(msg, null);
       },
       onClientSubscribed: async () => {
+        useRemoteConnectStore.getState().addConnectedClient({
+          id: 'ble_client',
+          deviceId: 'ble_central',
+          deviceName: 'Bluetooth Kumandası',
+          transport: 'ble',
+          connectedAt: Date.now(),
+        });
         const initialState = await this.buildHostInitialState(true);
         blePeripheralService.broadcast(initialState).catch(() => {});
       },
@@ -169,6 +187,7 @@ class RemoteSyncManager {
     udpDiscoveryService.stopHostBeacon();
     blePeripheralService.stopHost().catch(() => {});
 
+    useRemoteConnectStore.getState().clearConnectedClients();
     useRemoteConnectStore.getState().setMode('idle');
     this.isHostActive = false;
   }
@@ -778,9 +797,15 @@ class RemoteSyncManager {
     this.activeClientTransport = 'wifi';
     bleCentralService.disconnect().catch(() => {});
 
-    const clientDeviceId = `client_${Platform.OS}_${Date.now()}`;
+    const clientDeviceId = useRemoteConnectStore.getState().localDeviceId;
     const clientDeviceName = useRemoteConnectStore.getState().customDeviceName;
-    const savedToken = useRemoteConnectStore.getState().lastConnectedToken || undefined;
+    const hostIp = (host as DiscoveredHost).hostIp;
+    const hostDeviceId = (host as DiscoveredHost).deviceId;
+    const savedToken =
+      (hostDeviceId ? useRemoteConnectStore.getState().pairedHosts[hostDeviceId] : undefined) ||
+      (hostIp ? useRemoteConnectStore.getState().pairedHosts[hostIp] : undefined) ||
+      useRemoteConnectStore.getState().lastConnectedToken ||
+      undefined;
 
     tcpClient.setCallbacks({
       onStatusChange: (status: ClientConnectionStatus, error?: string) => {
@@ -800,8 +825,14 @@ class RemoteSyncManager {
       },
 
       onPairSuccess: (token: string) => {
+        if (hostDeviceId) {
+          useRemoteConnectStore.getState().savePairedHostToken(hostDeviceId, token);
+        }
+        if (hostIp) {
+          useRemoteConnectStore.getState().savePairedHostToken(hostIp, token);
+        }
         useRemoteConnectStore.setState({
-          lastConnectedHostIp: (host as DiscoveredHost).hostIp,
+          lastConnectedHostIp: hostIp,
           lastConnectedToken: token,
         });
       },
@@ -812,12 +843,20 @@ class RemoteSyncManager {
     });
 
     tcpClient.connect({
-      hostIp: (host as DiscoveredHost).hostIp,
+      hostIp,
       port: (host as DiscoveredHost).port,
       clientDeviceId,
       clientDeviceName,
       token: savedToken,
     });
+  }
+
+  public disconnectConnectedClient(clientId: string): void {
+    if (clientId === 'ble_client') {
+      useRemoteConnectStore.getState().removeConnectedClient('ble_client');
+    } else {
+      tcpHostServer.disconnectClient(clientId);
+    }
   }
 
   public disconnectClient(): void {

@@ -45,20 +45,23 @@ class TCPHostServer {
   private onPairChallengeHandler: ((challenge: PendingPairChallenge) => void) | null = null;
   private tokenValidator: TokenValidator | null = null;
   private tokenGenerator: TokenGenerator | null = null;
-  private onClientAuthorizedHandler: ((clientSocket: any, clientInfo: { deviceId: string; deviceName: string }) => void) | null = null;
+  private onClientAuthorizedHandler: ((clientSocket: any, clientInfo: { id: string; deviceId: string; deviceName: string }) => void) | null = null;
+  private onClientDisconnectedHandler: ((clientId: string) => void) | null = null;
 
   public setHandlers(handlers: {
     onCommand: CommandHandler;
     onPairChallenge: (challenge: PendingPairChallenge) => void;
     validateToken: TokenValidator;
     generateToken: TokenGenerator;
-    onClientAuthorized: (clientSocket: any, clientInfo: { deviceId: string; deviceName: string }) => void;
+    onClientAuthorized: (clientSocket: any, clientInfo: { id: string; deviceId: string; deviceName: string }) => void;
+    onClientDisconnected?: (clientId: string) => void;
   }): void {
     this.onCommandHandler = handlers.onCommand;
     this.onPairChallengeHandler = handlers.onPairChallenge;
     this.tokenValidator = handlers.validateToken;
     this.tokenGenerator = handlers.generateToken;
     this.onClientAuthorizedHandler = handlers.onClientAuthorized;
+    this.onClientDisconnectedHandler = handlers.onClientDisconnected || null;
   }
 
   public startServer(port = RUNMUSIC_TCP_PORT, onListening?: () => void): void {
@@ -91,6 +94,7 @@ class TCPHostServer {
         socket.on('close', () => {
           parser.reset();
           this.clients.delete(clientId);
+          this.onClientDisconnectedHandler?.(clientId);
         });
       });
 
@@ -195,17 +199,39 @@ class TCPHostServer {
 
   private authorizeClient(client: ConnectedClient, token: string): void {
     client.isAuthorized = true;
-    const success: PairSuccessMessage = {
+    client.activePin = undefined;
+
+    const successMsg: PairSuccessMessage = {
       type: 'PAIR_SUCCESS',
       token,
     };
-    this.sendToClient(client.socket, success);
+    this.sendToClient(client.socket, successMsg);
 
+    // Notify listener
     if (this.onClientAuthorizedHandler) {
       this.onClientAuthorizedHandler(client.socket, {
+        id: client.id,
         deviceId: client.clientDeviceId || 'unknown',
         deviceName: client.clientDeviceName || 'Remote Client',
       });
+    }
+  }
+
+  public disconnectClient(clientId: string): void {
+    const client = this.clients.get(clientId);
+    if (client) {
+      try {
+        const reject: PairFailureMessage = {
+          type: 'PAIR_FAILURE',
+          reason: 'DISCONNECTED_BY_HOST',
+        };
+        this.sendToClient(client.socket, reject);
+        client.socket.destroy();
+      } catch {
+        // ignore
+      }
+      this.clients.delete(clientId);
+      this.onClientDisconnectedHandler?.(clientId);
     }
   }
 
