@@ -122,8 +122,6 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const internetRoomCode = useRemoteConnectStore((s) => s.internetRoomCode);
   const internetHostStatus = useRemoteConnectStore((s) => s.internetHostStatus);
-  const recentRooms = useRemoteConnectStore((s) => s.recentRooms);
-  const removeRecentRoom = useRemoteConnectStore((s) => s.removeRecentRoom);
 
   const [inputRoomCode, setInputRoomCode] = useState('');
   const [showManualIp, setShowManualIp] = useState(false);
@@ -1695,15 +1693,15 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => {
-          if (isLyricsMode || isQueueMode || isSleepTimerMode || isSkipping) return false;
+          if (isLyricsMode || isQueueMode || isSleepTimerMode || isConnectMode || isSkipping) return false;
           return Math.abs(gesture.dx) > 12 || gesture.dy > 15;
         },
         onMoveShouldSetPanResponderCapture: (_, gesture) => {
-          if (isLyricsMode || isQueueMode || isSleepTimerMode || isSkipping) return false;
+          if (isLyricsMode || isQueueMode || isSleepTimerMode || isConnectMode || isSkipping) return false;
           return Math.abs(gesture.dx) > 12 || gesture.dy > 15;
         },
         onPanResponderMove: (_, gesture) => {
-          if (isSkipping) return;
+          if (isSkipping || isConnectMode) return;
           // Belirgin dikey kaydırma varsa (aşağı çekip kapatma) yatay hareketi engelle
           if (gesture.dy > 18 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.4) {
             return;
@@ -1718,7 +1716,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           panX.setValue(targetDx);
         },
         onPanResponderRelease: (_, gesture) => {
-          if (isSkipping) return;
+          if (isSkipping || isConnectMode) return;
 
           // 1. Dokunma (Tap): Sözler moduna geç
           if (Math.abs(gesture.dx) < 10 && Math.abs(gesture.dy) < 10) {
@@ -1782,6 +1780,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       isLyricsMode,
       isQueueMode,
       isSleepTimerMode,
+      isConnectMode,
       isSkipping,
       nextTrack,
       prevTrack,
@@ -1818,25 +1817,27 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const globalPanResponder = useMemo(
     () => {
-
       return PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => {
+          if (isLyricsMode || isQueueMode || isSleepTimerMode || isConnectMode) return false;
           // Sadece net aşağı kaydırmalarda aktif ol (diğer gesture'larla çakışmamak için)
           return gesture.dy > 20 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.5;
         },
         onMoveShouldSetPanResponderCapture: (_, gesture) => {
+          if (isLyricsMode || isQueueMode || isSleepTimerMode || isConnectMode) return false;
           return gesture.dy > 20 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.5;
         },
         onPanResponderRelease: (_, gesture) => {
+          if (isLyricsMode || isQueueMode || isSleepTimerMode || isConnectMode) return;
           if (gesture.dy > 40) {
             closeFullscreenPlayer();
           }
         },
       });
     },
-    [closeFullscreenPlayer]
+    [closeFullscreenPlayer, isLyricsMode, isQueueMode, isSleepTimerMode, isConnectMode]
   );
 
   if (!activeTrack) {
@@ -2563,7 +2564,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <View style={[styles.queueSourceBadge, { backgroundColor: theme.surface }]}>
                 <Ionicons name="radio" size={13} color={theme.primary} style={{ marginRight: 6 }} />
                 <Text style={[styles.queueSourceText, { color: theme.textAccent }]}>
-                  RunMusic Connect
+                  RunMusic Connecto
                 </Text>
               </View>
               <TouchableOpacity
@@ -2772,7 +2773,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
               {/* İNTERNET MODU UI */}
               {activeTransportTab === 'internet' ? (
-                <View style={{ flex: 1 }}>
+                <ScrollView
+                  style={{ flex: 1 }}
+                  contentContainerStyle={{ paddingBottom: 24 }}
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled">
                   {/* Client Mode: Bağlı Kumanda Durum Kartı */}
                   {remoteMode === 'client' ? (
                     <View style={[styles.connectRoomCard, { backgroundColor: theme.surface }]}>
@@ -2830,7 +2835,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                             style={[styles.connectRoomBtn, { backgroundColor: `${theme.primary}35` }]}
                             activeOpacity={0.75}
                             onPress={() => {
-                              const codeToRetry = inputRoomCode.trim() || (connectedDeviceName?.replace('Oda: ', '') || '');
+                              const codeToRetry = inputRoomCode.trim().replace(/^RUN-/, '') || (connectedDeviceName?.replace('Oda: ', '').replace(/^RUN-/, '') || '');
                               if (codeToRetry) {
                                 remoteSyncManager.connectToInternetRoom(codeToRetry).catch(() => {});
                               }
@@ -2894,7 +2899,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                         </View>
 
                         <Text style={[styles.connectRoomCodeBadge, { color: theme.primary }]}>
-                          {internetRoomCode || 'Oda Başlatılıyor...'}
+                          {internetRoomCode ? internetRoomCode.replace(/^RUN-/, '') : 'Oda Başlatılıyor...'}
                         </Text>
 
                         <View style={styles.connectRoomActionsRow}>
@@ -2903,8 +2908,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                             activeOpacity={0.75}
                             onPress={() => {
                               if (internetRoomCode) {
+                                const cleanCode = internetRoomCode.replace(/^RUN-/, '');
                                 Share.share({
-                                  message: `RunMusic İnternet Kumandası Oda Kodu: ${internetRoomCode}\nRunMusic uygulamasından bu kodu girerek uzaktan müzik kontrolü yapabilirsiniz!`,
+                                  message: `RunMusic Connecto Oda Kodu: ${cleanCode}\nRunMusic uygulamasından bu kodu girerek uzaktan müzik kontrolü yapabilirsiniz!`,
                                 });
                               }
                             }}>
@@ -2955,16 +2961,16 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           {
                             flex: 1,
                             textTransform: 'uppercase',
-                            letterSpacing: 1.5,
+                            letterSpacing: 2,
                             fontWeight: '700',
                           },
                         ]}
-                        placeholder="RUN-XXXX"
+                        placeholder="8284"
                         placeholderTextColor="#71717a"
-                        autoCapitalize="characters"
-                        maxLength={12}
+                        keyboardType="number-pad"
+                        maxLength={8}
                         value={inputRoomCode}
-                        onChangeText={(t) => setInputRoomCode(t.toUpperCase())}
+                        onChangeText={(t) => setInputRoomCode(t.toUpperCase().replace(/^RUN-/, ''))}
                       />
                       <TouchableOpacity
                         style={[
@@ -2981,8 +2987,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           (remoteMode === 'client' && remoteConnectionStatus === 'connecting')
                         }
                         onPress={() => {
-                          if (inputRoomCode.trim()) {
-                            remoteSyncManager.connectToInternetRoom(inputRoomCode.trim()).catch(() => {});
+                          const cleanCode = inputRoomCode.trim().replace(/^RUN-/, '');
+                          if (cleanCode) {
+                            remoteSyncManager.connectToInternetRoom(cleanCode).catch(() => {});
                           }
                         }}>
                         <Ionicons name="arrow-forward" size={16} color="#ffffff" />
@@ -2993,40 +3000,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                         </Text>
                       </TouchableOpacity>
                     </View>
-
-                    {/* Son Kullanılan Odalar */}
-                    {recentRooms.length > 0 && (
-                      <View style={{ marginTop: 4 }}>
-                        <Text style={{ fontSize: 11, color: 'rgba(255, 255, 255, 0.5)', marginBottom: 6, fontWeight: '600' }}>
-                          SON KULLANILAN ODALAR
-                        </Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                          {recentRooms.map((room) => (
-                            <TouchableOpacity
-                              key={room}
-                              style={[styles.connectRecentPill, { borderColor: `${theme.primary}40`, borderWidth: 1 }]}
-                              activeOpacity={0.7}
-                              onPress={() => {
-                                setInputRoomCode(room);
-                                remoteSyncManager.connectToInternetRoom(room).catch(() => {});
-                              }}>
-                              <Ionicons name="time-outline" size={13} color={theme.primary} style={{ marginRight: 4 }} />
-                              <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '700', marginRight: 6 }}>{room}</Text>
-                              <TouchableOpacity
-                                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                                onPress={(e) => {
-                                  e.stopPropagation?.();
-                                  removeRecentRoom(room);
-                                }}>
-                                <Ionicons name="close" size={13} color="rgba(255, 255, 255, 0.5)" />
-                              </TouchableOpacity>
-                            </TouchableOpacity>
-                          ))}
-                        </ScrollView>
-                      </View>
-                    )}
                   </View>
-                </View>
+                </ScrollView>
               ) : (
                 <>
                   {/* Bölüm Başlığı (Wi-Fi & Bluetooth) */}
@@ -3344,7 +3319,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 ) : null}
               </TouchableOpacity>
 
-              {/* RunMusic Connect Butonu (Shuffle ile Sleep Timer arasında) */}
+              {/* RunMusic Connecto Butonu (Shuffle ile Sleep Timer arasında) */}
               <TouchableOpacity
                 style={[
                   styles.appleSubUtilBtn,
@@ -3355,6 +3330,15 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 ]}
                 onPress={toggleConnectMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                {remoteMode !== 'client' && connectedClients.length > 0 && (
+                  <View style={styles.connectClientsBadgeWrapper} pointerEvents="none">
+                    <View style={[styles.connectClientsBadge, { backgroundColor: theme.primary }]}>
+                      <Text style={styles.connectClientsBadgeText}>
+                        {connectedClients.length}
+                      </Text>
+                    </View>
+                  </View>
+                )}
                 <Ionicons
                   name={isRemoteServiceEnabled || player.isRemote ? 'radio' : 'radio-outline'}
                   size={20}
@@ -3584,7 +3568,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       toggleConnectMode();
                     }}>
                     <Ionicons name="radio-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
-                    <Text style={styles.optionsModalText}>RunMusic Connect</Text>
+                    <Text style={styles.optionsModalText}>RunMusic Connecto</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.optionsModalRow}
@@ -4062,6 +4046,30 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 9,
     fontWeight: '900',
+  },
+  connectClientsBadgeWrapper: {
+    position: 'absolute',
+    top: 1,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  connectClientsBadge: {
+    minWidth: 15,
+    height: 15,
+    borderRadius: 7.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  connectClientsBadgeText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '800',
+    textAlign: 'center',
+    includeFontPadding: false,
+    lineHeight: 11,
   },
   modalBackdrop: {
     flex: 1,

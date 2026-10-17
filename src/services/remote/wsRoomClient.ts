@@ -104,7 +104,7 @@ class WSRoomClient {
       return;
     }
 
-    const normalizedCode = roomCode.toUpperCase().trim();
+    const normalizedCode = roomCode.toUpperCase().trim().replace(/^RUN-/, '');
     if (this.isConnected() && this.role === 'host' && this.roomCode === normalizedCode) {
       return;
     }
@@ -141,7 +141,7 @@ class WSRoomClient {
     this.disconnect();
     this.isExplicitDisconnect = false;
     this.role = 'client';
-    this.roomCode = roomCode.toUpperCase().trim();
+    this.roomCode = roomCode.toUpperCase().trim().replace(/^RUN-/, '');
     this.clientCallbacks = callbacks;
     this.reconnectAttempts = 0;
 

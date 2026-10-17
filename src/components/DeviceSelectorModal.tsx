@@ -135,7 +135,7 @@ export function DeviceSelectorModal({ visible, onClose }: DeviceSelectorModalPro
               <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 8 }} />
               <Text style={styles.emptyText}>Wi-Fi ağındaki RunMusic cihazları aranıyor...</Text>
               <Text style={styles.emptySubtext}>
-                Diğer cihazda Ayarlar &gt; RunMusic Connect özelliğinin açık olduğundan emin olun.
+                Diğer cihazda Ayarlar &gt; RunMusic Connecto özelliğinin açık olduğundan emin olun.
               </Text>
             </View>
           ) : (

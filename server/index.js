@@ -132,7 +132,7 @@ function handleRunMusicConnection(ws, initialRoomCode) {
   });
 
   let userRole = null; // 'host' | 'client'
-  let userRoomCode = initialRoomCode ? initialRoomCode.trim().toUpperCase() : null;
+  let userRoomCode = initialRoomCode ? initialRoomCode.trim().toUpperCase().replace(/^RUN-/, '') : null;
   let userClientId = null;
 
   ws.on('message', (raw) => {
@@ -160,7 +160,7 @@ function handleRunMusicConnection(ws, initialRoomCode) {
           return;
         }
 
-        const normalizedCode = roomCode.trim().toUpperCase();
+        const normalizedCode = roomCode.trim().toUpperCase().replace(/^RUN-/, '');
         userRole = role;
         userRoomCode = normalizedCode;
 

@@ -552,10 +552,10 @@ export default function SettingsScreen() {
         />
       </Section>
 
-      {/* ── RUNMUSIC CONNECT (Wİ-Fİ KUMANDASI) ───────────────────────── */}
+      {/* ── RUNMUSIC CONNECTO (Wİ-Fİ KUMANDASI) ───────────────────────── */}
       <Section
         icon="radio-outline"
-        title="RunMusic Connect"
+        title="RunMusic Connecto"
         subtitle={
           remoteMode === 'client' && connectionStatus === 'connected'
             ? `Bağlandı: ${connectedDeviceName}`
@@ -566,7 +566,7 @@ export default function SettingsScreen() {
         theme={theme}>
         <ToggleRow
           theme={theme}
-          label="RunMusic Connect (Wi-Fi, Bluetooth & İnternet)"
+          label="RunMusic Connecto (Wi-Fi, Bluetooth & İnternet)"
           hint="Aynı Wi-Fi ağındaki, Bluetooth kapsama alanındaki veya herhangi bir internet bağlantısındaki diğer RunMusic cihazlarının bu telefonu uzaktan kontrol etmesine izin verin."
           value={isRemoteEnabled}
           onChange={(v) => {

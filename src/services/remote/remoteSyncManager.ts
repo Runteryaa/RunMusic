@@ -182,7 +182,10 @@ class RemoteSyncManager {
     });
 
     // Start internet host room if code exists or generate one
-    const roomCode = useRemoteConnectStore.getState().internetRoomCode || `RUN-${Math.floor(1000 + Math.random() * 9000)}`;
+    const rawStored = useRemoteConnectStore.getState().internetRoomCode;
+    const roomCode = rawStored
+      ? rawStored.replace(/^RUN-/, '')
+      : `${Math.floor(1000 + Math.random() * 9000)}`;
     this.startInternetHostRoom(roomCode).catch((err) => {
       console.warn('[RemoteSyncManager] Internet host start failed:', err);
     });
@@ -885,13 +888,15 @@ class RemoteSyncManager {
       return '';
     }
 
-    const code = (
+    const rawCode =
       customCode ||
       useRemoteConnectStore.getState().internetRoomCode ||
-      `RUN-${Math.floor(1000 + Math.random() * 9000)}`
-    )
+      `${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const code = rawCode
       .toUpperCase()
-      .trim();
+      .trim()
+      .replace(/^RUN-/, '');
 
     if (
       wsRoomClient.isConnected() &&
@@ -958,7 +963,7 @@ class RemoteSyncManager {
   }
 
   public async connectToInternetRoom(roomCode: string): Promise<void> {
-    const formattedCode = roomCode.trim().toUpperCase();
+    const formattedCode = roomCode.trim().toUpperCase().replace(/^RUN-/, '');
     if (!formattedCode) return;
 
     try {
