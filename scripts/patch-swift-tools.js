@@ -386,8 +386,8 @@ for (const filePath of imagePickerFiles) {
 function patchExpoUiFiles(dir) {
   walkDir(dir, /Button\.swift$/, (file) => {
     patchFile(file, [{
-      search: /@ViewBuilder\s*\n\s*private\s+var\s+labelLessButton:\s*some\s+View\s*\{[\s\S]*?Children\(\)\s*\n\s*\}\s*\n\s*\}\s*\n\s*\}/g,
-      replace: '@ViewBuilder\n  private var labelLessButton: some View {\n    SwiftUI.Button(role: props.role?.toNativeRole(), action: {\n      props.onButtonPress()\n    }) {\n      Children()\n    }\n  }\n}',
+      search: /@ViewBuilder\s*\n\s*private\s+var\s+labelLessButton:\s*some\s+View\s*\{[\s\S]*?Children\(\)\s*\n\s*\}\s*\n\s*\}/g,
+      replace: '@ViewBuilder\n  private var labelLessButton: some View {\n    SwiftUI.Button(role: props.role?.toNativeRole(), action: {\n      props.onButtonPress()\n    }) {\n      Children()\n    }\n  }',
     }]);
   });
   walkDir(dir, /ButtonProps\.swift$/, (file) => {
@@ -414,8 +414,8 @@ function patchExpoUiFiles(dir) {
   });
   walkDir(dir, /ViewModifierRegistry\.swift$/, (file) => {
     patchFile(file, [{
-      search: /internal\s+struct\s+LineHeight:\s*ViewModifier,\s*Record\s*\{[\s\S]*?content\.lineHeight\(\.exact\(points:\s*value\)\)[\s\S]*?content\s*\n\s*\}\s*\n\s*\}/g,
-      replace: 'internal struct LineHeight: ViewModifier, Record {\n  @Field var value: CGFloat?\n\n  func body(content: Content) -> some View {\n    content\n  }\n}',
+      search: /internal\s+struct\s+LineHeight:\s*ViewModifier,\s*Record\s*\{[\s\S]*?internal\s+enum\s+Prominence/g,
+      replace: 'internal struct LineHeight: ViewModifier, Record {\n  @Field var value: CGFloat?\n\n  func body(content: Content) -> some View {\n    content\n  }\n}\n\ninternal enum Prominence',
     }]);
   });
 }
