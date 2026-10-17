@@ -17,6 +17,7 @@ import {
   BackHandler,
   Alert,
   Switch,
+  Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -117,6 +118,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const connectedDeviceName = useRemoteConnectStore((s) => s.connectedDeviceName);
   const connectedClients = useRemoteConnectStore((s) => s.connectedClients);
 
+  const internetRoomCode = useRemoteConnectStore((s) => s.internetRoomCode);
+  const recentRooms = useRemoteConnectStore((s) => s.recentRooms);
+  const removeRecentRoom = useRemoteConnectStore((s) => s.removeRecentRoom);
+
+  const [inputRoomCode, setInputRoomCode] = useState('');
   const [showManualIp, setShowManualIp] = useState(false);
   const [manualIp, setManualIp] = useState('');
   const [manualPort, setManualPort] = useState(RUNMUSIC_TCP_PORT.toString());
@@ -137,18 +143,24 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       return () => {
         unsubscribe();
       };
-    } else {
+    } else if (activeTransportTab === 'wifi') {
       const unsubscribe = udpDiscoveryService.startClientListener((hosts) => {
         setDiscoveredHosts(hosts);
       });
       return () => {
         unsubscribe();
       };
+    } else if (activeTransportTab === 'internet') {
+      if (isRemoteServiceEnabled && !internetRoomCode) {
+        remoteSyncManager.startInternetHostRoom().catch(() => {});
+      }
     }
   }, [
     isConnectMode,
     player.isRemote,
     activeTransportTab,
+    isRemoteServiceEnabled,
+    internetRoomCode,
     setDiscoveredHosts,
     setDiscoveredBlePeers,
   ]);
@@ -2570,11 +2582,17 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 ]}>
                 <View style={{ flex: 1, marginRight: 12 }}>
                   <Text style={styles.connectToggleTitle}>
-                    {activeTransportTab === 'ble' ? 'Bluetooth Kumandası' : 'Wi-Fi Kumandası'}
+                    {activeTransportTab === 'ble'
+                      ? 'Bluetooth Kumandası'
+                      : activeTransportTab === 'internet'
+                      ? 'İnternet Kumandası'
+                      : 'Wi-Fi Kumandası'}
                   </Text>
                   <Text style={styles.connectToggleHint}>
                     {isRemoteServiceEnabled
-                      ? 'Cihazlar bu telefonu görebilir ve bağlanabilir'
+                      ? activeTransportTab === 'internet'
+                        ? 'Oda koduyla her yerden bağlanılabilir'
+                        : 'Cihazlar bu telefonu görebilir ve bağlanabilir'
                       : 'Bağlantı servisi kapalı'}
                   </Text>
                 </View>
@@ -2588,7 +2606,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 />
               </View>
 
-              {/* Segment Kontrolü: Wi-Fi | Bluetooth */}
+              {/* Segment Kontrolü: Wi-Fi | Bluetooth | İnternet */}
               <View style={[styles.connectSegmentContainer, { backgroundColor: theme.surface }]}>
                 <TouchableOpacity
                   style={[
@@ -2635,6 +2653,30 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       activeTransportTab === 'ble' && { color: '#ffffff', fontWeight: '700' },
                     ]}>
                     Bluetooth
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.connectSegmentTab,
+                    activeTransportTab === 'internet' && {
+                      backgroundColor: theme.primary,
+                    },
+                  ]}
+                  activeOpacity={0.8}
+                  onPress={() => setActiveTransportTab('internet')}>
+                  <Ionicons
+                    name="globe-outline"
+                    size={14}
+                    color={activeTransportTab === 'internet' ? '#ffffff' : 'rgba(255, 255, 255, 0.6)'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    style={[
+                      styles.connectSegmentText,
+                      activeTransportTab === 'internet' && { color: '#ffffff', fontWeight: '700' },
+                    ]}>
+                    İnternet
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -2698,7 +2740,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           { backgroundColor: `${theme.primary}25` },
                         ]}>
                         <Ionicons
-                          name={client.transport === 'ble' ? 'bluetooth' : 'phone-portrait'}
+                          name={client.transport === 'ble' ? 'bluetooth' : client.transport === 'internet' ? 'globe' : 'phone-portrait'}
                           size={18}
                           color={theme.primary}
                         />
@@ -2708,7 +2750,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           {client.deviceName}
                         </Text>
                         <Text style={[styles.connectDeviceSubtext, { color: theme.primary }]}>
-                          {client.transport === 'ble' ? 'Bluetooth Kumandası • Bağlı' : 'Wi-Fi Kumandası • Bağlı'}
+                          {client.transport === 'ble'
+                            ? 'Bluetooth Kumandası • Bağlı'
+                            : client.transport === 'internet'
+                            ? 'İnternet Kumandası • Bağlı'
+                            : 'Wi-Fi Kumandası • Bağlı'}
                         </Text>
                       </View>
                       <TouchableOpacity
@@ -2722,157 +2768,291 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 </View>
               )}
 
-              {/* Bölüm Başlığı */}
-              <View style={styles.connectSectionHeader}>
-                <Text style={[styles.connectSectionLabel, { color: theme.textAccent }]}>
-                  {activeTransportTab === 'ble'
-                    ? 'YAKINDAKİ BLUETOOTH CİHAZLARI'
-                    : 'AYNI Wİ-Fİ AĞINDAKİ CİHAZLAR'}
-                </Text>
-              </View>
+              {/* İNTERNET MODU UI */}
+              {activeTransportTab === 'internet' ? (
+                <View style={{ flex: 1 }}>
+                  {/* Host Section: Oda Kodu Kartı (Servis Açıksa) */}
+                  {isRemoteServiceEnabled && (
+                    <View style={[styles.connectRoomCard, { backgroundColor: theme.surface }]}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <Text style={[styles.connectSectionLabel, { color: theme.textAccent, marginBottom: 0 }]}>
+                          BU TELEFONUN ODA KODU
+                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#22c55e' }} />
+                          <Text style={{ fontSize: 11, color: '#22c55e', fontWeight: '600' }}>Aktif</Text>
+                        </View>
+                      </View>
 
-              {/* Cihazlar Listesi */}
-              <FlatList
-                data={
-                  activeTransportTab === 'ble'
-                    ? (discoveredBlePeers as any)
-                    : (discoveredHosts as any)
-                }
-                keyExtractor={(item) => item.id || item.deviceId}
-                style={styles.connectList}
-                showsVerticalScrollIndicator={false}
-                ListEmptyComponent={
-                  <View style={styles.connectEmptyContainer}>
-                    <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 6 }} />
-                    <Text style={styles.connectEmptyTitle}>
-                      {activeTransportTab === 'ble'
-                        ? 'Bluetooth cihazları aranıyor...'
-                        : 'Cihazlar aranıyor...'}
-                    </Text>
-                    <Text style={styles.connectEmptySubtext}>
-                      {activeTransportTab === 'ble'
-                        ? "Diğer cihazda Bluetooth Kumandası açık ve görünür olmalıdır."
-                        : "Diğer cihazda Wi-Fi Kumandası açık olmalı ve aynı ağda bulunmalıdır."}
-                    </Text>
-                  </View>
-                }
-                renderItem={({ item }) => {
-                  const isThisConnected =
-                    player.isRemote && connectedDeviceName === item.deviceName;
-                  const isConnecting =
-                    remoteMode === 'client' &&
-                    (remoteConnectionStatus === 'connecting' || remoteConnectionStatus === 'pairing') &&
-                    connectedDeviceName === item.deviceName;
+                      <Text style={[styles.connectRoomCodeBadge, { color: theme.primary }]}>
+                        {internetRoomCode || 'Oda Başlatılıyor...'}
+                      </Text>
 
-                  return (
-                    <TouchableOpacity
-                      style={[
-                        styles.connectDeviceItem,
-                        { backgroundColor: theme.surface },
-                        isThisConnected && {
-                          borderColor: theme.primary,
-                          borderWidth: 1.5,
-                        },
-                      ]}
-                      activeOpacity={0.75}
-                      onPress={() => handleSelectRemoteHost(item)}>
-                      <View
+                      <View style={styles.connectRoomActionsRow}>
+                        <TouchableOpacity
+                          style={[styles.connectRoomBtn, { backgroundColor: `${theme.primary}25` }]}
+                          activeOpacity={0.75}
+                          onPress={() => {
+                            if (internetRoomCode) {
+                              Share.share({
+                                message: `RunMusic İnternet Kumandası Oda Kodu: ${internetRoomCode}\nRunMusic uygulamasından bu kodu girerek uzaktan müzik kontrolü yapabilirsiniz!`,
+                              });
+                            }
+                          }}>
+                          <Ionicons name="share-social-outline" size={16} color={theme.primary} />
+                          <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>Paylaş</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.connectRoomBtn, { backgroundColor: 'rgba(255, 255, 255, 0.08)' }]}
+                          activeOpacity={0.75}
+                          onPress={() => {
+                            remoteSyncManager.startInternetHostRoom().catch(() => {});
+                          }}>
+                          <Ionicons name="refresh-outline" size={16} color="#ffffff" />
+                          <Text style={{ color: '#ffffff', fontWeight: '600', fontSize: 12 }}>Yeni Kod</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <Text style={[styles.connectEmptySubtext, { marginTop: 8, textAlign: 'center' }]}>
+                        Farklı bir Wi-Fi veya hücresel veri (4G/5G) ağındaki cihazınızdan bu kodu girerek anında bağlanabilirsiniz.
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Client Section: Bir Odaya Bağlan */}
+                  <View style={[styles.connectRoomCard, { backgroundColor: theme.surface }]}>
+                    <Text style={[styles.connectSectionLabel, { color: theme.textAccent, marginBottom: 6 }]}>
+                      BİR ODAYA BAĞLAN
+                    </Text>
+
+                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                      <TextInput
                         style={[
-                          styles.connectDeviceIcon,
+                          styles.connectInput,
                           {
-                            backgroundColor: isThisConnected
-                              ? `${theme.primary}25`
-                              : 'rgba(255, 255, 255, 0.06)',
+                            flex: 1,
+                            textTransform: 'uppercase',
+                            letterSpacing: 1.5,
+                            fontWeight: '700',
                           },
-                        ]}>
-                        <Ionicons
-                          name={
-                            item.transport === 'ble' || activeTransportTab === 'ble'
-                              ? 'bluetooth-outline'
-                              : 'laptop-outline'
+                        ]}
+                        placeholder="RUN-XXXX"
+                        placeholderTextColor="#71717a"
+                        autoCapitalize="characters"
+                        maxLength={12}
+                        value={inputRoomCode}
+                        onChangeText={(t) => setInputRoomCode(t.toUpperCase())}
+                      />
+                      <TouchableOpacity
+                        style={[
+                          styles.connectRoomBtn,
+                          {
+                            backgroundColor: inputRoomCode.trim().length > 0 ? theme.primary : '#3f3f46',
+                            paddingHorizontal: 16,
+                            flex: 0,
+                          },
+                        ]}
+                        activeOpacity={0.8}
+                        disabled={inputRoomCode.trim().length === 0}
+                        onPress={() => {
+                          if (inputRoomCode.trim()) {
+                            remoteSyncManager.connectToInternetRoom(inputRoomCode.trim()).catch(() => {});
                           }
-                          size={20}
-                          color={isThisConnected ? theme.primary : 'rgba(255, 255, 255, 0.7)'}
-                        />
-                      </View>
-                      <View style={{ flex: 1, marginLeft: 10 }}>
-                        <Text
-                          style={[
-                            styles.connectDeviceName,
-                            isThisConnected && { color: theme.primary, fontWeight: '700' },
-                          ]}
-                          numberOfLines={1}>
-                          {item.deviceName}
-                        </Text>
-                        <Text style={styles.connectDeviceSubtext}>
-                          {isThisConnected
-                            ? 'Bağlandı'
-                            : isConnecting
-                              ? 'Bağlanıyor...'
-                              : item.transport === 'ble' || activeTransportTab === 'ble'
-                                ? 'Bluetooth Düşük Enerji (BLE)'
-                                : `${item.hostIp}:${item.port}`}
-                        </Text>
-                      </View>
-                      {isConnecting ? (
-                        <ActivityIndicator size="small" color={theme.primary} />
-                      ) : isThisConnected ? (
-                        <Ionicons name="checkmark-circle" size={20} color={theme.primary} />
-                      ) : (
-                        <Ionicons name="chevron-forward" size={18} color="rgba(255, 255, 255, 0.4)" />
-                      )}
-                    </TouchableOpacity>
-                  );
-                }}
-              />
+                        }}>
+                        <Ionicons name="arrow-forward" size={16} color="#ffffff" />
+                        <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 13 }}>Bağlan</Text>
+                      </TouchableOpacity>
+                    </View>
 
-              {/* Manuel IP Toggle / Giriş (Sadece Wi-Fi modunda gösterilir) */}
-              {isRemoteServiceEnabled && activeTransportTab === 'wifi' && (
-                showManualIp ? (
-                  <View style={[styles.connectManualBox, { backgroundColor: theme.surface }]}>
-                    <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
-                      <TextInput
-                        style={[styles.connectInput, { flex: 2 }]}
-                        placeholder="IP (örn. 192.168.1.50)"
-                        placeholderTextColor="#71717a"
-                        keyboardType="numbers-and-punctuation"
-                        value={manualIp}
-                        onChangeText={setManualIp}
-                        autoCapitalize="none"
-                      />
-                      <TextInput
-                        style={[styles.connectInput, { flex: 1 }]}
-                        placeholder="Port"
-                        placeholderTextColor="#71717a"
-                        keyboardType="numeric"
-                        value={manualPort}
-                        onChangeText={setManualPort}
-                      />
-                    </View>
-                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
-                      <TouchableOpacity
-                        style={styles.connectCancelBtn}
-                        onPress={() => setShowManualIp(false)}>
-                        <Text style={styles.connectCancelText}>İptal</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.connectSubmitBtn, { backgroundColor: theme.primary }]}
-                        onPress={handleManualConnect}
-                        disabled={!manualIp.trim()}>
-                        <Text style={styles.connectSubmitText}>Bağlan</Text>
-                      </TouchableOpacity>
-                    </View>
+                    {/* Son Kullanılan Odalar */}
+                    {recentRooms.length > 0 && (
+                      <View style={{ marginTop: 4 }}>
+                        <Text style={{ fontSize: 11, color: 'rgba(255, 255, 255, 0.5)', marginBottom: 6, fontWeight: '600' }}>
+                          SON KULLANILAN ODALAR
+                        </Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                          {recentRooms.map((room) => (
+                            <TouchableOpacity
+                              key={room}
+                              style={[styles.connectRecentPill, { borderColor: `${theme.primary}40`, borderWidth: 1 }]}
+                              activeOpacity={0.7}
+                              onPress={() => {
+                                setInputRoomCode(room);
+                                remoteSyncManager.connectToInternetRoom(room).catch(() => {});
+                              }}>
+                              <Ionicons name="time-outline" size={13} color={theme.primary} style={{ marginRight: 4 }} />
+                              <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '700', marginRight: 6 }}>{room}</Text>
+                              <TouchableOpacity
+                                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                onPress={(e) => {
+                                  e.stopPropagation?.();
+                                  removeRecentRoom(room);
+                                }}>
+                                <Ionicons name="close" size={13} color="rgba(255, 255, 255, 0.5)" />
+                              </TouchableOpacity>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      </View>
+                    )}
                   </View>
-                ) : (
-                  <TouchableOpacity
-                    style={styles.connectManualToggle}
-                    onPress={() => setShowManualIp(true)}>
-                    <Ionicons name="add-circle-outline" size={16} color={theme.primary} style={{ marginRight: 6 }} />
-                    <Text style={[styles.connectManualToggleText, { color: theme.primary }]}>
-                      Manuel IP ile Bağlan
+                </View>
+              ) : (
+                <>
+                  {/* Bölüm Başlığı (Wi-Fi & Bluetooth) */}
+                  <View style={styles.connectSectionHeader}>
+                    <Text style={[styles.connectSectionLabel, { color: theme.textAccent }]}>
+                      {activeTransportTab === 'ble'
+                        ? 'YAKINDAKİ BLUETOOTH CİHAZLARI'
+                        : 'AYNI Wİ-Fİ AĞINDAKİ CİHAZLAR'}
                     </Text>
-                  </TouchableOpacity>
-                )
+                  </View>
+
+                  {/* Cihazlar Listesi */}
+                  <FlatList
+                    data={
+                      activeTransportTab === 'ble'
+                        ? (discoveredBlePeers as any)
+                        : (discoveredHosts as any)
+                    }
+                    keyExtractor={(item) => item.id || item.deviceId}
+                    style={styles.connectList}
+                    showsVerticalScrollIndicator={false}
+                    ListEmptyComponent={
+                      <View style={styles.connectEmptyContainer}>
+                        <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 6 }} />
+                        <Text style={styles.connectEmptyTitle}>
+                          {activeTransportTab === 'ble'
+                            ? 'Bluetooth cihazları aranıyor...'
+                            : 'Cihazlar aranıyor...'}
+                        </Text>
+                        <Text style={styles.connectEmptySubtext}>
+                          {activeTransportTab === 'ble'
+                            ? 'Diğer cihazda Bluetooth Kumandası açık ve görünür olmalıdır.'
+                            : 'Diğer cihazda Wi-Fi Kumandası açık olmalı ve aynı ağda bulunmalıdır.'}
+                        </Text>
+                      </View>
+                    }
+                    renderItem={({ item }) => {
+                      const isThisConnected =
+                        player.isRemote && connectedDeviceName === item.deviceName;
+                      const isConnecting =
+                        remoteMode === 'client' &&
+                        (remoteConnectionStatus === 'connecting' || remoteConnectionStatus === 'pairing') &&
+                        connectedDeviceName === item.deviceName;
+
+                      return (
+                        <TouchableOpacity
+                          style={[
+                            styles.connectDeviceItem,
+                            { backgroundColor: theme.surface },
+                            isThisConnected && {
+                              borderColor: theme.primary,
+                              borderWidth: 1.5,
+                            },
+                          ]}
+                          activeOpacity={0.75}
+                          onPress={() => handleSelectRemoteHost(item)}>
+                          <View
+                            style={[
+                              styles.connectDeviceIcon,
+                              {
+                                backgroundColor: isThisConnected
+                                  ? `${theme.primary}25`
+                                  : 'rgba(255, 255, 255, 0.06)',
+                              },
+                            ]}>
+                            <Ionicons
+                              name={
+                                item.transport === 'ble' || activeTransportTab === 'ble'
+                                  ? 'bluetooth-outline'
+                                  : 'laptop-outline'
+                              }
+                              size={20}
+                              color={isThisConnected ? theme.primary : 'rgba(255, 255, 255, 0.7)'}
+                            />
+                          </View>
+                          <View style={{ flex: 1, marginLeft: 10 }}>
+                            <Text
+                              style={[
+                                styles.connectDeviceName,
+                                isThisConnected && { color: theme.primary, fontWeight: '700' },
+                              ]}
+                              numberOfLines={1}>
+                              {item.deviceName}
+                            </Text>
+                            <Text style={styles.connectDeviceSubtext}>
+                              {isThisConnected
+                                ? 'Bağlandı'
+                                : isConnecting
+                                  ? 'Bağlanıyor...'
+                                  : item.transport === 'ble' || activeTransportTab === 'ble'
+                                    ? 'Bluetooth Düşük Enerji (BLE)'
+                                    : `${item.hostIp}:${item.port}`}
+                            </Text>
+                          </View>
+                          {isConnecting ? (
+                            <ActivityIndicator size="small" color={theme.primary} />
+                          ) : isThisConnected ? (
+                            <Ionicons name="checkmark-circle" size={20} color={theme.primary} />
+                          ) : (
+                            <Ionicons name="chevron-forward" size={18} color="rgba(255, 255, 255, 0.4)" />
+                          )}
+                        </TouchableOpacity>
+                      );
+                    }}
+                  />
+
+                  {/* Manuel IP Toggle / Giriş (Sadece Wi-Fi modunda gösterilir) */}
+                  {isRemoteServiceEnabled && activeTransportTab === 'wifi' && (
+                    showManualIp ? (
+                      <View style={[styles.connectManualBox, { backgroundColor: theme.surface }]}>
+                        <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
+                          <TextInput
+                            style={[styles.connectInput, { flex: 2 }]}
+                            placeholder="IP (örn. 192.168.1.50)"
+                            placeholderTextColor="#71717a"
+                            keyboardType="numbers-and-punctuation"
+                            value={manualIp}
+                            onChangeText={setManualIp}
+                            autoCapitalize="none"
+                          />
+                          <TextInput
+                            style={[styles.connectInput, { flex: 1 }]}
+                            placeholder="Port"
+                            placeholderTextColor="#71717a"
+                            keyboardType="numeric"
+                            value={manualPort}
+                            onChangeText={setManualPort}
+                          />
+                        </View>
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+                          <TouchableOpacity
+                            style={styles.connectCancelBtn}
+                            onPress={() => setShowManualIp(false)}>
+                            <Text style={styles.connectCancelText}>İptal</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.connectSubmitBtn, { backgroundColor: theme.primary }]}
+                            onPress={handleManualConnect}
+                            disabled={!manualIp.trim()}>
+                            <Text style={styles.connectSubmitText}>Bağlan</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.connectManualToggle}
+                        onPress={() => setShowManualIp(true)}>
+                        <Ionicons name="add-circle-outline" size={16} color={theme.primary} style={{ marginRight: 6 }} />
+                        <Text style={[styles.connectManualToggleText, { color: theme.primary }]}>
+                          Manuel IP ile Bağlan
+                        </Text>
+                      </TouchableOpacity>
+                    )
+                  )}
+                </>
               )}
             </View>
           </Animated.View>
@@ -4344,5 +4524,40 @@ const styles = StyleSheet.create({
   connectKickBtn: {
     padding: 6,
     marginLeft: 8,
+  },
+  connectRoomCard: {
+    padding: 12,
+    borderRadius: 14,
+    marginBottom: 8,
+  },
+  connectRoomCodeBadge: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 2,
+    textAlign: 'center',
+    marginVertical: 6,
+  },
+  connectRoomActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  connectRoomBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    borderRadius: 10,
+    gap: 6,
+  },
+  connectRecentPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    marginRight: 8,
   },
 });

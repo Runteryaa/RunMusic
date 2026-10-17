@@ -35,7 +35,7 @@ export interface ConnectedClientInfo {
   id: string;
   deviceId: string;
   deviceName: string;
-  transport: 'wifi' | 'ble';
+  transport: 'wifi' | 'ble' | 'internet';
   connectedAt: number;
 }
 
@@ -48,6 +48,8 @@ interface RemoteConnectStoreState {
   pairedHosts: Record<string, string>;
   lastConnectedHostIp: string | null;
   lastConnectedToken: string | null;
+  customRelayUrl: string | null;
+  recentRooms: string[];
 
   // Runtime
   mode: 'idle' | 'host' | 'client';
@@ -57,7 +59,8 @@ interface RemoteConnectStoreState {
   discoveredHosts: DiscoveredHost[];
   discoveredBlePeers: DiscoveredPeer[];
   connectedClients: ConnectedClientInfo[];
-  activeTransportTab: 'wifi' | 'ble';
+  activeTransportTab: 'wifi' | 'ble' | 'internet';
+  internetRoomCode: string | null;
 
   // Pairing Modals
   pendingPairChallenge: PendingPairChallenge | null;
@@ -82,7 +85,11 @@ interface RemoteConnectStoreState {
   removeTrustedDevice: (deviceId: string) => void;
   setDiscoveredHosts: (hosts: DiscoveredHost[]) => void;
   setDiscoveredBlePeers: (peers: DiscoveredPeer[]) => void;
-  setActiveTransportTab: (tab: 'wifi' | 'ble') => void;
+  setActiveTransportTab: (tab: 'wifi' | 'ble' | 'internet') => void;
+  setInternetRoomCode: (code: string | null) => void;
+  setCustomRelayUrl: (url: string | null) => void;
+  addRecentRoom: (room: string) => void;
+  removeRecentRoom: (room: string) => void;
   setMode: (mode: 'idle' | 'host' | 'client') => void;
   setConnectionStatus: (status: ClientConnectionStatus, error?: string) => void;
   setConnectedDeviceName: (name: string | null) => void;
@@ -172,6 +179,8 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       pairedHosts: {},
       lastConnectedHostIp: null,
       lastConnectedToken: null,
+      customRelayUrl: null,
+      recentRooms: [],
 
       // Runtime defaults
       mode: 'idle',
@@ -182,6 +191,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       discoveredBlePeers: [],
       connectedClients: [],
       activeTransportTab: 'wifi',
+      internetRoomCode: null,
       pendingPairChallenge: null,
       pendingPinVerification: null,
       remoteState: { ...initialRemotePlaybackState },
@@ -245,6 +255,15 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       setDiscoveredHosts: (hosts) => set({ discoveredHosts: hosts }),
       setDiscoveredBlePeers: (peers) => set({ discoveredBlePeers: peers }),
       setActiveTransportTab: (tab) => set({ activeTransportTab: tab }),
+      setInternetRoomCode: (code) => set({ internetRoomCode: code }),
+      setCustomRelayUrl: (url) => set({ customRelayUrl: url }),
+      addRecentRoom: (room) => {
+        const upper = room.trim().toUpperCase();
+        if (!upper) return;
+        const filtered = get().recentRooms.filter((r) => r !== upper);
+        set({ recentRooms: [upper, ...filtered].slice(0, 5) });
+      },
+      removeRecentRoom: (room) => set({ recentRooms: get().recentRooms.filter((r) => r !== room) }),
       setMode: (mode) => set({ mode }),
       setConnectedDeviceName: (name) => set({ connectedDeviceName: name }),
 
@@ -453,7 +472,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
     {
       name: 'runmusic_remote_connect_storage',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 3,
+      version: 4,
       migrate: (persistedState: any, version: number) => {
         if (!persistedState) return persistedState;
         if (version < 2 || persistedState.isServiceEnabled === undefined) {
@@ -465,6 +484,10 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
         if (!persistedState.pairedHosts) {
           persistedState.pairedHosts = {};
         }
+        if (version < 4) {
+          if (persistedState.customRelayUrl === undefined) persistedState.customRelayUrl = null;
+          if (!Array.isArray(persistedState.recentRooms)) persistedState.recentRooms = [];
+        }
         return persistedState;
       },
       partialize: (state) => ({
@@ -475,6 +498,8 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
         pairedHosts: state.pairedHosts,
         lastConnectedHostIp: state.lastConnectedHostIp,
         lastConnectedToken: state.lastConnectedToken,
+        customRelayUrl: state.customRelayUrl,
+        recentRooms: state.recentRooms,
       }),
     }
   )

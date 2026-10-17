@@ -51,10 +51,11 @@ import type {
   DiscoveredHost,
   TrustedClient,
 } from './remoteTypes';
+import { wsRoomClient } from './wsRoomClient';
 
 class RemoteSyncManager {
   private isHostActive = false;
-  private activeClientTransport: 'wifi' | 'ble' = 'wifi';
+  private activeClientTransport: 'wifi' | 'ble' | 'internet' = 'wifi';
   private hostSubscriptions: (() => void)[] = [];
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private pendingLibraryQueries: Map<
@@ -67,6 +68,9 @@ class RemoteSyncManager {
     if (message.type !== 'ACTIVE_ARTWORK_SYNC' && message.type !== 'QUEUE_SYNC') {
       blePeripheralService.broadcast(message).catch(() => {});
     }
+    if (wsRoomClient.isConnected() && wsRoomClient.getRole() === 'host') {
+      wsRoomClient.sendFromHost(message);
+    }
   }
 
   // ==========================================
@@ -77,7 +81,7 @@ class RemoteSyncManager {
     return this.isHostActive;
   }
 
-  public getActiveClientTransport(): 'wifi' | 'ble' {
+  public getActiveClientTransport(): 'wifi' | 'ble' | 'internet' {
     return this.activeClientTransport;
   }
 
@@ -172,6 +176,12 @@ class RemoteSyncManager {
       console.warn('[RemoteSyncManager] BLE peripheral startHost failed:', err);
     });
 
+    // Start internet host room if code exists or generate one
+    const roomCode = useRemoteConnectStore.getState().internetRoomCode || `RUN-${Math.floor(1000 + Math.random() * 9000)}`;
+    this.startInternetHostRoom(roomCode).catch((err) => {
+      console.warn('[RemoteSyncManager] Internet host start failed:', err);
+    });
+
     useRemoteConnectStore.getState().setMode('host');
     this.isHostActive = true;
 
@@ -186,6 +196,7 @@ class RemoteSyncManager {
     tcpHostServer.stopServer();
     udpDiscoveryService.stopHostBeacon();
     blePeripheralService.stopHost().catch(() => {});
+    this.stopInternetHostRoom();
 
     useRemoteConnectStore.getState().clearConnectedClients();
     useRemoteConnectStore.getState().setMode('idle');
@@ -477,7 +488,7 @@ class RemoteSyncManager {
     });
   }
 
-  private handleHostCommand(msg: RemoteMessage, clientSocket: any): void {
+  private handleHostCommand(msg: RemoteMessage, clientSocket: any, wsClientId?: string): void {
     switch (msg.type) {
       case 'COMMAND_PLAY':
         TrackPlayer.play();
@@ -566,11 +577,11 @@ class RemoteSyncManager {
         break;
 
       case 'LIBRARY_QUERY':
-        this.handleLibraryQuery(msg, clientSocket);
+        this.handleLibraryQuery(msg, clientSocket, wsClientId);
         break;
 
       case 'REQUEST_ARTWORK':
-        this.handleArtworkRequest(msg.trackId, clientSocket);
+        this.handleArtworkRequest(msg.trackId, clientSocket, wsClientId);
         break;
 
       case 'COMMAND_SELECT_LYRICS':
@@ -578,7 +589,11 @@ class RemoteSyncManager {
         break;
 
       case 'COMMAND_GET_STATE':
-        if (clientSocket) {
+        if (wsClientId) {
+          this.buildHostInitialState(false).then((state) => {
+            wsRoomClient.sendFromHost(state, wsClientId);
+          });
+        } else if (clientSocket) {
           this.buildHostInitialState(false).then((state) => {
             tcpHostServer.sendToClient(clientSocket, state);
           });
@@ -610,7 +625,7 @@ class RemoteSyncManager {
     });
   }
 
-  private handleLibraryQuery(msg: LibraryQueryMessage, clientSocket: any): void {
+  private handleLibraryQuery(msg: LibraryQueryMessage, clientSocket: any, wsClientId?: string): void {
     const store = useStore.getState();
     const allAssets = store.allAssets.length > 0 ? store.allAssets : store.library;
     const metadataMap = store.metadataMap;
@@ -638,7 +653,11 @@ class RemoteSyncManager {
       hasMore: msg.offset + msg.limit < totalCount,
     };
 
-    tcpHostServer.sendToClient(clientSocket, response);
+    if (wsClientId) {
+      wsRoomClient.sendFromHost(response, wsClientId);
+    } else if (clientSocket) {
+      tcpHostServer.sendToClient(clientSocket, response);
+    }
   }
 
   private async handlePlayTrackCommand(msg: CommandPlayTrackMessage): Promise<void> {
@@ -733,13 +752,18 @@ class RemoteSyncManager {
     this.broadcastQueueSync();
   }
 
-  private async handleArtworkRequest(trackId: string, clientSocket: any): Promise<void> {
+  private async handleArtworkRequest(trackId: string, clientSocket: any, wsClientId?: string): Promise<void> {
     const base64 = await this.getCompressedArtworkBase64(trackId);
-    tcpHostServer.sendToClient(clientSocket, {
+    const resp: RemoteMessage = {
       type: 'ARTWORK_RESPONSE',
       trackId,
       base64,
-    });
+    };
+    if (wsClientId) {
+      wsRoomClient.sendFromHost(resp, wsClientId);
+    } else if (clientSocket) {
+      tcpHostServer.sendToClient(clientSocket, resp);
+    }
   }
 
   // ==========================================
@@ -851,9 +875,134 @@ class RemoteSyncManager {
     });
   }
 
+  public async startInternetHostRoom(customCode?: string): Promise<string> {
+    const code = (
+      customCode ||
+      useRemoteConnectStore.getState().internetRoomCode ||
+      `RUN-${Math.floor(1000 + Math.random() * 9000)}`
+    )
+      .toUpperCase()
+      .trim();
+
+    useRemoteConnectStore.getState().setInternetRoomCode(code);
+
+    const deviceId = useRemoteConnectStore.getState().localDeviceId;
+    const deviceName = useRemoteConnectStore.getState().customDeviceName;
+
+    wsRoomClient.startHostRoom(code, deviceId, deviceName, {
+      onHosted: (roomCode) => {
+        useRemoteConnectStore.getState().setInternetRoomCode(roomCode);
+      },
+      onClientConnected: async (client) => {
+        useRemoteConnectStore.getState().addConnectedClient({
+          id: client.clientId,
+          deviceId: client.deviceId,
+          deviceName: client.deviceName || 'İnternet Kumandası',
+          transport: 'internet',
+          connectedAt: Date.now(),
+        });
+
+        const initialState = await this.buildHostInitialState(false);
+        wsRoomClient.sendFromHost(initialState, client.clientId);
+
+        const activeTrack = await TrackPlayer.getActiveTrack();
+        if (activeTrack) {
+          const artworkBase64 = await this.getCompressedArtworkBase64(activeTrack.id, activeTrack.url);
+          if (artworkBase64) {
+            const artworkMsg: ActiveArtworkSyncMessage = {
+              type: 'ACTIVE_ARTWORK_SYNC',
+              trackId: activeTrack.id,
+              base64: artworkBase64,
+            };
+            wsRoomClient.sendFromHost(artworkMsg, client.clientId);
+          }
+        }
+      },
+      onClientDisconnected: (clientId) => {
+        useRemoteConnectStore.getState().removeConnectedClient(clientId);
+      },
+      onMessage: (message, clientId) => {
+        this.handleHostCommand(message, null, clientId);
+      },
+      onError: (err) => {
+        console.warn('[RemoteSyncManager] Internet Host Error:', err);
+      },
+      onClosed: () => {
+        console.log('[RemoteSyncManager] Internet Host Room closed');
+      },
+    });
+
+    return code;
+  }
+
+  public stopInternetHostRoom(): void {
+    wsRoomClient.disconnect();
+  }
+
+  public async connectToInternetRoom(roomCode: string): Promise<void> {
+    const formattedCode = roomCode.trim().toUpperCase();
+    if (!formattedCode) return;
+
+    try {
+      await TrackPlayer.pause();
+    } catch {
+      // ignore
+    }
+
+    if (this.isHostActive) {
+      this.detachHostListeners();
+      blePeripheralService.stopHost().catch(() => {});
+      udpDiscoveryService.stopHostBeacon();
+      tcpHostServer.stopServer();
+      this.stopInternetHostRoom();
+      this.isHostActive = false;
+    }
+
+    tcpClient.disconnect();
+    bleCentralService.disconnect().catch(() => {});
+
+    this.activeClientTransport = 'internet';
+    useRemoteConnectStore.getState().setMode('client');
+    useRemoteConnectStore.getState().setConnectedDeviceName(`Oda: ${formattedCode}`);
+    useRemoteConnectStore.getState().setConnectionStatus('connecting');
+
+    const deviceId = useRemoteConnectStore.getState().localDeviceId;
+    const deviceName = useRemoteConnectStore.getState().customDeviceName;
+
+    wsRoomClient.joinClientRoom(formattedCode, deviceId, deviceName, {
+      onJoined: (info) => {
+        useRemoteConnectStore.getState().setConnectionStatus('connected');
+        useRemoteConnectStore.getState().setConnectedDeviceName(info.hostName || `Oda: ${info.roomCode}`);
+        useRemoteConnectStore.getState().addRecentRoom(info.roomCode);
+      },
+      onMessage: (message) => {
+        this.handleClientIncomingMessage(message);
+      },
+      onError: (error) => {
+        useRemoteConnectStore.getState().setConnectionStatus('error', error);
+        remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
+        useRemoteConnectStore.getState().setMode('idle');
+        if (useRemoteConnectStore.getState().isServiceEnabled) {
+          this.startHostService().catch(() => {});
+        }
+      },
+      onClosed: () => {
+        useRemoteConnectStore.getState().setConnectionStatus('disconnected');
+        remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
+        useRemoteConnectStore.getState().setMode('idle');
+        if (useRemoteConnectStore.getState().isServiceEnabled) {
+          this.startHostService().catch(() => {});
+        }
+      },
+    });
+  }
+
   public disconnectConnectedClient(clientId: string): void {
     if (clientId === 'ble_client') {
       useRemoteConnectStore.getState().removeConnectedClient('ble_client');
+    } else if (clientId.startsWith('client_')) {
+      wsRoomClient.kickClient(clientId);
+      useRemoteConnectStore.getState().removeConnectedClient(clientId);
     } else {
       tcpHostServer.disconnectClient(clientId);
     }
@@ -863,6 +1012,8 @@ class RemoteSyncManager {
     remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
     if (this.activeClientTransport === 'ble') {
       bleCentralService.disconnect().catch(() => {});
+    } else if (this.activeClientTransport === 'internet') {
+      wsRoomClient.disconnect();
     } else {
       tcpClient.disconnect();
     }
@@ -882,6 +1033,8 @@ class RemoteSyncManager {
       bleCentralService.sendCommand(message).catch((err) => {
         console.warn('[RemoteSyncManager] BLE sendCommand failed:', err);
       });
+    } else if (this.activeClientTransport === 'internet') {
+      wsRoomClient.sendFromClient(message);
     } else {
       tcpClient.sendMessage(message);
     }
@@ -934,7 +1087,7 @@ class RemoteSyncManager {
         remoteMediaNotification
           .syncRemoteTrackToLocalPlayer(msg.activeTrack, msg.isPlaying, null, msg.position)
           .catch(() => {});
-        if (this.activeClientTransport === 'wifi') {
+        if (this.activeClientTransport === 'wifi' || this.activeClientTransport === 'internet') {
           this.fetchRemoteLibrary().catch(() => {});
         }
         break;
@@ -963,7 +1116,7 @@ class RemoteSyncManager {
             )
             .catch(() => {});
         }
-        if (msg.track?.id && msg.track.hasArtwork && this.activeClientTransport === 'wifi') {
+        if (msg.track?.id && msg.track.hasArtwork && (this.activeClientTransport === 'wifi' || this.activeClientTransport === 'internet')) {
           this.sendClientCommand({ type: 'REQUEST_ARTWORK', trackId: msg.track.id });
         }
         break;
@@ -1011,7 +1164,7 @@ class RemoteSyncManager {
   }
 
   public async fetchRemoteLibrary(search = ''): Promise<void> {
-    if (this.activeClientTransport !== 'wifi') return;
+    if (this.activeClientTransport !== 'wifi' && this.activeClientTransport !== 'internet') return;
     try {
       useRemoteConnectStore.getState().setRemoteLibraryLoading(true);
       const result = await this.queryRemoteLibrary(search, 0, 2000);

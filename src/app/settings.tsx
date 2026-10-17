@@ -83,6 +83,8 @@ export default function SettingsScreen() {
   const remoteMode = useRemoteConnectStore((s) => s.mode);
   const connectionStatus = useRemoteConnectStore((s) => s.connectionStatus);
   const connectedDeviceName = useRemoteConnectStore((s) => s.connectedDeviceName);
+  const customRelayUrl = useRemoteConnectStore((s) => s.customRelayUrl);
+  const setCustomRelayUrl = useRemoteConnectStore((s) => s.setCustomRelayUrl);
 
   const languageOptions = useMemo(
     () => [
@@ -592,6 +594,24 @@ export default function SettingsScreen() {
             placeholder={DEFAULT_DEVICE_NAME}
             placeholderTextColor="#71717a"
             maxLength={30}
+          />
+        </View>
+
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.rowLabel}>Özel Relay Sunucusu</Text>
+            <Text style={styles.rowHint}>
+              Kendi barındırdığınız Relay sunucu adresi (örn: wss://connecto.onrender.com). Boş bırakılırsa varsayılan sunucu kullanılır.
+            </Text>
+          </View>
+          <TextInput
+            style={[styles.smallInput, { width: 170, textAlign: 'left', paddingHorizontal: 10 }]}
+            value={customRelayUrl || ''}
+            onChangeText={(val) => setCustomRelayUrl(val.trim() || null)}
+            placeholder="Varsayılan (Bulut)"
+            placeholderTextColor="#71717a"
+            autoCapitalize="none"
+            autoCorrect={false}
           />
         </View>
 

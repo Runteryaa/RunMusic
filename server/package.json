@@ -1,0 +1,12 @@
+{
+  "name": "connecto-runmusic-relay",
+  "version": "1.0.0",
+  "description": "Unified Relay Proxy for Connecto Minecraft and RunMusic Internet Remote",
+  "main": "relay.js",
+  "scripts": {
+    "start": "node relay.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
