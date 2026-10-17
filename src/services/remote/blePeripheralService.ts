@@ -1,4 +1,5 @@
 import { Buffer } from 'buffer';
+import { Platform } from 'react-native';
 import RunMusicBlePeripheralModule from '../../../modules/runmusic-ble-peripheral';
 import { NDJSONParser, serializeNDJSON } from './ndjsonFramer';
 import { requestBlePermissions } from './blePermissions';
@@ -39,6 +40,7 @@ class BlePeripheralService {
   }
 
   public isSupported(): boolean {
+    if (Platform.OS !== 'android') return false;
     return RunMusicBlePeripheralModule?.isSupported() ?? false;
   }
 
@@ -48,6 +50,7 @@ class BlePeripheralService {
 
   public async startHost(deviceName: string): Promise<boolean> {
     if (this.isAdvertising) return true;
+    if (Platform.OS !== 'android') return false;
     if (!RunMusicBlePeripheralModule) {
       console.warn('[BlePeripheralService] RunMusicBlePeripheralModule not installed');
       return false;

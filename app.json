@@ -8,8 +8,24 @@
     "scheme": "runmusic",
     "userInterfaceStyle": "dark",
     "platforms": [
-      "android"
+      "android",
+      "ios"
     ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.runterya.music",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ],
+        "NSLocalNetworkUsageDescription": "RunMusic, aynı Wi-Fi ağındaki diğer cihazlara bağlanarak müzik kontrolü sağlamak için yerel ağ izni ister.",
+        "NSBluetoothAlwaysUsageDescription": "RunMusic, diğer cihazları uzaktan kumanda etmek için Bluetooth bağlantısı kullanır.",
+        "NSBluetoothPeripheralUsageDescription": "RunMusic, diğer cihazları uzaktan kumanda etmek için Bluetooth bağlantısı kullanır.",
+        "NSUserTrackingUsageDescription": "Size özel ve uygun reklam deneyimi sunabilmek için izniniz istenmektedir.",
+        "UIFileSharingEnabled": true,
+        "LSSupportsOpeningDocumentsInPlace": true
+      }
+    },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -62,14 +78,18 @@
       [
         "react-native-google-mobile-ads",
         {
-          "androidAppId": "ca-app-pub-3940256099942544~3347511713"
+          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
+          "iosAppId": "ca-app-pub-3940256099942544~1458737195",
+          "userTrackingUsageDescription": "Size özel ve uygun reklam deneyimi sunabilmek için izniniz istenmektedir."
         }
       ],
       [
         "react-native-ble-plx",
         {
-          "isBackgroundEnabled": true,
-          "modes": ["peripheral", "central"],
+          "isBackgroundEnabled": false,
+          "modes": [
+            "central"
+          ],
           "bluetoothAlwaysPermission": "RunMusic diğer cihazları kontrol etmek ve bağlanmak için Bluetooth kullanır."
         }
       ]
@@ -91,11 +111,12 @@
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 3000,
       "requestHeaders": {
-        "expo-channel-name": "beta"
+        "expo-channel-name": "production"
       }
     }
   },
   "react-native-google-mobile-ads": {
-    "android_app_id": "ca-app-pub-3940256099942544~3347511713"
+    "android_app_id": "ca-app-pub-3940256099942544~3347511713",
+    "ios_app_id": "ca-app-pub-3940256099942544~1458737195"
   }
 }

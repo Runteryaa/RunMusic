@@ -11,4 +11,11 @@ declare class AudioArtworkModule extends NativeModule {
   getDominantColorAsync(uri: string): Promise<string | null>;
 }
 
-export default requireNativeModule<AudioArtworkModule>('AudioArtwork');
+let audioArtworkModule: AudioArtworkModule | null = null;
+try {
+  audioArtworkModule = requireNativeModule<AudioArtworkModule>('AudioArtwork');
+} catch (e) {
+  // Native module not available on iOS or unsupported platforms
+}
+
+export default audioArtworkModule;
