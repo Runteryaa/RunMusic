@@ -359,3 +359,25 @@ for (const filePath of routerToolbarFiles) {
     },
   ]);
 }
+
+// 8. Patch expo-image-picker for iOS < 26 SDK compatibility
+const imagePickerFiles = [
+  path.join(__dirname, '..', 'node_modules', 'expo-image-picker', 'ios', 'MediaHandler.swift'),
+];
+
+walkDir(path.join(__dirname, '..', 'ios', 'Pods'), /MediaHandler\.swift$/, (file) => {
+  if (!imagePickerFiles.includes(file)) imagePickerFiles.push(file);
+});
+
+for (const filePath of imagePickerFiles) {
+  patchFile(filePath, [
+    {
+      search: /private\s+func\s+getMimeType\(from\s+asset:\s*PHAsset\?,\s*fileExtension:\s*String\)\s*->\s*String\?\s*\{[\s\S]*?return\s+utType\?\.preferredMIMEType\s*\n\s*\}/g,
+      replace: 'private func getMimeType(from asset: PHAsset?, fileExtension: String) -> String? {\n    let utType: UTType? = UTType(filenameExtension: fileExtension)\n    return utType?.preferredMIMEType\n  }',
+    },
+    {
+      search: /private\s+func\s+getMimeType\(from\s+resource:\s*PHAssetResource,\s*fileExtension:\s*String\)\s*->\s*String\?\s*\{[\s\S]*?return\s+utType\?\.preferredMIMEType\s*\n\s*\}/g,
+      replace: 'private func getMimeType(from resource: PHAssetResource, fileExtension: String) -> String? {\n    let utType: UTType? = UTType(resource.uniformTypeIdentifier) ?? UTType(filenameExtension: fileExtension)\n    return utType?.preferredMIMEType\n  }',
+    },
+  ]);
+}
