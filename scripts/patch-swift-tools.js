@@ -75,6 +75,23 @@ for (const dir of searchDirs) {
       { search: /expo\.RuntimeScheduler\(\)/g, replace: 'expo.RuntimeScheduler.create()' },
       { search: /expo\.RuntimeScheduler\(scheduler,\s*fn\)/g, replace: 'expo.RuntimeScheduler.create(scheduler, fn)' },
       { search: /expo\.HostFunctionClosure\(context,\s*call,\s*deallocate\)/g, replace: 'expo.HostFunctionClosure.create(context, call, deallocate)' },
+      // Swift 6.1 region-based sending fix: pass raw pointer addresses as UInt scalars to avoid crossing isolation boundaries
+      {
+        search: /nonisolated\(unsafe\)\s+let\s+thisPtr\s*=\s*thisPtr\s*\n\s*nonisolated\(unsafe\)\s+let\s+argumentsPtr\s*=\s*argumentsPtr\s*\n\s*nonisolated\(unsafe\)\s+let\s+resultPtr\s*=\s*resultPtr/g,
+        replace: 'let thisAddr = UInt(bitPattern: thisPtr)\n    let argsAddr = UInt(bitPattern: argumentsPtr)\n    let resAddr = UInt(bitPattern: resultPtr)',
+      },
+      {
+        search: /return\s+forwardingSwiftErrorsToJS\(runtime:\s*runtime\)\s*\{\s*\n\s*let\s+this\s*=/g,
+        replace: 'return forwardingSwiftErrorsToJS(runtime: runtime) {\n          let thisPtr = UnsafePointer<facebook.jsi.Value>(bitPattern: thisAddr)!\n          let argumentsPtr = UnsafePointer<facebook.jsi.Value>(bitPattern: argsAddr)\n          let resultPtr = UnsafeMutablePointer<facebook.jsi.Value>(bitPattern: resAddr)!\n          let this =',
+      },
+      {
+        search: /return\s+forwardingSwiftErrorsToJS\(runtime:\s*runtime\)\s*\{\s*\n\s*let\s+arguments\s*=\s*JavaScriptValuesBuffer/g,
+        replace: 'return forwardingSwiftErrorsToJS(runtime: runtime) {\n          let thisPtr = UnsafePointer<facebook.jsi.Value>(bitPattern: thisAddr)!\n          let argumentsPtr = UnsafePointer<facebook.jsi.Value>(bitPattern: argsAddr)\n          let resultPtr = UnsafeMutablePointer<facebook.jsi.Value>(bitPattern: resAddr)!\n          let arguments = JavaScriptValuesBuffer',
+      },
+      {
+        search: /nonisolated\(unsafe\)\s+let\s+resultPtr\s*=\s*resultPtr\s*\n\s*return\s+withGuaranteedContext\(context\)\s*\{\s*\(context:\s*HostObjectContext,\s*runtime\)\s*in\s*\n\s*return\s+JavaScriptActor\.assumeIsolated\s*\{\s*\n\s*return\s+forwardingSwiftErrorsToJS\(runtime:\s*runtime\)\s*\{\s*\n\s*try\s+context\.get\(propertyName\)\.writeJSIValue\(to:\s*resultPtr\)/g,
+        replace: 'let resAddr = UInt(bitPattern: resultPtr)\n      return withGuaranteedContext(context) { (context: HostObjectContext, runtime) in\n        return JavaScriptActor.assumeIsolated {\n          return forwardingSwiftErrorsToJS(runtime: runtime) {\n            let resultPtr = UnsafeMutablePointer<facebook.jsi.Value>(bitPattern: resAddr)!\n            try context.get(propertyName).writeJSIValue(to: resultPtr)',
+      },
       // Classes with mutable weak var runtime conforming to Sendable must use @unchecked Sendable
       {
         search: /class\s+JavaScriptPropNameID\s*:\s*JavaScriptType\s*\{/g,
