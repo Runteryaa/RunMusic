@@ -218,3 +218,33 @@ inline void appendPropNameIdUtf8(HostObjectCallbacks::PropNameIds &vector, faceb
     console.log(`[patch-swift-tools] Successfully patched ${header}`);
   }
 }
+
+// 6. Patch any .swiftinterface files (e.g. from prebuilt xcframeworks) for Swift 6.1.2 compatibility
+function patchSwiftInterfaces(dir) {
+  if (!fs.existsSync(dir)) return;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      patchSwiftInterfaces(full);
+    } else if (entry.name.endsWith('.swiftinterface')) {
+      let content = fs.readFileSync(full, 'utf8');
+      let modified = false;
+      if (content.includes('Apple Swift version 6.3')) {
+        content = content.replace(/Apple Swift version 6\.3[\d.]*/g, 'Apple Swift version 6.1.2');
+        content = content.replace(/-interface-compiler-version 6\.3[\d.]*/g, '-interface-compiler-version 6.1.2');
+        modified = true;
+      }
+      if (content.includes('@_Concurrency.MainActor')) {
+        content = content.replace(/@_Concurrency\.MainActor/g, '@MainActor');
+        modified = true;
+      }
+      if (modified) {
+        fs.writeFileSync(full, content, 'utf8');
+        console.log(`[patch-swift-tools] Sanitized swiftinterface: ${full}`);
+      }
+    }
+  }
+}
+
+patchSwiftInterfaces(path.join(__dirname, '..', 'ios', 'Pods'));

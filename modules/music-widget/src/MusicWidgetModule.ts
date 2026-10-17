@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { NativeModule, requireNativeModule } from 'expo';
 
 declare class MusicWidgetModule extends NativeModule {
@@ -5,4 +6,13 @@ declare class MusicWidgetModule extends NativeModule {
   moveAppToBack?(): boolean;
 }
 
-export default requireNativeModule<MusicWidgetModule>('MusicWidget');
+const mockModule: MusicWidgetModule = {
+  updateWidget: async () => {},
+  moveAppToBack: () => false,
+  addListener: () => ({ remove: () => {} }),
+  removeListeners: () => {},
+} as unknown as MusicWidgetModule;
+
+export default Platform.OS === 'android'
+  ? requireNativeModule<MusicWidgetModule>('MusicWidget')
+  : mockModule;
