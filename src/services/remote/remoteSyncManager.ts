@@ -880,6 +880,11 @@ class RemoteSyncManager {
   }
 
   public async startInternetHostRoom(customCode?: string): Promise<string> {
+    if (useRemoteConnectStore.getState().mode === 'client') {
+      console.log('[RemoteSyncManager] Cannot start internet host room while in client mode');
+      return '';
+    }
+
     const code = (
       customCode ||
       useRemoteConnectStore.getState().internetRoomCode ||
@@ -887,6 +892,14 @@ class RemoteSyncManager {
     )
       .toUpperCase()
       .trim();
+
+    if (
+      wsRoomClient.isConnected() &&
+      wsRoomClient.getRole() === 'host' &&
+      wsRoomClient.getRoomCode() === code
+    ) {
+      return code;
+    }
 
     useRemoteConnectStore.getState().setInternetRoomCode(code);
 
@@ -993,18 +1006,10 @@ class RemoteSyncManager {
       onError: (error) => {
         useRemoteConnectStore.getState().setConnectionStatus('error', error);
         remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
-        useRemoteConnectStore.getState().setMode('idle');
-        if (useRemoteConnectStore.getState().isServiceEnabled) {
-          this.startHostService().catch(() => {});
-        }
       },
       onClosed: () => {
         useRemoteConnectStore.getState().setConnectionStatus('disconnected');
         remoteMediaNotification.cleanupRemoteMediaNotification().catch(() => {});
-        useRemoteConnectStore.getState().setMode('idle');
-        if (useRemoteConnectStore.getState().isServiceEnabled) {
-          this.startHostService().catch(() => {});
-        }
       },
     });
   }

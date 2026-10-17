@@ -222,6 +222,7 @@ function handleRunMusicConnection(ws, initialRoomCode) {
         if (role === 'client') {
           const room = runMusicRooms.get(normalizedCode);
           if (!room || (!room.host && !room.hostOffline)) {
+            console.warn(`[RunMusic] Client rejected for room "${normalizedCode}": Room not found or host gone. Active rooms: [${Array.from(runMusicRooms.keys()).join(', ')}]`);
             ws.send(JSON.stringify({ type: 'ROOM_ERROR', error: 'Oda bulunamadı veya Host şu an çevrimdışı.' }));
             return;
           }

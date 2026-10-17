@@ -116,6 +116,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const setRemoteServiceEnabled = useRemoteConnectStore((s) => s.setServiceEnabled);
   const remoteMode = useRemoteConnectStore((s) => s.mode);
   const remoteConnectionStatus = useRemoteConnectStore((s) => s.connectionStatus);
+  const errorMessage = useRemoteConnectStore((s) => s.errorMessage);
   const connectedDeviceName = useRemoteConnectStore((s) => s.connectedDeviceName);
   const connectedClients = useRemoteConnectStore((s) => s.connectedClients);
 
@@ -130,8 +131,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const [manualPort, setManualPort] = useState(RUNMUSIC_TCP_PORT.toString());
 
   useEffect(() => {
-    if (!isConnectMode || player.isRemote) {
-      if (!player.isRemote) {
+    if (!isConnectMode || remoteMode === 'client') {
+      if (remoteMode !== 'client') {
         setDiscoveredHosts([]);
         setDiscoveredBlePeers([]);
       }
@@ -153,17 +154,15 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         unsubscribe();
       };
     } else if (activeTransportTab === 'internet') {
-      if (isRemoteServiceEnabled && (!wsRoomClient.isConnected() || !internetRoomCode)) {
+      if (isRemoteServiceEnabled && !wsRoomClient.isConnected()) {
         remoteSyncManager.startInternetHostRoom().catch(() => {});
       }
     }
   }, [
     isConnectMode,
-    player.isRemote,
+    remoteMode,
     activeTransportTab,
     isRemoteServiceEnabled,
-    internetRoomCode,
-    internetHostStatus,
     setDiscoveredHosts,
     setDiscoveredBlePeers,
   ]);
@@ -2774,12 +2773,12 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               {/* İNTERNET MODU UI */}
               {activeTransportTab === 'internet' ? (
                 <View style={{ flex: 1 }}>
-                  {/* Host Section: Oda Kodu Kartı (Servis Açıksa) */}
-                  {isRemoteServiceEnabled && (
+                  {/* Client Mode: Bağlı Kumanda Durum Kartı */}
+                  {remoteMode === 'client' ? (
                     <View style={[styles.connectRoomCard, { backgroundColor: theme.surface }]}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                         <Text style={[styles.connectSectionLabel, { color: theme.textAccent, marginBottom: 0 }]}>
-                          BU TELEFONUN ODA KODU
+                          BAĞLI UZAKTAN KUMANDA
                         </Text>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                           <View
@@ -2788,9 +2787,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                               height: 8,
                               borderRadius: 4,
                               backgroundColor:
-                                internetHostStatus === 'connected'
+                                remoteConnectionStatus === 'connected'
                                   ? '#22c55e'
-                                  : internetHostStatus === 'connecting'
+                                  : remoteConnectionStatus === 'connecting'
                                   ? '#f59e0b'
                                   : '#ef4444',
                             }}
@@ -2799,68 +2798,148 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                             style={{
                               fontSize: 11,
                               color:
-                                internetHostStatus === 'connected'
+                                remoteConnectionStatus === 'connected'
                                   ? '#22c55e'
-                                  : internetHostStatus === 'connecting'
+                                  : remoteConnectionStatus === 'connecting'
                                   ? '#f59e0b'
                                   : '#ef4444',
                               fontWeight: '600',
                             }}>
-                            {internetHostStatus === 'connected'
-                              ? 'Canlı'
-                              : internetHostStatus === 'connecting'
+                            {remoteConnectionStatus === 'connected'
+                              ? 'Bağlandı'
+                              : remoteConnectionStatus === 'connecting'
                               ? 'Bağlanıyor...'
-                              : 'Çevrimdışı'}
+                              : 'Bağlantı Hatası'}
                           </Text>
                         </View>
                       </View>
 
-                      <Text style={[styles.connectRoomCodeBadge, { color: theme.primary }]}>
-                        {internetRoomCode || 'Oda Başlatılıyor...'}
+                      <Text style={[styles.connectRoomCodeBadge, { color: theme.primary, fontSize: 24, marginVertical: 8 }]}>
+                        {connectedDeviceName || 'Uzak Cihaz'}
                       </Text>
 
+                      {remoteConnectionStatus === 'error' && (
+                        <Text style={{ color: '#ef4444', fontSize: 13, marginBottom: 12, textAlign: 'center', fontWeight: '500' }}>
+                          {errorMessage || 'Oda bulunamadı veya Host şu an çevrimdışı.'}
+                        </Text>
+                      )}
+
                       <View style={styles.connectRoomActionsRow}>
-                        <TouchableOpacity
-                          style={[styles.connectRoomBtn, { backgroundColor: `${theme.primary}25` }]}
-                          activeOpacity={0.75}
-                          onPress={() => {
-                            if (internetRoomCode) {
-                              Share.share({
-                                message: `RunMusic İnternet Kumandası Oda Kodu: ${internetRoomCode}\nRunMusic uygulamasından bu kodu girerek uzaktan müzik kontrolü yapabilirsiniz!`,
-                              });
-                            }
-                          }}>
-                          <Ionicons name="share-social-outline" size={16} color={theme.primary} />
-                          <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>Paylaş</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={[styles.connectRoomBtn, { backgroundColor: 'rgba(255, 255, 255, 0.08)' }]}
-                          activeOpacity={0.75}
-                          onPress={() => {
-                            remoteSyncManager.startInternetHostRoom().catch(() => {});
-                          }}>
-                          <Ionicons name="refresh-outline" size={16} color="#ffffff" />
-                          <Text style={{ color: '#ffffff', fontWeight: '600', fontSize: 12 }}>Yeni Kod</Text>
-                        </TouchableOpacity>
-
-                        {internetHostStatus !== 'connected' && (
+                        {remoteConnectionStatus === 'error' && (
                           <TouchableOpacity
                             style={[styles.connectRoomBtn, { backgroundColor: `${theme.primary}35` }]}
                             activeOpacity={0.75}
                             onPress={() => {
-                              remoteSyncManager.startInternetHostRoom().catch(() => {});
+                              const codeToRetry = inputRoomCode.trim() || (connectedDeviceName?.replace('Oda: ', '') || '');
+                              if (codeToRetry) {
+                                remoteSyncManager.connectToInternetRoom(codeToRetry).catch(() => {});
+                              }
                             }}>
-                            <Ionicons name="link-outline" size={16} color={theme.primary} />
-                            <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>Yeniden Bağlan</Text>
+                            <Ionicons name="refresh-outline" size={16} color={theme.primary} />
+                            <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>Tekrar Dene</Text>
                           </TouchableOpacity>
                         )}
-                      </View>
 
-                      <Text style={[styles.connectEmptySubtext, { marginTop: 8, textAlign: 'center' }]}>
-                        Farklı bir Wi-Fi veya hücresel veri (4G/5G) ağındaki cihazınızdan bu kodu girerek anında bağlanabilirsiniz.
-                      </Text>
+                        <TouchableOpacity
+                          style={[styles.connectRoomBtn, { backgroundColor: 'rgba(239, 68, 68, 0.2)' }]}
+                          activeOpacity={0.75}
+                          onPress={() => {
+                            remoteSyncManager.disconnectClient();
+                          }}>
+                          <Ionicons name="close-circle-outline" size={16} color="#ef4444" />
+                          <Text style={{ color: '#ef4444', fontWeight: '700', fontSize: 12 }}>Bağlantıyı Kes</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
+                  ) : (
+                    /* Host Section: Oda Kodu Kartı (Servis Açıksa) */
+                    isRemoteServiceEnabled && (
+                      <View style={[styles.connectRoomCard, { backgroundColor: theme.surface }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Text style={[styles.connectSectionLabel, { color: theme.textAccent, marginBottom: 0 }]}>
+                            BU TELEFONUN ODA KODU
+                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                            <View
+                              style={{
+                                width: 8,
+                                height: 8,
+                                borderRadius: 4,
+                                backgroundColor:
+                                  internetHostStatus === 'connected'
+                                    ? '#22c55e'
+                                    : internetHostStatus === 'connecting'
+                                    ? '#f59e0b'
+                                    : '#ef4444',
+                              }}
+                            />
+                            <Text
+                              style={{
+                                fontSize: 11,
+                                color:
+                                  internetHostStatus === 'connected'
+                                    ? '#22c55e'
+                                    : internetHostStatus === 'connecting'
+                                    ? '#f59e0b'
+                                    : '#ef4444',
+                                fontWeight: '600',
+                              }}>
+                              {internetHostStatus === 'connected'
+                                ? 'Canlı'
+                                : internetHostStatus === 'connecting'
+                                ? 'Bağlanıyor...'
+                                : 'Çevrimdışı'}
+                            </Text>
+                          </View>
+                        </View>
+
+                        <Text style={[styles.connectRoomCodeBadge, { color: theme.primary }]}>
+                          {internetRoomCode || 'Oda Başlatılıyor...'}
+                        </Text>
+
+                        <View style={styles.connectRoomActionsRow}>
+                          <TouchableOpacity
+                            style={[styles.connectRoomBtn, { backgroundColor: `${theme.primary}25` }]}
+                            activeOpacity={0.75}
+                            onPress={() => {
+                              if (internetRoomCode) {
+                                Share.share({
+                                  message: `RunMusic İnternet Kumandası Oda Kodu: ${internetRoomCode}\nRunMusic uygulamasından bu kodu girerek uzaktan müzik kontrolü yapabilirsiniz!`,
+                                });
+                              }
+                            }}>
+                            <Ionicons name="share-social-outline" size={16} color={theme.primary} />
+                            <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>Paylaş</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={[styles.connectRoomBtn, { backgroundColor: 'rgba(255, 255, 255, 0.08)' }]}
+                            activeOpacity={0.75}
+                            onPress={() => {
+                              remoteSyncManager.startInternetHostRoom().catch(() => {});
+                            }}>
+                            <Ionicons name="refresh-outline" size={16} color="#ffffff" />
+                            <Text style={{ color: '#ffffff', fontWeight: '600', fontSize: 12 }}>Yeni Kod</Text>
+                          </TouchableOpacity>
+
+                          {internetHostStatus !== 'connected' && (
+                            <TouchableOpacity
+                              style={[styles.connectRoomBtn, { backgroundColor: `${theme.primary}35` }]}
+                              activeOpacity={0.75}
+                              onPress={() => {
+                                remoteSyncManager.startInternetHostRoom().catch(() => {});
+                              }}>
+                              <Ionicons name="link-outline" size={16} color={theme.primary} />
+                              <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>Yeniden Bağlan</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+
+                        <Text style={[styles.connectEmptySubtext, { marginTop: 8, textAlign: 'center' }]}>
+                          Farklı bir Wi-Fi veya hücresel veri (4G/5G) ağındaki cihazınızdan bu kodu girerek anında bağlanabilirsiniz.
+                        </Text>
+                      </View>
+                    )
                   )}
 
                   {/* Client Section: Bir Odaya Bağlan */}
@@ -2897,14 +2976,21 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           },
                         ]}
                         activeOpacity={0.8}
-                        disabled={inputRoomCode.trim().length === 0}
+                        disabled={
+                          inputRoomCode.trim().length === 0 ||
+                          (remoteMode === 'client' && remoteConnectionStatus === 'connecting')
+                        }
                         onPress={() => {
                           if (inputRoomCode.trim()) {
                             remoteSyncManager.connectToInternetRoom(inputRoomCode.trim()).catch(() => {});
                           }
                         }}>
                         <Ionicons name="arrow-forward" size={16} color="#ffffff" />
-                        <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 13 }}>Bağlan</Text>
+                        <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 13 }}>
+                          {remoteMode === 'client' && remoteConnectionStatus === 'connecting'
+                            ? 'Bağlanıyor...'
+                            : 'Bağlan'}
+                        </Text>
                       </TouchableOpacity>
                     </View>
 

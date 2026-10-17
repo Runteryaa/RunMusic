@@ -99,10 +99,20 @@ class WSRoomClient {
     deviceName: string,
     callbacks: WSHostCallbacks
   ): void {
+    if (useRemoteConnectStore.getState().mode === 'client') {
+      console.log('[WSRoomClient] Cannot startHostRoom while in client mode');
+      return;
+    }
+
+    const normalizedCode = roomCode.toUpperCase().trim();
+    if (this.isConnected() && this.role === 'host' && this.roomCode === normalizedCode) {
+      return;
+    }
+
     this.disconnect();
     this.isExplicitDisconnect = false;
     this.role = 'host';
-    this.roomCode = roomCode.toUpperCase().trim();
+    this.roomCode = normalizedCode;
     this.hostCallbacks = callbacks;
     this.reconnectAttempts = 0;
 
