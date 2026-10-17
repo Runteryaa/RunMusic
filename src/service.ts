@@ -146,9 +146,9 @@ export default async function playbackService() {
               artwork: typeof event.track.artwork === 'string' ? event.track.artwork : undefined,
             },
           },
-          true
+          false
         );
-        await updateQueueSnapshotActiveIndex(event.index, 0);
+        updateQueueSnapshotActiveIndex(event.index, 0).catch(() => {});
 
         if (MusicWidgetModule && MusicWidgetModule.updateWidget) {
           const isPlaying = (await TrackPlayer.getPlaybackState()).state === State.Playing;

@@ -54,6 +54,10 @@ interface RemoteConnectStoreState {
   // Remote State
   remoteState: RemotePlaybackState;
 
+  // Remote Library (Wi-Fi)
+  remoteLibrary: RemoteTrackSummary[];
+  isRemoteLibraryLoading: boolean;
+
   // Clock-Skew Immune Position Interpolation
   lastKnownPosition: number;
   clientSyncReceivedAt: number;
@@ -81,6 +85,8 @@ interface RemoteConnectStoreState {
   setRemoteQueueSync: (msg: QueueSyncMessage) => void;
   setRemoteArtworkUri: (uri: string | null) => void;
   setRemoteLyrics: (lyrics: RemoteLyricsSummary | null) => void;
+  setRemoteLibrary: (tracks: RemoteTrackSummary[]) => void;
+  setRemoteLibraryLoading: (loading: boolean) => void;
 
   // Optimistic setters
   setOptimisticIsPlaying: (playing: boolean) => void;
@@ -159,6 +165,8 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       pendingPairChallenge: null,
       pendingPinVerification: null,
       remoteState: { ...initialRemotePlaybackState },
+      remoteLibrary: [],
+      isRemoteLibraryLoading: false,
 
       lastKnownPosition: 0,
       clientSyncReceivedAt: 0,
@@ -327,6 +335,9 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
         }));
       },
 
+      setRemoteLibrary: (tracks) => set({ remoteLibrary: tracks }),
+      setRemoteLibraryLoading: (loading) => set({ isRemoteLibraryLoading: loading }),
+
       // Optimistic actions for instant UI feedback
       setOptimisticIsPlaying: (playing) => {
         set((state) => ({
@@ -377,6 +388,8 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
           errorMessage: null,
           connectedDeviceName: null,
           remoteState: { ...initialRemotePlaybackState },
+          remoteLibrary: [],
+          isRemoteLibraryLoading: false,
           lastKnownPosition: 0,
           clientSyncReceivedAt: 0,
           interpolatedPosition: 0,

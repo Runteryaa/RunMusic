@@ -22,7 +22,10 @@ import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
+import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
+import { useActivePlayer } from '../hooks/useActivePlayer';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
+import type { RemoteTrackSummary } from '../services/remote/remoteTypes';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { EditTrackModal, EditTrackTarget } from '../components/EditTrackModal';
 import { AdBanner } from '../components/AdBanner';
@@ -73,6 +76,14 @@ export default function LibraryScreen() {
 
   const openFullscreenPlayer = usePlayerUIStore((s) => s.openFullscreenPlayer);
   const activeTrack = useActiveTrack();
+  const isRemoteConnected = useRemoteConnectStore((s) => s.isRemoteConnected());
+  const connectedDeviceName = useRemoteConnectStore((s) => s.connectedDeviceName);
+  const remoteLibrary = useRemoteConnectStore((s) => s.remoteLibrary);
+  const isRemoteLibraryLoading = useRemoteConnectStore((s) => s.isRemoteLibraryLoading);
+  const activeTransport = remoteSyncManager.getActiveClientTransport();
+  const player = useActivePlayer();
+
+  const isShowingRemoteLibrary = isRemoteConnected && activeTransport === 'wifi';
 
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [hasScannedOnce, setHasScannedOnce] = useState(library.length > 0);
@@ -452,19 +463,82 @@ export default function LibraryScreen() {
     });
   }, [fullSortedListWithInfo, searchQuery]);
 
+  const remoteDisplayedList = useMemo(() => {
+    if (!searchQuery.trim()) return remoteLibrary;
+    const q = normalizeSearchText(searchQuery);
+    if (!q) return remoteLibrary;
+    const terms = q.split(' ').filter(Boolean);
+    return remoteLibrary.filter((item) => {
+      const target = normalizeSearchText(`${item.title} ${item.artist}`);
+      if (target.includes(q)) return true;
+      if (terms.length <= 1) return false;
+      return terms.every((t) => target.includes(t));
+    });
+  }, [remoteLibrary, searchQuery]);
+
+  const playRemoteTrack = (item: RemoteTrackSummary) => {
+    useOptimisticPlayerStore.getState().setOptimisticTrack(item, artworkMap[item.id] || null);
+    if (artworkMap[item.id] && preferences.dynamicColorFromArtwork) {
+      useThemeStore.getState().updateThemeFromArtwork(artworkMap[item.id]);
+    }
+    remoteSyncManager.sendClientCommand({
+      type: 'COMMAND_PLAY_LIBRARY_TRACK',
+      trackId: item.id,
+      title: item.title,
+      artist: item.artist,
+    });
+    openFullscreenPlayer();
+  };
+
+  const handleRemoteAddToQueue = (item: RemoteTrackSummary) => {
+    remoteSyncManager.sendClientCommand({
+      type: 'COMMAND_PLAY_LIBRARY_TRACK',
+      trackId: item.id,
+      title: item.title,
+      artist: item.artist,
+    });
+    showToast(`"${item.title}" ${t('library.added_to_queue')}`);
+  };
+
+  const handleRemoteShuffleAll = () => {
+    remoteSyncManager.sendClientCommand({ type: 'COMMAND_SET_SHUFFLE', enabled: true });
+    if (remoteLibrary.length > 0) {
+      const random = remoteLibrary[Math.floor(Math.random() * remoteLibrary.length)];
+      useOptimisticPlayerStore.getState().setOptimisticTrack(random, null);
+      remoteSyncManager.sendClientCommand({
+        type: 'COMMAND_PLAY_LIBRARY_TRACK',
+        trackId: random.id,
+        title: random.title,
+        artist: random.artist,
+      });
+    } else {
+      remoteSyncManager.sendClientCommand({ type: 'COMMAND_PLAY' });
+    }
+    openFullscreenPlayer();
+    showToast(t('library.shuffle_started'));
+  };
+
   const playTrack = async (selectedAsset: MediaLibrary.Asset) => {
     try {
       const targetArtwork =
         metadataMap[selectedAsset.id]?.artwork || artworkMap[selectedAsset.id] || undefined;
+      const meta = metadataMap[selectedAsset.id];
+      const summary: RemoteTrackSummary = {
+        id: selectedAsset.id,
+        title: meta?.title || selectedAsset.filename,
+        artist: meta?.artist || 'Unknown Artist',
+        duration: selectedAsset.duration || 0,
+        hasArtwork: !!targetArtwork,
+      };
+      useOptimisticPlayerStore.getState().setOptimisticTrack(summary, targetArtwork || null);
 
       // 1. Temayı hemen yeni seçilen şarkının kapağına geçir ki ara renk / flash olmasın
-      if (targetArtwork) {
+      if (targetArtwork && preferences.dynamicColorFromArtwork) {
         useThemeStore.getState().updateThemeFromArtwork(targetArtwork);
       }
 
       // Uzak cihaz bağlantısı aktifse komutu doğrudan sunucu cihaza yönlendir
       if (useRemoteConnectStore.getState().isRemoteConnected()) {
-        const meta = metadataMap[selectedAsset.id];
         remoteSyncManager.sendClientCommand({
           type: 'COMMAND_PLAY_TRACK',
           trackId: selectedAsset.id,
@@ -720,6 +794,89 @@ export default function LibraryScreen() {
     );
   };
 
+  const renderRemoteItem = ({ item, index }: { item: RemoteTrackSummary; index: number }) => {
+    const isPlayingCurrent =
+      (activeTrack && activeTrack.id === item.id) ||
+      (player.activeTrack && player.activeTrack.id === item.id);
+
+    const renderLeftActions = () => (
+      <View style={[styles.swipeLeftActionBox, { backgroundColor: theme.primary }]}>
+        <Ionicons name="list" size={20} color="#ffffff" style={{ marginRight: 6 }} />
+        <Text style={styles.swipeLeftActionText}>{t('library.add_to_queue')}</Text>
+      </View>
+    );
+
+    return (
+      <View key={`remote-row-${item.id}`}>
+        <Swipeable
+          renderLeftActions={renderLeftActions}
+          friction={2}
+          leftThreshold={40}
+          activeOffsetX={[-25, 25]}
+          failOffsetY={[-15, 15]}
+          onSwipeableOpen={(direction) => {
+            if (direction === 'left') {
+              handleRemoteAddToQueue(item);
+            }
+          }}>
+          <View
+            style={[
+              styles.trackItem,
+              isPlayingCurrent && [
+                styles.trackItemPlaying,
+                { borderColor: theme.border, backgroundColor: theme.surface },
+              ],
+            ]}>
+            <TouchableOpacity
+              style={styles.trackMainContent}
+              activeOpacity={0.7}
+              onPress={() => playRemoteTrack(item)}>
+              <View style={{ marginRight: 12 }}>
+                <TrackArtwork
+                  uri={artworkMap[item.id]}
+                  trackId={item.id}
+                  size={44}
+                  borderRadius={10}
+                  iconSize={20}
+                />
+              </View>
+              <View style={styles.trackInfo}>
+                <View style={styles.titleRow}>
+                  {isPlayingCurrent ? (
+                    <Ionicons
+                      name="volume-high"
+                      size={16}
+                      color={theme.primary}
+                      style={{ marginRight: 6 }}
+                    />
+                  ) : null}
+                  <Text
+                    style={[
+                      styles.trackTitle,
+                      isPlayingCurrent && [styles.trackTitlePlaying, { color: theme.primary }],
+                    ]}
+                    numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                </View>
+                <Text style={styles.trackDuration} numberOfLines={1}>
+                  {Math.floor(item.duration / 60)}:
+                  {Math.floor(item.duration % 60)
+                    .toString()
+                    .padStart(2, '0')}
+                  {item.artist ? ` • ${item.artist}` : ''}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        </Swipeable>
+        {(index + 1) % 15 === 0 && index !== remoteDisplayedList.length - 1 ? (
+          <AdBanner style={{ marginVertical: 6 }} />
+        ) : null}
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       {/* Top Header / Search Bar */}
@@ -750,7 +907,9 @@ export default function LibraryScreen() {
           <View>
             <Text style={styles.headerTitle}>{t('library.title')}</Text>
             <Text style={styles.headerSubtitle}>
-              {isScanning && library.length > 0
+              {isShowingRemoteLibrary
+                ? `${connectedDeviceName ? `${connectedDeviceName} • ` : ''}${remoteLibrary.length} ${t('library.songs_registered')}`
+                : isScanning && library.length > 0
                 ? t('library.updating_library')
                 : `${library.length} ${t('library.songs_registered')}`}
             </Text>
@@ -763,18 +922,20 @@ export default function LibraryScreen() {
               <Ionicons name="search" size={20} color="#ffffff" />
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.headerActionBtn}
-              onPress={() => setIsSortModalOpen(true)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Ionicons name="swap-vertical" size={20} color="#ffffff" />
-            </TouchableOpacity>
+            {!isShowingRemoteLibrary && (
+              <TouchableOpacity
+                style={styles.headerActionBtn}
+                onPress={() => setIsSortModalOpen(true)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Ionicons name="swap-vertical" size={20} color="#ffffff" />
+              </TouchableOpacity>
+            )}
 
             {/* Karışık çal: rastgele bir şarkıdan başlayan karışık kuyruk */}
             <TouchableOpacity
               style={[styles.headerActionBtn, { backgroundColor: theme.primary, borderColor: theme.primary }]}
-              onPress={handleShuffleAll}
-              disabled={library.length === 0}
+              onPress={isShowingRemoteLibrary ? handleRemoteShuffleAll : handleShuffleAll}
+              disabled={isShowingRemoteLibrary ? remoteLibrary.length === 0 : library.length === 0}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Ionicons name="shuffle" size={20} color="#ffffff" />
             </TouchableOpacity>
@@ -799,17 +960,38 @@ export default function LibraryScreen() {
 
       {/* Track List */}
       <FlatList
-        data={displayedList}
-        keyExtractor={(item) => item.asset.id}
-        renderItem={renderItem}
+        data={isShowingRemoteLibrary ? (remoteDisplayedList as any) : displayedList}
+        keyExtractor={(item: any) => (isShowingRemoteLibrary ? item.id : item.asset.id)}
+        renderItem={isShowingRemoteLibrary ? (renderRemoteItem as any) : renderItem}
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={
-          displayedList.length > 0 ? (
-            <AdBanner style={{ marginBottom: 8 }} />
-          ) : null
+          <>
+            {isShowingRemoteLibrary && (
+              <View style={[styles.remoteBanner, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+                <Ionicons name="wifi" size={16} color={theme.primary} style={{ marginRight: 8 }} />
+                <Text style={styles.remoteBannerText} numberOfLines={1}>
+                  {connectedDeviceName ? `${connectedDeviceName} Kütüphanesi` : 'Uzak Kütüphane'}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.remoteRefreshBtn, { borderColor: theme.border }]}
+                  onPress={() => remoteSyncManager.fetchRemoteLibrary()}
+                  disabled={isRemoteLibraryLoading}>
+                  <Ionicons
+                    name="refresh"
+                    size={14}
+                    color="#ffffff"
+                    style={isRemoteLibraryLoading ? { opacity: 0.5 } : undefined}
+                  />
+                </TouchableOpacity>
+              </View>
+            )}
+            {(isShowingRemoteLibrary ? remoteDisplayedList.length > 0 : displayedList.length > 0) ? (
+              <AdBanner style={{ marginBottom: 8 }} />
+            ) : null}
+          </>
         }
         ListFooterComponent={
-          displayedList.length >= 20 ? (
+          (isShowingRemoteLibrary ? remoteDisplayedList.length : displayedList.length) >= 20 ? (
             <AdBanner style={{ marginTop: 8, marginBottom: 16 }} />
           ) : null
         }
@@ -818,33 +1000,67 @@ export default function LibraryScreen() {
         windowSize={7}
         removeClippedSubviews={true}
         refreshControl={
-          <RefreshControl
-            refreshing={isScanning}
-            onRefresh={scanMedia}
-            tintColor={theme.primary}
-            colors={[theme.primary]}
-          />
+          isShowingRemoteLibrary ? (
+            <RefreshControl
+              refreshing={isRemoteLibraryLoading}
+              onRefresh={() => remoteSyncManager.fetchRemoteLibrary()}
+              tintColor={theme.primary}
+              colors={[theme.primary]}
+            />
+          ) : (
+            <RefreshControl
+              refreshing={isScanning}
+              onRefresh={scanMedia}
+              tintColor={theme.primary}
+              colors={[theme.primary]}
+            />
+          )
         }
         ListEmptyComponent={
-          (isScanning || !hasScannedOnce) ? (
-            <View style={styles.centerBox}>
-              <ActivityIndicator size="large" color={theme.primary} />
-              <Text style={[styles.statusText, { color: theme.primary }]}>
-                {statusMessage || t('library.scanning')}
-              </Text>
-            </View>
+          isShowingRemoteLibrary ? (
+            isRemoteLibraryLoading ? (
+              <View style={styles.centerBox}>
+                <ActivityIndicator size="large" color={theme.primary} />
+                <Text style={[styles.statusText, { color: theme.primary }]}>
+                  {t('remote.fetching_library') || 'Kütüphane alınıyor...'}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.centerBox}>
+                <Ionicons name="wifi-outline" size={48} color="#3f3f46" />
+                <Text style={styles.emptyText}>
+                  {searchQuery ? t('library.no_matching_tracks') : 'Uzak kütüphanede şarkı bulunamadı'}
+                </Text>
+                {!searchQuery && (
+                  <TouchableOpacity
+                    style={[styles.rescanBtn, { backgroundColor: theme.primary }]}
+                    onPress={() => remoteSyncManager.fetchRemoteLibrary()}>
+                    <Text style={styles.rescanBtnText}>{t('library.rescan')}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )
           ) : (
-            <View style={styles.centerBox}>
-              <Ionicons name="musical-notes-outline" size={48} color="#3f3f46" />
-              <Text style={styles.emptyText}>
-                {searchQuery ? t('library.no_matching_tracks') : t('library.no_tracks_yet')}
-              </Text>
-              {!searchQuery && (
-                <TouchableOpacity style={[styles.rescanBtn, { backgroundColor: theme.primary }]} onPress={scanMedia}>
-                  <Text style={styles.rescanBtnText}>{t('library.rescan')}</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+            (isScanning || !hasScannedOnce) ? (
+              <View style={styles.centerBox}>
+                <ActivityIndicator size="large" color={theme.primary} />
+                <Text style={[styles.statusText, { color: theme.primary }]}>
+                  {statusMessage || t('library.scanning')}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.centerBox}>
+                <Ionicons name="musical-notes-outline" size={48} color="#3f3f46" />
+                <Text style={styles.emptyText}>
+                  {searchQuery ? t('library.no_matching_tracks') : t('library.no_tracks_yet')}
+                </Text>
+                {!searchQuery && (
+                  <TouchableOpacity style={[styles.rescanBtn, { backgroundColor: theme.primary }]} onPress={scanMedia}>
+                    <Text style={styles.rescanBtnText}>{t('library.rescan')}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )
           )
         }
       />
@@ -1274,5 +1490,27 @@ const styles = StyleSheet.create({
     color: '#ef4444',
     fontSize: 14,
     fontWeight: '600',
+  },
+  remoteBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  remoteBannerText: {
+    flex: 1,
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  remoteRefreshBtn: {
+    padding: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

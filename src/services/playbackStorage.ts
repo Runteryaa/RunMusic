@@ -172,23 +172,42 @@ export async function clearQueueSnapshot(): Promise<void> {
   }
 }
 
+let pendingSnapshotTimeout: ReturnType<typeof setTimeout> | null = null;
+let pendingActiveIndex: number | null = null;
+let pendingPosition: number | null = null;
+
 /**
  * Kuyruk anlık görüntüsündeki aktif parçayı ve konumunu günceller.
- * Tüm kuyruğu yeniden serileştirmek yerine yalnızca mevcut kaydın indeks ve konumunu tazeler.
+ * Şarkı geçişlerinde diski kilitlememek için 3 saniye debounced olarak yazılır.
  */
 export async function updateQueueSnapshotActiveIndex(activeIndex: number, position?: number): Promise<void> {
-  try {
-    const raw = await AsyncStorage.getItem(QUEUE_STORAGE_KEY);
-    if (!raw) return;
-    const snapshot = JSON.parse(raw) as SavedQueueState;
-    if (!snapshot || !Array.isArray(snapshot.queue) || snapshot.queue.length === 0) return;
-    snapshot.activeIndex = activeIndex;
-    if (typeof position === 'number') {
-      snapshot.position = Math.max(0, position);
-    }
-    await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(snapshot));
-  } catch {
-    // yoksay
+  pendingActiveIndex = activeIndex;
+  if (typeof position === 'number') {
+    pendingPosition = position;
   }
+
+  if (pendingSnapshotTimeout) {
+    return;
+  }
+
+  pendingSnapshotTimeout = setTimeout(async () => {
+    pendingSnapshotTimeout = null;
+    const targetIndex = pendingActiveIndex;
+    const targetPos = pendingPosition;
+    if (targetIndex === null) return;
+    try {
+      const raw = await AsyncStorage.getItem(QUEUE_STORAGE_KEY);
+      if (!raw) return;
+      const snapshot = JSON.parse(raw) as SavedQueueState;
+      if (!snapshot || !Array.isArray(snapshot.queue) || snapshot.queue.length === 0) return;
+      snapshot.activeIndex = targetIndex;
+      if (typeof targetPos === 'number') {
+        snapshot.position = Math.max(0, targetPos);
+      }
+      await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(snapshot));
+    } catch {
+      // yoksay
+    }
+  }, 3000);
 }
 

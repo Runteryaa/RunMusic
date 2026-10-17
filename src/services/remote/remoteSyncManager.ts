@@ -10,7 +10,16 @@ import { tcpClient, type ClientConnectionStatus } from './tcpClient';
 import { udpDiscoveryService } from './udpDiscovery';
 import { useRemoteConnectStore } from '../../store/useRemoteConnectStore';
 import { useStore } from '../../store/useStore';
-import { skipToPreviousTrack, moveUpNext, removeQueueItem, setShuffle } from '../queueController';
+import { useThemeStore } from '../../store/useThemeStore';
+import { getArtworkAsync } from '../../../modules/audio-artwork/src';
+import {
+  skipToPreviousTrack,
+  moveUpNext,
+  removeQueueItem,
+  setShuffle,
+  startPlaybackFromLibrary,
+  type QueueTrack,
+} from '../queueController';
 import { findLyricsInCache } from '../persistSanitize';
 import {
   parseAnySyncedLyrics,
@@ -108,7 +117,7 @@ class RemoteSyncManager {
         // Also send active artwork if present
         const activeTrack = await TrackPlayer.getActiveTrack();
         if (activeTrack) {
-          const artworkBase64 = await this.getCompressedArtworkBase64(activeTrack.id);
+          const artworkBase64 = await this.getCompressedArtworkBase64(activeTrack.id, activeTrack.url);
           if (artworkBase64) {
             const artworkMsg: ActiveArtworkSyncMessage = {
               type: 'ACTIVE_ARTWORK_SYNC',
@@ -226,7 +235,7 @@ class RemoteSyncManager {
           }
         }
 
-        const artworkBase64 = await this.getCompressedArtworkBase64(track.id);
+        const artworkBase64 = await this.getCompressedArtworkBase64(track.id, track.url);
         if (artworkBase64) {
           const artMsg: ActiveArtworkSyncMessage = {
             type: 'ACTIVE_ARTWORK_SYNC',
@@ -569,8 +578,9 @@ class RemoteSyncManager {
   }
 
   private handleLibraryQuery(msg: LibraryQueryMessage, clientSocket: any): void {
-    const allAssets = useStore.getState().allAssets;
-    const metadataMap = useStore.getState().metadataMap;
+    const store = useStore.getState();
+    const allAssets = store.allAssets.length > 0 ? store.allAssets : store.library;
+    const metadataMap = store.metadataMap;
     const search = (msg.search || '').trim().toLowerCase();
 
     let filtered = allAssets;
@@ -647,16 +657,18 @@ class RemoteSyncManager {
   }
 
   private async playHostLibraryTrack(trackId: string, title?: string, artist?: string): Promise<void> {
-    const allAssets = useStore.getState().allAssets;
-    const metadataMap = useStore.getState().metadataMap;
+    const store = useStore.getState();
+    const assets = store.allAssets.length > 0 ? store.allAssets : store.library;
+    const metadataMap = store.metadataMap;
+    const artworkMap = store.artworkMap;
 
-    let asset = allAssets.find((a) => a.id === trackId || a.uri === trackId);
+    let asset = assets.find((a) => a.id === trackId || a.uri === trackId);
 
     // If ID didn't match, search by title & artist
     if (!asset && title) {
       const normTitle = title.trim().toLowerCase();
       const normArtist = (artist || '').trim().toLowerCase();
-      asset = allAssets.find((a) => {
+      asset = assets.find((a) => {
         const meta = metadataMap[a.id];
         const aTitle = (meta?.title || a.filename || '').trim().toLowerCase();
         const aArtist = (meta?.artist || '').trim().toLowerCase();
@@ -669,19 +681,22 @@ class RemoteSyncManager {
       return;
     }
 
-    const metadata = metadataMap[asset.id];
-    const artwork = useStore.getState().artworkMap[asset.id];
+    const tracks: QueueTrack[] = assets.map((a) => ({
+      id: a.id,
+      url: a.uri,
+      title: metadataMap[a.id]?.title || a.filename,
+      artist: metadataMap[a.id]?.artist || 'Unknown Artist',
+      artwork: metadataMap[a.id]?.artwork || artworkMap[a.id] || undefined,
+      duration: a.duration,
+    }));
 
-    await TrackPlayer.reset();
-    await TrackPlayer.add({
-      id: asset.id,
-      url: asset.uri,
-      title: metadata?.title || asset.filename,
-      artist: metadata?.artist || 'Unknown Artist',
-      artwork: artwork || undefined,
-      duration: asset.duration,
+    await startPlaybackFromLibrary({
+      tracks,
+      startId: asset.id,
+      shuffle: store.isShuffle,
+      smartShuffle: store.isShuffle ? store.isSmartShuffle : false,
     });
-    await TrackPlayer.play();
+
     this.broadcastQueueSync();
   }
 
@@ -866,6 +881,9 @@ class RemoteSyncManager {
         remoteMediaNotification
           .syncRemoteTrackToLocalPlayer(msg.activeTrack, msg.isPlaying, null, msg.position)
           .catch(() => {});
+        if (this.activeClientTransport === 'wifi') {
+          this.fetchRemoteLibrary().catch(() => {});
+        }
         break;
 
       case 'POSITION_SYNC':
@@ -883,6 +901,9 @@ class RemoteSyncManager {
             0
           )
           .catch(() => {});
+        if (msg.track?.id && msg.track.hasArtwork && this.activeClientTransport === 'wifi') {
+          this.sendClientCommand({ type: 'REQUEST_ARTWORK', trackId: msg.track.id });
+        }
         break;
 
       case 'STATE_CHANGE':
@@ -901,11 +922,16 @@ class RemoteSyncManager {
         break;
 
       case 'ACTIVE_ARTWORK_SYNC':
+      case 'ARTWORK_RESPONSE':
         if (msg.base64) {
           const fileUri = await this.saveRemoteArtworkToFile(msg.trackId, msg.base64);
-          useRemoteConnectStore.getState().setRemoteArtworkUri(fileUri);
           if (fileUri) {
+            useRemoteConnectStore.getState().setRemoteArtworkUri(fileUri);
+            useStore.getState().setArtwork(msg.trackId, fileUri);
             remoteMediaNotification.syncRemoteArtwork(fileUri).catch(() => {});
+            if (useStore.getState().preferences.dynamicColorFromArtwork) {
+              useThemeStore.getState().updateThemeFromArtwork(fileUri);
+            }
           }
         }
         break;
@@ -919,6 +945,19 @@ class RemoteSyncManager {
         }
         break;
       }
+    }
+  }
+
+  public async fetchRemoteLibrary(search = ''): Promise<void> {
+    if (this.activeClientTransport !== 'wifi') return;
+    try {
+      useRemoteConnectStore.getState().setRemoteLibraryLoading(true);
+      const result = await this.queryRemoteLibrary(search, 0, 2000);
+      useRemoteConnectStore.getState().setRemoteLibrary(result.tracks || []);
+    } catch (e) {
+      console.warn('[RemoteSyncManager] fetchRemoteLibrary error:', e);
+    } finally {
+      useRemoteConnectStore.getState().setRemoteLibraryLoading(false);
     }
   }
 
@@ -979,7 +1018,7 @@ class RemoteSyncManager {
       title: metadata?.title || asset.filename || 'Unknown Title',
       artist: metadata?.artist || 'Unknown Artist',
       duration: asset.duration || 0,
-      hasArtwork: !!artworkMap[asset.id],
+      hasArtwork: !!(metadata?.artwork || artworkMap[asset.id]),
     };
   }
 
@@ -1046,9 +1085,38 @@ class RemoteSyncManager {
     });
   }
 
-  private async getCompressedArtworkBase64(trackId: string): Promise<string | null> {
+  private async getCompressedArtworkBase64(trackId: string, trackUrl?: string): Promise<string | null> {
     try {
-      const uri = useStore.getState().artworkMap[trackId];
+      const store = useStore.getState();
+      let uri = store.artworkMap[trackId] || store.metadataMap[trackId]?.artwork;
+
+      if (!uri) {
+        const active = await TrackPlayer.getActiveTrack();
+        if (active && (active.id === trackId || active.url === trackUrl) && typeof active.artwork === 'string') {
+          uri = active.artwork;
+        }
+      }
+
+      if (!uri) {
+        let url = trackUrl;
+        if (!url) {
+          const allAssets = store.allAssets.length > 0 ? store.allAssets : store.library;
+          const found = allAssets.find((a) => a.id === trackId || a.uri === trackId);
+          if (found) url = found.uri;
+        }
+        if (url) {
+          try {
+            const extracted = await getArtworkAsync(url, trackId);
+            if (extracted) {
+              uri = extracted;
+              store.setArtwork(trackId, extracted);
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+
       if (!uri) return null;
 
       if (uri.startsWith('data:image')) {
@@ -1056,8 +1124,13 @@ class RemoteSyncManager {
         return uri;
       }
 
-      if (uri.startsWith('file://')) {
-        const base64 = await FileSystem.readAsStringAsync(uri, {
+      let fileUri = uri;
+      if (!fileUri.startsWith('file://') && !fileUri.startsWith('content://') && !fileUri.startsWith('http')) {
+        fileUri = `file://${fileUri}`;
+      }
+
+      if (fileUri.startsWith('file://') || fileUri.startsWith('content://')) {
+        const base64 = await FileSystem.readAsStringAsync(fileUri, {
           encoding: FileSystem.EncodingType.Base64,
         });
         return `data:image/jpeg;base64,${base64}`;

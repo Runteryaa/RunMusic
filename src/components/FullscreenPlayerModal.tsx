@@ -32,13 +32,14 @@ import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useSleepTimerStore } from '../store/useSleepTimerStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
+import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { useActivePlayer } from '../hooks/useActivePlayer';
 import { useActiveProgress } from '../hooks/useActiveProgress';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import { udpDiscoveryService } from '../services/remote/udpDiscovery';
 import { bleCentralService } from '../services/remote/bleCentralService';
 import type { DiscoveredPeer } from '../services/remote/IRemoteTransport';
-import { RUNMUSIC_TCP_PORT, type DiscoveredHost } from '../services/remote/remoteTypes';
+import { RUNMUSIC_TCP_PORT, type DiscoveredHost, type RemoteTrackSummary } from '../services/remote/remoteTypes';
 import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
@@ -603,6 +604,20 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const handleQueueItemPress = useCallback(
     async (queueIndex: number, trackId?: string, title?: string, artist?: string) => {
+      if (trackId || title) {
+        const art = trackId ? (metadataMap[trackId]?.artwork || artworkMap[trackId] || null) : null;
+        const summary: RemoteTrackSummary = {
+          id: trackId || `queue_${queueIndex}`,
+          title: title || 'Unknown Title',
+          artist: artist || 'Unknown Artist',
+          duration: 0,
+          hasArtwork: !!art,
+        };
+        useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+        if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
+          useThemeStore.getState().updateThemeFromArtwork(art);
+        }
+      }
       if (player.isRemote) {
         remoteSyncManager.sendClientCommand({
           type: 'COMMAND_PLAY_TRACK',
@@ -620,7 +635,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         console.warn('Queue skip failed', e);
       }
     },
-    [player.isRemote]
+    [player.isRemote, metadataMap, artworkMap]
   );
 
   const queueSectionLabels = useMemo(

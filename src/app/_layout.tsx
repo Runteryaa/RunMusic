@@ -82,6 +82,8 @@ function MainAppLayout() {
   }, [isRemoteServiceEnabled]);
 
   const isRemoteMode = useRemoteConnectStore((s) => s.mode === 'client');
+  const remoteArtworkUri = useRemoteConnectStore((s) => s.remoteState.artworkUri);
+  const effectiveArtworkUri = isRemoteMode ? remoteArtworkUri : artworkUri;
 
   // Aktif şarkının kapak görseli henüz önbellekte yoksa anında çek ve temayı tetikle
   useEffect(() => {
@@ -102,12 +104,12 @@ function MainAppLayout() {
   useEffect(() => {
     // Tercih de bağımlılık: kullanıcı "kapaktan renk türet"i açıp kapatınca
     // veya sabit tema rengini değiştirince tema hemen güncellenir.
-    if (dynamicColorFromArtwork && artworkUri) {
-      updateThemeFromArtwork(artworkUri);
-    } else {
+    if (dynamicColorFromArtwork && effectiveArtworkUri) {
+      updateThemeFromArtwork(effectiveArtworkUri);
+    } else if (!dynamicColorFromArtwork) {
       updateThemeFromArtwork(null);
     }
-  }, [artworkUri, activeTrackId, updateThemeFromArtwork, dynamicColorFromArtwork, presetThemeColor]);
+  }, [effectiveArtworkUri, activeTrackId, updateThemeFromArtwork, dynamicColorFromArtwork, presetThemeColor]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#121212' }}>

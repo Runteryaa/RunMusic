@@ -1,11 +1,14 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import TrackPlayer, {
   useActiveTrack,
   useIsPlaying,
   RepeatMode,
+  type Track,
 } from 'react-native-track-player';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { useStore } from '../store/useStore';
+import { useThemeStore } from '../store/useThemeStore';
+import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import { skipToPreviousTrack, setShuffle as setLocalShuffle } from '../services/queueController';
 import { findLyricsInCache } from '../services/persistSanitize';
@@ -49,6 +52,9 @@ export function useActivePlayer(): ActivePlayerState {
   const remoteDeviceName = useRemoteConnectStore((s) => s.connectedDeviceName);
   const remoteState = useRemoteConnectStore((s) => s.remoteState);
 
+  const optimisticTrack = useOptimisticPlayerStore((s) => s.optimisticTrack);
+  const optimisticArtwork = useOptimisticPlayerStore((s) => s.optimisticArtworkUri);
+
   // Local Player hooks (only subscribed when not remote)
   const localActiveTrack = useActiveTrack();
   const { playing: localIsPlaying } = useIsPlaying();
@@ -56,6 +62,19 @@ export function useActivePlayer(): ActivePlayerState {
   const localIsShuffle = useStore((s) => s.isShuffle);
   const localRepeatMode = useStore((s) => s.repeatMode);
   const setStoreRepeatMode = useStore((s) => s.setRepeatMode);
+
+  // Clear optimistic track when real active track reconciles
+  useEffect(() => {
+    if (localActiveTrack?.id) {
+      useOptimisticPlayerStore.getState().clearOptimisticTrack();
+    }
+  }, [localActiveTrack?.id]);
+
+  useEffect(() => {
+    if (remoteState.activeTrack?.id) {
+      useOptimisticPlayerStore.getState().clearOptimisticTrack();
+    }
+  }, [remoteState.activeTrack?.id]);
 
   // ==========================================
   // REMOTE CONTROLS & STATE
@@ -79,12 +98,36 @@ export function useActivePlayer(): ActivePlayerState {
   }, [remoteState.isPlaying, remotePause, remotePlay]);
 
   const remoteSkipNext = useCallback(async () => {
+    const q = Array.isArray(remoteState.queue) ? remoteState.queue : [];
+    const currentId = optimisticTrack?.id || remoteState.activeTrack?.id;
+    const currentIdx = q.findIndex((t) => t.id === currentId);
+    let next: RemoteTrackSummary | null = null;
+    if (currentIdx >= 0 && currentIdx < q.length - 1) {
+      next = q[currentIdx + 1];
+    } else if (remoteState.repeatMode === RepeatMode.Queue && q.length > 0) {
+      next = q[0];
+    }
+    if (next) {
+      useOptimisticPlayerStore.getState().setOptimisticTrack(next, null);
+    }
     remoteSyncManager.sendClientCommand({ type: 'COMMAND_SKIP_NEXT' });
-  }, []);
+  }, [remoteState.queue, remoteState.activeTrack?.id, remoteState.repeatMode, optimisticTrack?.id]);
 
   const remoteSkipPrevious = useCallback(async () => {
+    const q = Array.isArray(remoteState.queue) ? remoteState.queue : [];
+    const currentId = optimisticTrack?.id || remoteState.activeTrack?.id;
+    const currentIdx = q.findIndex((t) => t.id === currentId);
+    let prev: RemoteTrackSummary | null = null;
+    if (currentIdx > 0) {
+      prev = q[currentIdx - 1];
+    } else if (remoteState.repeatMode === RepeatMode.Queue && q.length > 0) {
+      prev = q[q.length - 1];
+    }
+    if (prev) {
+      useOptimisticPlayerStore.getState().setOptimisticTrack(prev, null);
+    }
     remoteSyncManager.sendClientCommand({ type: 'COMMAND_SKIP_PREVIOUS' });
-  }, []);
+  }, [remoteState.queue, remoteState.activeTrack?.id, remoteState.repeatMode, optimisticTrack?.id]);
 
   const remoteSeekTo = useCallback(async (position: number) => {
     useRemoteConnectStore.getState().setOptimisticPosition(position);
@@ -125,12 +168,79 @@ export function useActivePlayer(): ActivePlayerState {
   }, [localIsPlaying]);
 
   const localSkipNext = useCallback(async () => {
+    try {
+      const queue = await TrackPlayer.getQueue();
+      const currentIdx = await TrackPlayer.getActiveTrackIndex();
+      const resolvedIdx = typeof currentIdx === 'number' && currentIdx >= 0 ? currentIdx : 0;
+      let next: Track | null = null;
+      if (resolvedIdx < queue.length - 1) {
+        next = queue[resolvedIdx + 1];
+      } else if (localRepeatMode === RepeatMode.Queue && queue.length > 0) {
+        next = queue[0];
+      }
+      if (next) {
+        const meta = useStore.getState().metadataMap[next.id];
+        const art =
+          meta?.artwork ||
+          useStore.getState().artworkMap[next.id] ||
+          (typeof next.artwork === 'string' ? next.artwork : null);
+        const summary: RemoteTrackSummary = {
+          id: next.id,
+          title: meta?.title || next.title || 'Unknown Title',
+          artist: meta?.artist || next.artist || 'Unknown Artist',
+          duration: next.duration || 0,
+          hasArtwork: !!art,
+        };
+        useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+        if (useStore.getState().preferences.dynamicColorFromArtwork && art) {
+          useThemeStore.getState().updateThemeFromArtwork(art);
+        }
+      }
+    } catch {
+      // ignore
+    }
     await TrackPlayer.skipToNext();
-  }, []);
+  }, [localRepeatMode]);
 
   const localSkipPrevious = useCallback(async () => {
+    try {
+      const playedHistory = useStore.getState().playedHistory;
+      let prev: any = null;
+      if (playedHistory.length > 0) {
+        prev = playedHistory[playedHistory.length - 1];
+      } else {
+        const queue = await TrackPlayer.getQueue();
+        const currentIdx = await TrackPlayer.getActiveTrackIndex();
+        const resolvedIdx = typeof currentIdx === 'number' && currentIdx >= 0 ? currentIdx : 0;
+        if (resolvedIdx > 0) {
+          prev = queue[resolvedIdx - 1];
+        } else if (localRepeatMode === RepeatMode.Queue && queue.length > 0) {
+          prev = queue[queue.length - 1];
+        }
+      }
+      if (prev) {
+        const meta = useStore.getState().metadataMap[prev.id];
+        const art =
+          meta?.artwork ||
+          useStore.getState().artworkMap[prev.id] ||
+          (typeof prev.artwork === 'string' ? prev.artwork : null);
+        const summary: RemoteTrackSummary = {
+          id: prev.id,
+          title: meta?.title || prev.title || 'Unknown Title',
+          artist: meta?.artist || prev.artist || 'Unknown Artist',
+          duration: prev.duration || 0,
+          hasArtwork: !!art,
+        };
+        useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+        if (useStore.getState().preferences.dynamicColorFromArtwork && art) {
+          useThemeStore.getState().updateThemeFromArtwork(art);
+        }
+      }
+    } catch {
+      // ignore
+    }
     await skipToPreviousTrack();
-  }, []);
+  }, [localRepeatMode]);
 
   const localSeekTo = useCallback(async (position: number) => {
     await TrackPlayer.seekTo(position);
@@ -146,14 +256,18 @@ export function useActivePlayer(): ActivePlayerState {
   }, []);
 
   if (isRemote) {
+    const effectiveActive = optimisticTrack ?? remoteState.activeTrack;
+    const effectiveArtwork = optimisticArtwork ?? remoteState.artworkUri;
+    const effectiveDuration = optimisticTrack ? (optimisticTrack.duration || 0) : (remoteState.activeTrack?.duration ?? 0);
+
     return {
       isRemote: true,
       remoteDeviceName,
-      activeTrack: remoteState.activeTrack,
+      activeTrack: effectiveActive,
       isPlaying: remoteState.isPlaying,
-      duration: remoteState.activeTrack?.duration ?? 0,
+      duration: effectiveDuration,
       lyrics: remoteState.lyrics,
-      artworkUri: remoteState.artworkUri,
+      artworkUri: effectiveArtwork,
       repeatMode: remoteState.repeatMode,
       isShuffle: remoteState.isShuffle,
 
@@ -225,14 +339,18 @@ export function useActivePlayer(): ActivePlayerState {
     }
   }
 
+  const effectiveLocalActive = optimisticTrack ?? localSummary;
+  const effectiveLocalArtwork = optimisticArtwork ?? localArtworkUri;
+  const effectiveLocalDuration = optimisticTrack ? (optimisticTrack.duration || 0) : (localActiveTrack?.duration ?? 0);
+
   return {
     isRemote: false,
     remoteDeviceName: null,
-    activeTrack: localSummary,
+    activeTrack: effectiveLocalActive,
     isPlaying: localIsPlaying ?? false,
-    duration: localActiveTrack?.duration ?? 0,
+    duration: effectiveLocalDuration,
     lyrics: localLyricsSummary,
-    artworkUri: localArtworkUri,
+    artworkUri: effectiveLocalArtwork,
     repeatMode: localRepeatMode,
     isShuffle: localIsShuffle,
 

@@ -1,5 +1,6 @@
 import { useProgress } from 'react-native-track-player';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
+import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 
 export interface ActiveProgress {
   position: number;
@@ -24,11 +25,19 @@ export function useActiveProgress(): ActiveProgress {
     (s) => s.mode === 'client' && s.connectionStatus === 'connected'
   );
 
+  const optimisticTrack = useOptimisticPlayerStore((s) => s.optimisticTrack);
   const localProgress = useProgress(isRemote ? 3000 : 250);
   const interpolatedRemotePosition = useRemoteConnectStore((s) => s.interpolatedPosition);
   const remoteDuration = useRemoteConnectStore(
     (s) => s.remoteState.activeTrack?.duration ?? 0
   );
+
+  if (optimisticTrack) {
+    return {
+      position: 0,
+      duration: optimisticTrack.duration || 0,
+    };
+  }
 
   if (isRemote) {
     return {
