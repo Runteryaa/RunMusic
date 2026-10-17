@@ -494,9 +494,13 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
         }
         return persistedState;
       },
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.isServiceEnabled = false;
+        }
+      },
       partialize: (state) => ({
         localDeviceId: state.localDeviceId,
-        isServiceEnabled: state.isServiceEnabled,
         customDeviceName: state.customDeviceName.trim() || DEFAULT_DEVICE_NAME,
         trustedDevices: state.trustedDevices,
         pairedHosts: state.pairedHosts,

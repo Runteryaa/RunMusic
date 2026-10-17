@@ -16,8 +16,6 @@ import {
   PanResponder,
   BackHandler,
   Alert,
-  Switch,
-  Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -127,6 +125,17 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const [showManualIp, setShowManualIp] = useState(false);
   const [manualIp, setManualIp] = useState('');
   const [manualPort, setManualPort] = useState(RUNMUSIC_TCP_PORT.toString());
+
+  // Connecto ekranı açıldığı anda servisi otomatik olarak aktif hale getir
+  const prevIsConnectModeRef = useRef(false);
+  useEffect(() => {
+    if (isConnectMode && !prevIsConnectModeRef.current) {
+      if (!isRemoteServiceEnabled) {
+        setRemoteServiceEnabled(true);
+      }
+    }
+    prevIsConnectModeRef.current = isConnectMode;
+  }, [isConnectMode, isRemoteServiceEnabled, setRemoteServiceEnabled]);
 
   useEffect(() => {
     if (!isConnectMode || remoteMode === 'client') {
@@ -2567,48 +2576,41 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   RunMusic Connecto
                 </Text>
               </View>
-              <TouchableOpacity
-                style={styles.queueCardCloseBtn}
-                activeOpacity={0.7}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                onPress={toggleConnectMode}>
-                <Ionicons name="close" size={18} color="rgba(255, 255, 255, 0.7)" />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <TouchableOpacity
+                  style={[
+                    styles.lyricsActionBtn,
+                    { backgroundColor: theme.surface },
+                    !isRemoteServiceEnabled && { backgroundColor: 'rgba(239, 68, 68, 0.18)' },
+                  ]}
+                  activeOpacity={0.7}
+                  onPress={() => setRemoteServiceEnabled(!isRemoteServiceEnabled)}
+                  hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+                  <Ionicons
+                    name={isRemoteServiceEnabled ? 'power' : 'power-outline'}
+                    size={12}
+                    color={isRemoteServiceEnabled ? theme.primary : '#ef4444'}
+                  />
+                  <Text
+                    style={[
+                      styles.lyricsActionBtnText,
+                      { color: isRemoteServiceEnabled ? theme.primary : '#ef4444' },
+                    ]}>
+                    {isRemoteServiceEnabled ? 'Açık' : 'Kapalı'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.queueCardCloseBtn}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  onPress={toggleConnectMode}>
+                  <Ionicons name="close" size={18} color="rgba(255, 255, 255, 0.7)" />
+                </TouchableOpacity>
+              </View>
             </View>
 
             <View style={styles.connectBody}>
-              {/* Connect Aç/Kapa Switch Satırı */}
-              <View
-                style={[
-                  styles.connectToggleCard,
-                  { backgroundColor: theme.surface },
-                ]}>
-                <View style={{ flex: 1, marginRight: 12 }}>
-                  <Text style={styles.connectToggleTitle}>
-                    {activeTransportTab === 'ble'
-                      ? 'Bluetooth Kumandası'
-                      : activeTransportTab === 'internet'
-                      ? 'İnternet Kumandası'
-                      : 'Wi-Fi Kumandası'}
-                  </Text>
-                  <Text style={styles.connectToggleHint}>
-                    {isRemoteServiceEnabled
-                      ? activeTransportTab === 'internet'
-                        ? 'Oda koduyla her yerden bağlanılabilir'
-                        : 'Cihazlar bu telefonu görebilir ve bağlanabilir'
-                      : 'Bağlantı servisi kapalı'}
-                  </Text>
-                </View>
-                <Switch
-                  value={isRemoteServiceEnabled}
-                  onValueChange={(val) => {
-                    setRemoteServiceEnabled(val);
-                  }}
-                  trackColor={{ false: '#3f3f46', true: theme.primary }}
-                  thumbColor="#ffffff"
-                />
-              </View>
-
               {/* Segment Kontrolü: Wi-Fi | Bluetooth | İnternet */}
               <View style={[styles.connectSegmentContainer, { backgroundColor: theme.surface }]}>
                 <TouchableOpacity
@@ -2902,33 +2904,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           {internetRoomCode ? internetRoomCode.replace(/^RUN-/, '') : 'Oda Başlatılıyor...'}
                         </Text>
 
-                        <View style={styles.connectRoomActionsRow}>
-                          <TouchableOpacity
-                            style={[styles.connectRoomBtn, { backgroundColor: `${theme.primary}25` }]}
-                            activeOpacity={0.75}
-                            onPress={() => {
-                              if (internetRoomCode) {
-                                const cleanCode = internetRoomCode.replace(/^RUN-/, '');
-                                Share.share({
-                                  message: `RunMusic Connecto Oda Kodu: ${cleanCode}\nRunMusic uygulamasından bu kodu girerek uzaktan müzik kontrolü yapabilirsiniz!`,
-                                });
-                              }
-                            }}>
-                            <Ionicons name="share-social-outline" size={16} color={theme.primary} />
-                            <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>Paylaş</Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={[styles.connectRoomBtn, { backgroundColor: 'rgba(255, 255, 255, 0.08)' }]}
-                            activeOpacity={0.75}
-                            onPress={() => {
-                              remoteSyncManager.startInternetHostRoom().catch(() => {});
-                            }}>
-                            <Ionicons name="refresh-outline" size={16} color="#ffffff" />
-                            <Text style={{ color: '#ffffff', fontWeight: '600', fontSize: 12 }}>Yeni Kod</Text>
-                          </TouchableOpacity>
-
-                          {internetHostStatus !== 'connected' && (
+                        {internetHostStatus !== 'connected' && (
+                          <View style={styles.connectRoomActionsRow}>
                             <TouchableOpacity
                               style={[styles.connectRoomBtn, { backgroundColor: `${theme.primary}35` }]}
                               activeOpacity={0.75}
@@ -2938,8 +2915,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                               <Ionicons name="link-outline" size={16} color={theme.primary} />
                               <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>Yeniden Bağlan</Text>
                             </TouchableOpacity>
-                          )}
-                        </View>
+                          </View>
+                        )}
 
                         <Text style={[styles.connectEmptySubtext, { marginTop: 8, textAlign: 'center' }]}>
                           Farklı bir Wi-Fi veya hücresel veri (4G/5G) ağındaki cihazınızdan bu kodu girerek anında bağlanabilirsiniz.
@@ -4522,25 +4499,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 4,
     paddingVertical: 4,
-  },
-  connectToggleCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    marginBottom: 8,
-  },
-  connectToggleTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  connectToggleHint: {
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.5)',
-    marginTop: 1,
   },
   connectSegmentContainer: {
     flexDirection: 'row',
