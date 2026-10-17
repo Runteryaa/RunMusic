@@ -381,3 +381,44 @@ for (const filePath of imagePickerFiles) {
     },
   ]);
 }
+
+// 9. Patch @expo/ui for iOS < 26 SDK compatibility
+function patchExpoUiFiles(dir) {
+  walkDir(dir, /Button\.swift$/, (file) => {
+    patchFile(file, [{
+      search: /@ViewBuilder\s*\n\s*private\s+var\s+labelLessButton:\s*some\s+View\s*\{[\s\S]*?Children\(\)\s*\n\s*\}\s*\n\s*\}\s*\n\s*\}/g,
+      replace: '@ViewBuilder\n  private var labelLessButton: some View {\n    SwiftUI.Button(role: props.role?.toNativeRole(), action: {\n      props.onButtonPress()\n    }) {\n      Children()\n    }\n  }\n}',
+    }]);
+  });
+  walkDir(dir, /ButtonProps\.swift$/, (file) => {
+    patchFile(file, [{
+      search: /case\s+\.close:\s*\n\s*if\s+#available\(iOS\s+26\.0,\s*tvOS\s+26\.0,\s*macOS\s+26\.0,\s*\*\)\s*\{\s*\n\s*return\s+SwiftUI\.ButtonRole\.close\s*\n\s*\}\s*\n\s*return\s+nil/g,
+      replace: 'case .close:\n      return nil',
+    }]);
+  });
+  walkDir(dir, /SymbolEffectModifier\.swift$/, (file) => {
+    patchFile(file, [
+      {
+        search: /@available\(iOS\s+26\.0,\s*tvOS\s+26\.0,\s*\*\)\s*\nprivate\s+func\s+buildDrawOnEffect[\s\S]*?default:\s*played\s*\n\s*\}\s*\n\s*\}/g,
+        replace: '// DrawOn/DrawOff effects require iOS 26',
+      },
+      {
+        search: /case\s+\.drawOn:\s*\n\s*if\s+#available\(iOS\s+26\.0,\s*tvOS\s+26\.0,\s*\*\)\s*\{\s*\n\s*view\.symbolEffect\(buildDrawOnEffect\(config\),\s*options:\s*options,\s*isActive:\s*isActive\)\s*\n\s*\}\s*else\s*\{\s*\n\s*view\s*\n\s*\}/g,
+        replace: 'case .drawOn:\n    view',
+      },
+      {
+        search: /case\s+\.drawOff:\s*\n\s*if\s+#available\(iOS\s+26\.0,\s*tvOS\s+26\.0,\s*\*\)\s*\{\s*\n\s*view\.symbolEffect\(buildDrawOffEffect\(config\),\s*options:\s*options,\s*isActive:\s*isActive\)\s*\n\s*\}\s*else\s*\{\s*\n\s*view\s*\n\s*\}/g,
+        replace: 'case .drawOff:\n    view',
+      },
+    ]);
+  });
+  walkDir(dir, /ViewModifierRegistry\.swift$/, (file) => {
+    patchFile(file, [{
+      search: /internal\s+struct\s+LineHeight:\s*ViewModifier,\s*Record\s*\{[\s\S]*?content\.lineHeight\(\.exact\(points:\s*value\)\)[\s\S]*?content\s*\n\s*\}\s*\n\s*\}/g,
+      replace: 'internal struct LineHeight: ViewModifier, Record {\n  @Field var value: CGFloat?\n\n  func body(content: Content) -> some View {\n    content\n  }\n}',
+    }]);
+  });
+}
+
+patchExpoUiFiles(path.join(__dirname, '..', 'node_modules', '@expo', 'ui'));
+patchExpoUiFiles(path.join(__dirname, '..', 'ios', 'Pods'));
