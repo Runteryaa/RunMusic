@@ -28,6 +28,8 @@ import { PairVerifyModal } from '../components/PairVerifyModal';
 import { DeviceSelectorModal } from '../components/DeviceSelectorModal';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useExtensionStore } from '../store/useExtensionStore';
+import { AppAlertModal } from '../components/AppAlertModal';
+import { installGlobalAlert } from '../services/customAlert';
 
 let MusicWidgetModule: any = null;
 try {
@@ -39,8 +41,9 @@ try {
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-// Register background service
+// Register background service & install custom in-app alert handler
 TrackPlayer.registerPlaybackService(() => playbackService);
+installGlobalAlert();
 
 function MainAppLayout() {
   useWidgetUpdater();
@@ -182,13 +185,14 @@ function MainAppLayout() {
         {/* Genişleyen ve Dönüşen Müzik Çalar (MiniPlayer <---> FullscreenPlayer) */}
         <ExpandingPlayer />
 
-        {/* Wi-Fi Remote Connect Modals */}
+        {/* Wi-Fi Remote Connect Modals & Global Themed In-App Alert */}
         <PairChallengeModal />
         <PairVerifyModal />
         <DeviceSelectorModal
           visible={isDeviceSelectorOpen}
           onClose={closeDeviceSelector}
         />
+        <AppAlertModal />
       </View>
     </GestureHandlerRootView>
   );
