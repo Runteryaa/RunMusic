@@ -371,12 +371,6 @@
       box-shadow: 0 4px 16px rgba(16, 185, 129, 0.25);
     }
 
-    .btn-download-audio {
-      background: #27272a;
-      color: #ffffff;
-      border: 1px solid #3f3f46;
-    }
-
     .btn-queue-large {
       background: var(--card-bg);
       color: var(--text);
@@ -418,21 +412,21 @@
     /* Toast Bildirim */
     .toast {
       position: fixed;
-      bottom: 24px;
+      top: 18px;
       left: 50%;
-      transform: translateX(-50%) translateY(30px);
-      background: #27272a;
+      transform: translateX(-50%) translateY(-24px);
+      background: #18181b;
       color: #ffffff;
-      padding: 10px 20px;
-      border-radius: 20px;
+      padding: 12px 22px;
+      border-radius: 24px;
       font-size: 13px;
       font-weight: 600;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
       border: 1px solid #3f3f46;
       opacity: 0;
       pointer-events: none;
       transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-      z-index: 999;
+      z-index: 99999;
       text-align: center;
       max-width: 90%;
     }
@@ -516,14 +510,9 @@
         <span id="btnPlayText">Oynat (Stream)</span>
       </button>
 
-      <button class="action-btn btn-download-large" id="btnDownloadFast" onclick="actionDownload('fast')">
-        <span>⚡</span>
-        <span id="btnDownloadFastText">Hızlı İndir (MP3)</span>
-      </button>
-
-      <button class="action-btn btn-download-audio" id="btnDownloadAudio" onclick="actionDownload('audio')">
-        <span>🎵</span>
-        <span id="btnDownloadAudioText">Sadece Ses İndir (Düşük Boyut)</span>
+      <button class="action-btn btn-download-large" id="btnDownload" onclick="actionDownload()">
+        <span>⬇</span>
+        <span id="btnDownloadText">İndir (MP3)</span>
       </button>
 
       <button class="action-btn btn-queue-large" id="btnQueue" onclick="actionQueue()">
@@ -807,10 +796,9 @@
       }
     }
 
-    async function actionDownload(format = 'fast') {
+    async function actionDownload() {
       if (!activeVideo) return;
-      const btnId = format === 'fast' ? 'btnDownloadFastText' : 'btnDownloadAudioText';
-      const btnText = document.getElementById(btnId);
+      const btnText = document.getElementById('btnDownloadText');
       const originalText = btnText ? btnText.textContent : '';
       if (btnText) btnText.textContent = 'Hazırlanıyor...';
 
@@ -819,19 +807,10 @@
         const finalTitle = streamData.title || activeVideo.title;
         const finalArtist = streamData.author || activeVideo.author;
 
-        let downloadUrl = '';
-        let fileName = '';
-
-        if (format === 'fast') {
-          // streamData.mp4 ratebypass=yes içerir ve bant genişliği kısıtı olmaksızın 2-3 saniyede iner.
-          // Müzik çalarımız ve cihaz kütüphanesi için doğrudan .mp3 uzantısıyla kaydedilir.
-          downloadUrl = streamData.mp4 || streamData.mp3;
-          fileName = `${finalArtist} - ${finalTitle}.mp3`;
-        } else {
-          // streamData.mp3 saf ses akışıdır (YouTube sunucusu tarafından playback hızına kısıtlanır)
-          downloadUrl = streamData.mp3 || streamData.mp4;
-          fileName = `${finalArtist} - ${finalTitle}.mp3`;
-        }
+        // streamData.mp4 ratebypass=yes içerir ve bant genişliği kısıtı olmaksızın 2-3 saniyede iner.
+        // Müzik çalarımız ve cihaz kütüphanesi için doğrudan .mp3 uzantısıyla kaydedilir.
+        const downloadUrl = streamData.mp4 || streamData.mp3;
+        const fileName = `${finalArtist} - ${finalTitle}.mp3`;
 
         if (window.RunMusic && window.RunMusic.downloader) {
           const res = await window.RunMusic.downloader.download({
@@ -842,8 +821,7 @@
             suggestedFileName: fileName,
             storageTarget: 'private'
           });
-          const modeLabel = format === 'fast' ? '⚡ Hızlı İndirme (MP3)' : '🎵 Ses İndirme (Düşük Boyut)';
-          showToast(`${modeLabel} başlatıldı! (ID: ${res.downloadId})`);
+          showToast(`⬇ İndirme başlatıldı! (ID: ${res.downloadId})`);
         } else {
           showToast('RunMusic indirme yöneticisi bulunamadı.');
         }
