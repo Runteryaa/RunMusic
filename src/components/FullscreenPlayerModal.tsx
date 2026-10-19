@@ -875,23 +875,15 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         return (
           <View style={styles.upNextSectionWrapper}>
             <View style={styles.upNextSectionHeader}>
-              <View style={styles.upNextBadgeContainer}>
-                <Ionicons name="sparkles" size={13} color={theme.primary} />
-                <Text style={[styles.upNextBadgeText, { color: theme.primary }]}>
-                  {t('queue.up_next_header') || 'SIRADA (SENİN EKLEDİKLERİN)'}
-                </Text>
-                <View style={[styles.upNextCountBadge, { backgroundColor: `${theme.primary}25` }]}>
-                  <Text style={[styles.upNextCountText, { color: theme.primary }]}>
-                    {upNextItems.length}
-                  </Text>
-                </View>
-              </View>
+              <Text style={styles.queueSectionTitle}>
+                {`${t('queue.up_next_header') || 'SIRADA (SENİN EKLEDİKLERİN)'} · ${upNextItems.length}`}
+              </Text>
               <TouchableOpacity
                 onPress={handleClearUpNext}
                 style={styles.clearUpNextButton}
                 activeOpacity={0.7}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="trash-outline" size={13} color="#ef4444" style={{ marginRight: 4 }} />
+                <Ionicons name="trash-outline" size={12} color="#ef4444" style={{ marginRight: 4 }} />
                 <Text style={styles.clearUpNextText}>{t('queue.clear_up_next') || 'Temizle'}</Text>
               </TouchableOpacity>
             </View>
@@ -900,6 +892,17 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               accentColor={theme.primary}
               onMove={handleMoveUpNext}
               onRemove={handleRemoveUpNext}
+              onItemPress={(_, idx) => {
+                const target = effectiveQueueSections?.upNext[idx];
+                if (target) {
+                  handleQueueItemPress(
+                    target.index,
+                    target.track.id,
+                    target.track.title,
+                    target.track.artist
+                  );
+                }
+              }}
             />
           </View>
         );
@@ -4635,29 +4638,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
-  upNextBadgeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  upNextBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginLeft: 6,
-  },
-  upNextCountBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 10,
-    marginLeft: 6,
-  },
-  upNextCountText: {
-    fontSize: 10,
-    fontWeight: '800',
+    paddingRight: 8,
   },
   clearUpNextButton: {
     flexDirection: 'row',

@@ -23,21 +23,21 @@ interface Props {
   accentColor: string;
   onMove: (from: number, to: number) => void;
   onRemove: (index: number) => void;
+  onItemPress?: (item: UpNextItem, index: number) => void;
 }
 
 /**
- * "Sırada" (manuel kuyruk) listesi.
+ * "Sırada" (manuel öncelikli kuyruk) listesi.
  *
- * Etkileşimler bilinçli olarak AYRIŞTIRILMIŞTIR ki birbirleriyle çakışmasın:
- *  - YENİDEN SIRALAMA: soldaki tutamak (≡) üzerinde kısa basılı tutma sonrası
- *    başlayan dikey sürükleme. Bırakınca hedef konum hesaplanıp bildirilir.
- *  - KALDIRMA: satırı yatay kaydırma (Swipeable) veya beliren çöp düğmesi.
- *
- * Her satır kendi animasyon durumunu (`useSharedValue`) tutar: React Compiler
- * prop olarak geçen shared value'ların değiştirilmesine izin vermez, ayrıca
- * satırların birbirini kaydırması için ek senkron gerekmez.
+ * Uygulamanın ve kuyruk ekranının tasarım standartlarıyla birebir uyumlu kartlar:
+ *  - Yumuşak köşe yuvarlama (borderRadius: 12)
+ *  - Saydam kart arka planı (theme.surface / rgba(255, 255, 255, 0.05))
+ *  - Beyaz başlık, gri alt sanatçı metni
+ *  - Dokunarak çalma (onItemPress)
+ *  - Tutamaktan (≡) basılı tutup sürükleyerek yeniden sıralama
+ *  - Sağa/sola kaydırarak silme (Swipeable)
  */
-export function QueueUpNextList({ items, accentColor, onMove, onRemove }: Props) {
+export function QueueUpNextList({ items, accentColor, onMove, onRemove, onItemPress }: Props) {
   const commit = useCallback(
     (from: number, to: number) => {
       if (from !== to) onMove(from, to);
@@ -56,6 +56,7 @@ export function QueueUpNextList({ items, accentColor, onMove, onRemove }: Props)
           accentColor={accentColor}
           onCommit={commit}
           onRemove={onRemove}
+          onPress={onItemPress}
         />
       ))}
     </View>
@@ -69,10 +70,18 @@ interface RowProps {
   accentColor: string;
   onCommit: (from: number, to: number) => void;
   onRemove: (index: number) => void;
+  onPress?: (item: UpNextItem, index: number) => void;
 }
 
-function UpNextRow({ item, index, count, accentColor, onCommit, onRemove }: RowProps) {
-  // Bu satıra özel sürükleme durumu (aynı bileşende oluşturulur ve değiştirilir).
+function UpNextRow({
+  item,
+  index,
+  count,
+  accentColor,
+  onCommit,
+  onRemove,
+  onPress,
+}: RowProps) {
   const dragY = useSharedValue(0);
   const isDragging = useSharedValue(false);
 
@@ -80,7 +89,6 @@ function UpNextRow({ item, index, count, accentColor, onCommit, onRemove }: RowP
     () =>
       Gesture.Pan()
         .activateAfterLongPress(150)
-        // Geri çağrılar JS iş parçacığında çalışsın: worklet → JS köprüsü gerekmez.
         .runOnJS(true)
         .onStart(() => {
           isDragging.value = true;
@@ -97,68 +105,83 @@ function UpNextRow({ item, index, count, accentColor, onCommit, onRemove }: RowP
           onCommit(index, target);
         })
         .onFinalize(() => {
-          // İptal edilirse (ör. sistem geri hareketi) durumu temizle.
           isDragging.value = false;
           dragY.value = 0;
         }),
-    // Shared value'lar ref gibi kararlıdır; bağımlılığa yazılmaz (yazılırsa
-    // React Compiler bunları "hook argümanı" sayıp değiştirilmesini engeller).
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [index, count, onCommit]
   );
 
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: dragY.value }, { scale: isDragging.value ? 1.03 : 1 }],
+    transform: [{ translateY: dragY.value }, { scale: isDragging.value ? 1.02 : 1 }],
     zIndex: isDragging.value ? 50 : 0,
-    opacity: isDragging.value ? 0.97 : 1,
+    opacity: isDragging.value ? 0.95 : 1,
   }));
 
   const renderRightActions = () => (
     <TouchableOpacity
-      style={[styles.removeAction, { backgroundColor: '#ef4444' }]}
+      style={styles.removeAction}
       activeOpacity={0.8}
       onPress={() => onRemove(index)}>
       <Ionicons name="trash-outline" size={20} color="#ffffff" />
     </TouchableOpacity>
   );
 
+  const isExtensionTrack =
+    item.trackId?.startsWith('ext_') ||
+    (typeof item.trackUri === 'string' && item.trackUri.startsWith('http'));
+
   return (
     <Animated.View style={[styles.rowWrapper, animatedStyle]}>
       <Swipeable renderRightActions={renderRightActions} overshootRight={false}>
-        <View style={styles.row}>
+        <View style={styles.cardContainer}>
+          {/* Sol: Sürükleme Tutamağı */}
           <GestureDetector gesture={pan}>
-            <View style={styles.dragHandle} hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}>
-              <Ionicons name="reorder-three" size={22} color="rgba(255,255,255,0.45)" />
+            <View style={styles.dragHandle} hitSlop={{ top: 10, bottom: 10, left: 10, right: 8 }}>
+              <Ionicons name="reorder-two-outline" size={20} color="rgba(255,255,255,0.4)" />
             </View>
           </GestureDetector>
 
-          <TrackArtwork
-            uri={item.artwork}
-            trackId={item.trackId}
-            trackUri={item.trackUri}
-            size={40}
-            borderRadius={6}
-            iconSize={18}
-          />
+          {/* Ana İçerik: Dokunarak Çalma */}
+          <TouchableOpacity
+            style={styles.mainContent}
+            activeOpacity={0.7}
+            onPress={() => onPress?.(item, index)}>
+            <TrackArtwork
+              uri={item.artwork}
+              trackId={item.trackId}
+              trackUri={item.trackUri}
+              size={40}
+              borderRadius={6}
+              iconSize={18}
+            />
 
-          <View style={styles.textBox}>
-            <Text style={[styles.title, { color: accentColor }]} numberOfLines={1}>
-              {item.title}
-            </Text>
-            {item.artist ? (
+            <View style={styles.textBox}>
+              <Text style={styles.title} numberOfLines={1}>
+                {item.title}
+              </Text>
               <View style={styles.artistContainer}>
-                {(item.trackId?.startsWith('ext_') || item.trackUri?.startsWith('http')) && (
+                {isExtensionTrack ? (
                   <View style={styles.extBadge}>
-                    <Ionicons name="globe-outline" size={10} color="rgba(255,255,255,0.7)" style={{ marginRight: 3 }} />
+                    <Ionicons
+                      name="globe-outline"
+                      size={10}
+                      color="rgba(255,255,255,0.7)"
+                      style={{ marginRight: 3 }}
+                    />
                     <Text style={styles.extBadgeText}>Eklenti</Text>
                   </View>
-                )}
+                ) : null}
                 <Text style={styles.artist} numberOfLines={1}>
-                  {item.artist}
+                  {item.artist || 'Bilinmeyen Sanatçı'}
                 </Text>
               </View>
-            ) : null}
-          </View>
+            </View>
+
+            <View style={styles.rightSlot}>
+              <Ionicons name="play" size={13} color="rgba(255,255,255,0.25)" />
+            </View>
+          </TouchableOpacity>
         </View>
       </Swipeable>
     </Animated.View>
@@ -168,27 +191,40 @@ function UpNextRow({ item, index, count, accentColor, onCommit, onRemove }: RowP
 const styles = StyleSheet.create({
   rowWrapper: {
     height: UPNEXT_ROW_HEIGHT,
+    paddingVertical: 2,
+    paddingHorizontal: 2,
   },
-  row: {
-    height: UPNEXT_ROW_HEIGHT,
+  cardContainer: {
+    height: UPNEXT_ROW_HEIGHT - 4,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingRight: 12,
-    backgroundColor: '#18181b',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.07)',
+    paddingLeft: 4,
+    paddingRight: 10,
   },
   dragHandle: {
-    width: 34,
-    height: UPNEXT_ROW_HEIGHT,
+    width: 30,
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  mainContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   textBox: {
     flex: 1,
-    marginLeft: 12,
+    marginLeft: 10,
+    justifyContent: 'center',
   },
   title: {
+    color: '#ffffff',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   artistContainer: {
     flexDirection: 'row',
@@ -199,24 +235,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.12)',
-    paddingHorizontal: 5,
+    paddingHorizontal: 4,
     paddingVertical: 1,
     borderRadius: 4,
     marginRight: 6,
   },
   extBadgeText: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 10,
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontSize: 9,
     fontWeight: '600',
   },
   artist: {
-    color: 'rgba(255,255,255,0.55)',
+    color: '#71717a',
     fontSize: 12,
     flex: 1,
   },
+  rightSlot: {
+    paddingLeft: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   removeAction: {
-    width: 72,
-    height: UPNEXT_ROW_HEIGHT,
+    width: 68,
+    height: UPNEXT_ROW_HEIGHT - 4,
+    backgroundColor: '#ef4444',
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
