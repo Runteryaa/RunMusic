@@ -47,9 +47,8 @@ export async function startDownload(params: StartDownloadParams): Promise<{ down
   const baseName = sanitizeFileName(params.suggestedFileName?.replace(/\.[^/.]+$/, '') || `${artist} - ${title}`);
   const finalFileName = `${baseName}${ext}`;
 
-  // Hedef depolama
-  const defaultTarget = store.defaultStorageTarget === 'ask' ? 'public' : store.defaultStorageTarget;
-  const target: 'public' | 'private' = params.storageTarget || defaultTarget;
+  // Hedef depolama: Tüm indirmeler güvenli ve izole olarak uygulamanın özel depolama alanına kaydedilir
+  const target: 'public' | 'private' = params.storageTarget === 'public' ? 'public' : 'private';
 
   const downloadDir = `${FileSystem.documentDirectory || ''}downloads/`;
   const localFileUri = `${downloadDir}${downloadId}_${finalFileName}`;
@@ -192,3 +191,62 @@ export async function cancelDownload(downloadId: string): Promise<void> {
     status: 'cancelled',
   });
 }
+
+/**
+ * Özel depolamadaki indirilmiş parçayı kullanıcının isteğiyle cihazın genel
+ * müzik kütüphanesine (MediaLibrary) aktarır ve RunMusic kütüphanesine ekler.
+ */
+export async function addDownloadToLibrary(downloadId: string): Promise<boolean> {
+  const task = useDownloadStore.getState().tasks.find((t) => t.id === downloadId);
+  if (!task || !task.localFileUri) {
+    throw new Error('Dosya bulunamadı.');
+  }
+
+  const fileInfo = await FileSystem.getInfoAsync(task.localFileUri);
+  if (!fileInfo.exists) {
+    throw new Error('İndirilen yerel dosya bulunamadı.');
+  }
+
+  const isVideo = task.fileName.toLowerCase().endsWith('.mp4');
+  const permissionsToRequest: ('audio' | 'video')[] = isVideo ? ['audio', 'video'] : ['audio'];
+  let permission = await MediaLibrary.getPermissionsAsync(false, permissionsToRequest);
+  if (!permission.granted && permission.canAskAgain) {
+    permission = await MediaLibrary.requestPermissionsAsync(false, permissionsToRequest);
+  }
+
+  if (!permission.granted) {
+    throw new Error('Cihaz medya kütüphanesi erişim izni verilmedi.');
+  }
+
+  const createdAsset = await MediaLibrary.createAssetAsync(task.localFileUri);
+
+  // RunMusic ana kütüphanesine varlığı anında ekle
+  const currentLib = useStore.getState().library;
+  if (!currentLib.some((a) => a.id === createdAsset.id || a.uri === createdAsset.uri)) {
+    useStore.getState().setLibrary([createdAsset, ...currentLib]);
+  }
+
+  // Görevi kütüphaneye eklendi olarak işaretle
+  useDownloadStore.getState().updateTask(downloadId, {
+    mediaLibraryAssetId: createdAsset.id,
+    storageTarget: 'public',
+  });
+
+  return true;
+}
+
+/**
+ * İndirilen görevi ve yerel dosyasını kalıcı olarak siler.
+ */
+export async function deleteDownloadedFile(downloadId: string): Promise<void> {
+  const task = useDownloadStore.getState().tasks.find((t) => t.id === downloadId);
+  if (task?.localFileUri) {
+    try {
+      await FileSystem.deleteAsync(task.localFileUri, { idempotent: true });
+    } catch {
+      // ignore
+    }
+  }
+  useDownloadStore.getState().removeTask(downloadId);
+}
+

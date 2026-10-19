@@ -839,7 +839,7 @@
             artwork: streamData.thumbnail || activeVideo.thumbnail,
             downloadUrl: downloadUrl,
             suggestedFileName: fileName,
-            storageTarget: 'public'
+            storageTarget: 'private'
           });
           const modeLabel = format === 'fast' ? '⚡ Hızlı İndirme (MP4)' : '🎵 Ses İndirme (MP3)';
           showToast(`${modeLabel} başlatıldı! (ID: ${res.downloadId})`);

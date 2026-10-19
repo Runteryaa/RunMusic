@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Modal,
   View,
@@ -7,12 +7,20 @@ import {
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
+  Image,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import TrackPlayer from 'react-native-track-player';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useExtensionStore } from '../store/useExtensionStore';
 import { useThemeStore } from '../store/useThemeStore';
-import { cancelDownload } from '../services/downloadManager';
+import {
+  cancelDownload,
+  addDownloadToLibrary,
+  deleteDownloadedFile,
+} from '../services/downloadManager';
 import type { DownloadTask } from '../types/download';
 
 export const DownloadsModal: React.FC = () => {
@@ -21,10 +29,9 @@ export const DownloadsModal: React.FC = () => {
   const close = useExtensionStore((s) => s.closeDownloadsModal);
 
   const tasks = useDownloadStore((s) => s.tasks);
-  const removeTask = useDownloadStore((s) => s.removeTask);
   const clearCompleted = useDownloadStore((s) => s.clearCompleted);
-  const defaultTarget = useDownloadStore((s) => s.defaultStorageTarget);
-  const setDefaultTarget = useDownloadStore((s) => s.setDefaultStorageTarget);
+
+  const [addingMap, setAddingMap] = useState<Record<string, boolean>>({});
 
   const formatBytes = (bytes: number) => {
     if (!bytes || bytes === 0) return '0 B';
@@ -34,34 +41,92 @@ export const DownloadsModal: React.FC = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
+  const handlePlayTrack = async (item: DownloadTask) => {
+    if (!item.localFileUri) return;
+    try {
+      await TrackPlayer.reset();
+      await TrackPlayer.add({
+        id: item.id,
+        url: item.localFileUri,
+        title: item.title,
+        artist: item.artist,
+        artwork: item.artwork,
+      });
+      await TrackPlayer.play();
+    } catch (err: any) {
+      console.warn('[DownloadsModal] Oynatma hatası:', err);
+      Alert.alert('Oynatma Hatası', err?.message || 'Parça çalınamadı.');
+    }
+  };
+
+  const handleAddToLibrary = async (item: DownloadTask) => {
+    if (addingMap[item.id] || item.mediaLibraryAssetId) return;
+
+    setAddingMap((prev) => ({ ...prev, [item.id]: true }));
+    try {
+      await addDownloadToLibrary(item.id);
+      Alert.alert('Başarılı', `"${item.title}" cihaz müzik kütüphanenize eklendi.`);
+    } catch (err: any) {
+      Alert.alert('Kütüphaneye Eklenemedi', err?.message || 'Bir hata oluştu.');
+    } finally {
+      setAddingMap((prev) => ({ ...prev, [item.id]: false }));
+    }
+  };
+
+  const handleDeleteTask = (item: DownloadTask) => {
+    if (item.status === 'downloading') {
+      cancelDownload(item.id);
+    } else {
+      deleteDownloadedFile(item.id);
+    }
+  };
+
   const renderItem = ({ item }: { item: DownloadTask }) => {
     const isDownloading = item.status === 'downloading';
     const isCompleted = item.status === 'completed';
     const isFailed = item.status === 'failed';
+    const isInLibrary = !!item.mediaLibraryAssetId;
+    const isAdding = !!addingMap[item.id];
 
     return (
       <View style={styles.taskCard}>
+        {/* Üst Bilgi Satırı */}
         <View style={styles.taskInfoRow}>
-          <View style={[styles.taskIconWrap, isCompleted && { backgroundColor: '#10b98120' }]}>
-            <Ionicons
-              name={
-                isCompleted
-                  ? 'checkmark-circle'
-                  : isFailed
-                  ? 'alert-circle'
-                  : 'arrow-down-circle'
-              }
-              size={24}
-              color={isCompleted ? '#10b981' : isFailed ? '#ef4444' : theme.primary}
-            />
-          </View>
+          <TouchableOpacity
+            style={[styles.taskIconWrap, isCompleted && { backgroundColor: '#10b98120' }]}
+            activeOpacity={isCompleted ? 0.7 : 1}
+            onPress={() => isCompleted && handlePlayTrack(item)}
+          >
+            {item.artwork ? (
+              <Image source={{ uri: item.artwork }} style={styles.artworkImg} />
+            ) : (
+              <Ionicons
+                name={
+                  isCompleted
+                    ? 'play'
+                    : isFailed
+                    ? 'alert-circle'
+                    : 'arrow-down-circle'
+                }
+                size={22}
+                color={isCompleted ? '#10b981' : isFailed ? '#ef4444' : theme.primary}
+              />
+            )}
+          </TouchableOpacity>
 
-          <View style={styles.taskTextWrap}>
+          <TouchableOpacity
+            style={styles.taskTextWrap}
+            activeOpacity={isCompleted ? 0.7 : 1}
+            onPress={() => isCompleted && handlePlayTrack(item)}
+          >
             <Text style={styles.taskTitle} numberOfLines={1}>
               {item.title}
             </Text>
             <Text style={styles.taskArtist} numberOfLines={1}>
-              {item.artist} • {item.storageTarget === 'public' ? 'Müzik Klasörü' : 'Özel Depolama'}
+              {item.artist}
+              {item.totalBytes > 0 || item.downloadedBytes > 0
+                ? ` • ${formatBytes(item.totalBytes || item.downloadedBytes)}`
+                : ''}
             </Text>
 
             {isDownloading && (
@@ -85,26 +150,66 @@ export const DownloadsModal: React.FC = () => {
                 {item.error || 'İndirme hatası'}
               </Text>
             )}
-          </View>
-
-          <TouchableOpacity
-            style={styles.actionBtn}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            onPress={() => {
-              if (isDownloading) {
-                cancelDownload(item.id);
-              } else {
-                removeTask(item.id);
-              }
-            }}
-          >
-            <Ionicons
-              name={isDownloading ? 'close' : 'trash-outline'}
-              size={20}
-              color="#a1a1aa"
-            />
           </TouchableOpacity>
+
+          {/* Aksiyon Butonları */}
+          <View style={styles.topActions}>
+            {isCompleted && (
+              <TouchableOpacity
+                style={styles.actionBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                onPress={() => handlePlayTrack(item)}
+              >
+                <Ionicons name="play-circle" size={26} color={theme.primary} />
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={styles.actionBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              onPress={() => handleDeleteTask(item)}
+            >
+              <Ionicons
+                name={isDownloading ? 'close' : 'trash-outline'}
+                size={20}
+                color="#a1a1aa"
+              />
+            </TouchableOpacity>
+          </View>
         </View>
+
+        {/* Tamamlanan Parçalar İçin Alt Çubuk (Kütüphaneye Ekle Butonu) */}
+        {isCompleted && (
+          <View style={styles.cardFooter}>
+            <View style={styles.storageBadge}>
+              <Ionicons name="shield-checkmark" size={12} color="#71717a" style={{ marginRight: 4 }} />
+              <Text style={styles.storageBadgeText}>Özel Depolama</Text>
+            </View>
+
+            {isInLibrary ? (
+              <View style={styles.inLibraryBadge}>
+                <Ionicons name="checkmark-done" size={14} color="#10b981" style={{ marginRight: 4 }} />
+                <Text style={styles.inLibraryText}>Kütüphanede</Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={[styles.addToLibBtn, { borderColor: theme.primary }]}
+                activeOpacity={0.7}
+                onPress={() => handleAddToLibrary(item)}
+                disabled={isAdding}
+              >
+                {isAdding ? (
+                  <ActivityIndicator size="small" color={theme.primary} style={{ marginRight: 4 }} />
+                ) : (
+                  <Ionicons name="add" size={14} color={theme.primary} style={{ marginRight: 3 }} />
+                )}
+                <Text style={[styles.addToLibText, { color: theme.primary }]}>
+                  {isAdding ? 'Ekleniyor...' : 'Kütüphaneye Ekle'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </View>
     );
   };
@@ -128,31 +233,15 @@ export const DownloadsModal: React.FC = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Target Storage Selector */}
-        <View style={styles.storageSelectorBox}>
-          <Text style={styles.storageSelectorLabel}>Kayıt Konumu:</Text>
-          <View style={styles.storageTabs}>
-            <TouchableOpacity
-              style={[styles.storageTab, defaultTarget === 'public' && { backgroundColor: theme.primary }]}
-              onPress={() => setDefaultTarget('public')}
-            >
-              <Text style={[styles.storageTabText, defaultTarget === 'public' && styles.storageTabTextActive]}>
-                Cihaz Müzik Klasörü
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.storageTab, defaultTarget === 'private' && { backgroundColor: theme.primary }]}
-              onPress={() => setDefaultTarget('private')}
-            >
-              <Text style={[styles.storageTabText, defaultTarget === 'private' && styles.storageTabTextActive]}>
-                Özel Depolama
-              </Text>
-            </TouchableOpacity>
-          </View>
+        {/* Özel Depolama Bilgilendirme Banner'ı */}
+        <View style={styles.infoBanner}>
+          <Ionicons name="folder-outline" size={18} color="#10b981" style={{ marginRight: 8, marginTop: 1 }} />
+          <Text style={styles.infoBannerText}>
+            İndirilen tüm şarkılar uygulamanın özel depolama alanında güvenle saklanır. İstediğiniz parçayı &quot;Kütüphaneye Ekle&quot; butonuyla cihazınızın genel müzik kütüphanesine aktarabilirsiniz.
+          </Text>
         </View>
 
-        {/* List Header Actions */}
+        {/* Liste Başlığı & Temizleme Butonu */}
         {tasks.some((t) => t.status === 'completed') && (
           <View style={styles.subHeader}>
             <Text style={styles.tasksCount}>{tasks.length} Görev</Text>
@@ -162,7 +251,7 @@ export const DownloadsModal: React.FC = () => {
           </View>
         )}
 
-        {/* Tasks List */}
+        {/* Görev Listesi */}
         <FlatList
           data={tasks}
           keyExtractor={(item) => item.id}
@@ -173,7 +262,7 @@ export const DownloadsModal: React.FC = () => {
               <Ionicons name="cloud-download-outline" size={54} color="#3f3f46" />
               <Text style={styles.emptyTitle}>Henüz indirme yok</Text>
               <Text style={styles.emptySubtitle}>
-                Eklentilerden arattığınız şarkıları indirdiğinizde burada görünecektir.
+                Eklentilerden indirdiğiniz tüm parçalar uygulamanın özel depolama alanına kaydedilir.
               </Text>
             </View>
           }
@@ -206,38 +295,20 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#ffffff',
   },
-  storageSelectorBox: {
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1f1f23',
+  infoBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     backgroundColor: '#18181b',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
   },
-  storageSelectorLabel: {
+  infoBannerText: {
+    flex: 1,
     fontSize: 12,
     color: '#a1a1aa',
-    marginBottom: 8,
-    fontWeight: '600',
-  },
-  storageTabs: {
-    flexDirection: 'row',
-    backgroundColor: '#09090b',
-    borderRadius: 10,
-    padding: 3,
-  },
-  storageTab: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  storageTabText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#71717a',
-  },
-  storageTabTextActive: {
-    color: '#ffffff',
+    lineHeight: 17,
   },
   subHeader: {
     flexDirection: 'row',
@@ -273,13 +344,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   taskIconWrap: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     borderRadius: 10,
     backgroundColor: '#27272a',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
+    overflow: 'hidden',
+  },
+  artworkImg: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 10,
   },
   taskTextWrap: {
     flex: 1,
@@ -293,6 +370,11 @@ const styles = StyleSheet.create({
   taskArtist: {
     fontSize: 12,
     color: '#a1a1aa',
+  },
+  topActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   progressContainer: {
     marginTop: 8,
@@ -319,7 +401,55 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     padding: 6,
-    marginLeft: 8,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#27272a',
+  },
+  storageBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#27272a',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  storageBadgeText: {
+    fontSize: 11,
+    color: '#a1a1aa',
+    fontWeight: '500',
+  },
+  inLibraryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#10b98118',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#10b98140',
+  },
+  inLibraryText: {
+    fontSize: 12,
+    color: '#10b981',
+    fontWeight: '600',
+  },
+  addToLibBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  addToLibText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   emptyContainer: {
     alignItems: 'center',
