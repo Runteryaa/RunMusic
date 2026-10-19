@@ -240,31 +240,47 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
     }
   }
 
-  let permission = await MediaLibrary.getPermissionsAsync(false, ['audio']);
-  if (!permission.granted && permission.status !== 'granted' && permission.canAskAgain) {
-    permission = await MediaLibrary.requestPermissionsAsync(false, ['audio']);
+  let createdAsset: MediaLibrary.Asset | null = null;
+  try {
+    let permission = await MediaLibrary.getPermissionsAsync(false, ['audio']);
+    if (!permission.granted && permission.status !== 'granted' && permission.canAskAgain) {
+      permission = await MediaLibrary.requestPermissionsAsync(false, ['audio']);
+    }
+
+    if (permission.granted || permission.status === 'granted') {
+      const result = await MediaLibrary.createAssetAsync(targetFileUri);
+      if (result && result.id) {
+        createdAsset = result;
+      }
+    }
+  } catch (mediaLibErr) {
+    console.warn('[downloadManager] MediaLibrary sistem kaydı başarısız, yerel kütüphaneye ekleniyor:', mediaLibErr);
   }
 
-  if (!permission.granted && permission.status !== 'granted') {
-    throw new Error('Cihaz medya kütüphanesi erişim izni verilmedi.');
-  }
-
-  const createdAsset = await MediaLibrary.createAssetAsync(targetFileUri);
-  if (!createdAsset || !createdAsset.id) {
-    throw new Error('Medya varlığı oluşturulamadı.');
-  }
+  // Cihaz MediaStore varlığı oluşturulamasa dahi parçayı doğrudan RunMusic kütüphanesine ekle
+  const finalAsset: MediaLibrary.Asset = (createdAsset && createdAsset.id) ? createdAsset : {
+    id: `local_${downloadId}`,
+    filename: targetFileName,
+    uri: targetFileUri,
+    mediaType: 'audio' as any,
+    width: 0,
+    height: 0,
+    creationTime: task.createdAt || Date.now(),
+    modificationTime: Date.now(),
+    duration: 0,
+  };
 
   // RunMusic ana kütüphanesine varlığı anında ekle ve önbelleğe kaydet
   const currentLib = useStore.getState().library;
-  if (!currentLib.some((a) => a.id === createdAsset.id || a.uri === createdAsset.uri)) {
-    const updatedLib = [createdAsset, ...currentLib];
+  if (!currentLib.some((a) => a.id === finalAsset.id || a.uri === finalAsset.uri)) {
+    const updatedLib = [finalAsset, ...currentLib];
     useStore.getState().setLibrary(updatedLib);
     saveCachedLibrary(updatedLib).catch(() => {});
   }
 
   // Şarkı bilgilerini metadataMap'e yaz ki kütüphanede sanatçı ve başlık anında görünsün
   if (task.title || task.artist || task.artwork) {
-    useStore.getState().setTrackMetadata(createdAsset.id, {
+    useStore.getState().setTrackMetadata(finalAsset.id, {
       title: task.title,
       artist: task.artist,
       artwork: task.artwork,
@@ -273,7 +289,7 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
 
   // Görevi kütüphaneye eklendi olarak işaretle
   useDownloadStore.getState().updateTask(downloadId, {
-    mediaLibraryAssetId: createdAsset.id,
+    mediaLibraryAssetId: finalAsset.id,
     storageTarget: 'public',
   });
 

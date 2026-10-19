@@ -73,7 +73,8 @@
         {
           "photosPermission": "Allow RunMusic to access your media to find audio files.",
           "savePhotosPermission": "Allow RunMusic to save audio files.",
-          "isAccessMediaLocationEnabled": false
+          "isAccessMediaLocationEnabled": false,
+          "granularPermissions": ["audio", "photo"]
         }
       ],
       "expo-sqlite",
