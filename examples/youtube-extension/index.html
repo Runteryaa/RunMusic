@@ -365,6 +365,13 @@
     }
 
     .btn-download-large {
+      background: #059669;
+      color: #ffffff;
+      border: 1px solid #10b981;
+      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.25);
+    }
+
+    .btn-download-audio {
       background: #27272a;
       color: #ffffff;
       border: 1px solid #3f3f46;
@@ -509,9 +516,14 @@
         <span id="btnPlayText">Oynat (Stream)</span>
       </button>
 
-      <button class="action-btn btn-download-large" id="btnDownload" onclick="actionDownload()">
-        <span>⬇</span>
-        <span id="btnDownloadText">Cihaza İndir</span>
+      <button class="action-btn btn-download-large" id="btnDownloadFast" onclick="actionDownload('fast')">
+        <span>⚡</span>
+        <span id="btnDownloadFastText">Hızlı İndir (HD - MP4)</span>
+      </button>
+
+      <button class="action-btn btn-download-audio" id="btnDownloadAudio" onclick="actionDownload('audio')">
+        <span>🎵</span>
+        <span id="btnDownloadAudioText">Sadece Ses İndir (MP3)</span>
       </button>
 
       <button class="action-btn btn-queue-large" id="btnQueue" onclick="actionQueue()">
@@ -795,17 +807,30 @@
       }
     }
 
-    async function actionDownload() {
+    async function actionDownload(format = 'fast') {
       if (!activeVideo) return;
-      const btnText = document.getElementById('btnDownloadText');
-      const originalText = btnText.textContent;
-      btnText.textContent = 'Hazırlanıyor...';
+      const btnId = format === 'fast' ? 'btnDownloadFastText' : 'btnDownloadAudioText';
+      const btnText = document.getElementById(btnId);
+      const originalText = btnText ? btnText.textContent : '';
+      if (btnText) btnText.textContent = 'Hazırlanıyor...';
 
       try {
         const streamData = await fetchStreamData(activeVideo.url, activeVideo.id);
-        const downloadUrl = streamData.mp3;
         const finalTitle = streamData.title || activeVideo.title;
         const finalArtist = streamData.author || activeVideo.author;
+
+        let downloadUrl = '';
+        let fileName = '';
+
+        if (format === 'fast') {
+          // streamData.mp4 ratebypass=yes içerir ve bant genişliği kısıtı olmaksızın 2-3 saniyede iner
+          downloadUrl = streamData.mp4 || streamData.mp3;
+          fileName = `${finalArtist} - ${finalTitle}.mp4`;
+        } else {
+          // streamData.mp3 saf ses akışıdır (YouTube sunucusu tarafından playback hızına kısıtlanır)
+          downloadUrl = streamData.mp3 || streamData.mp4;
+          fileName = `${finalArtist} - ${finalTitle}.mp3`;
+        }
 
         if (window.RunMusic && window.RunMusic.downloader) {
           const res = await window.RunMusic.downloader.download({
@@ -813,10 +838,11 @@
             artist: finalArtist,
             artwork: streamData.thumbnail || activeVideo.thumbnail,
             downloadUrl: downloadUrl,
-            suggestedFileName: `${finalArtist} - ${finalTitle}.mp3`,
+            suggestedFileName: fileName,
             storageTarget: 'public'
           });
-          showToast(`⬇ İndirme başlatıldı! (ID: ${res.downloadId})`);
+          const modeLabel = format === 'fast' ? '⚡ Hızlı İndirme (MP4)' : '🎵 Ses İndirme (MP3)';
+          showToast(`${modeLabel} başlatıldı! (ID: ${res.downloadId})`);
         } else {
           showToast('RunMusic indirme yöneticisi bulunamadı.');
         }
@@ -824,7 +850,7 @@
         console.error('İndirme hatası:', err);
         showToast(`İndirme hatası: ${err.message || 'Dosya alınamadı'}`);
       } finally {
-        btnText.textContent = originalText;
+        if (btnText) btnText.textContent = originalText;
       }
     }
 

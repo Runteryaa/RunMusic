@@ -31,15 +31,17 @@ export async function startDownload(params: StartDownloadParams): Promise<{ down
   const title = (params.title || 'Unknown Title').trim();
   const artist = (params.artist || 'Unknown Artist').trim();
 
-  // Dosya uzantısını belirle (.mp3 veya .m4a varsayılan)
+  // Dosya uzantısını belirle (.mp3, .m4a veya .mp4 varsayılan)
   let ext = '.mp3';
   if (params.suggestedFileName && params.suggestedFileName.includes('.')) {
     const rawExt = params.suggestedFileName.substring(params.suggestedFileName.lastIndexOf('.')).toLowerCase();
-    if (['.mp3', '.m4a', '.aac', '.flac', '.wav', '.ogg'].includes(rawExt)) {
+    if (['.mp3', '.m4a', '.aac', '.flac', '.wav', '.ogg', '.mp4'].includes(rawExt)) {
       ext = rawExt;
     }
   } else if (params.downloadUrl.includes('.m4a')) {
     ext = '.m4a';
+  } else if (params.downloadUrl.includes('.mp4') || params.downloadUrl.includes('mime=video%2Fmp4')) {
+    ext = '.mp4';
   }
 
   const baseName = sanitizeFileName(params.suggestedFileName?.replace(/\.[^/.]+$/, '') || `${artist} - ${title}`);
@@ -88,16 +90,24 @@ async function executeDownload(task: DownloadTask): Promise<void> {
       await FileSystem.makeDirectoryAsync(downloadDir, { intermediates: true });
     }
 
+    let lastUpdate = 0;
+    let lastProgress = 0;
+
     const callback = (downloadProgress: FileSystem.DownloadProgressData) => {
       const progress = downloadProgress.totalBytesExpectedToWrite > 0
         ? downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite
         : 0;
 
-      useDownloadStore.getState().updateTask(task.id, {
-        progress,
-        downloadedBytes: downloadProgress.totalBytesWritten,
-        totalBytes: downloadProgress.totalBytesExpectedToWrite,
-      });
+      const now = Date.now();
+      if (now - lastUpdate > 250 || Math.abs(progress - lastProgress) >= 0.01 || progress === 1) {
+        lastUpdate = now;
+        lastProgress = progress;
+        useDownloadStore.getState().updateTask(task.id, {
+          progress,
+          downloadedBytes: downloadProgress.totalBytesWritten,
+          totalBytes: downloadProgress.totalBytesExpectedToWrite,
+        });
+      }
     };
 
     const downloadResumable = FileSystem.createDownloadResumable(
@@ -121,9 +131,11 @@ async function executeDownload(task: DownloadTask): Promise<void> {
     // Eğer genel müzik kütüphanesine kaydedilmesi istenmişse
     if (task.storageTarget === 'public') {
       try {
-        let permission = await MediaLibrary.getPermissionsAsync(false, ['audio']);
+        const isVideo = task.fileName.toLowerCase().endsWith('.mp4');
+        const permissionsToRequest: ('audio' | 'video')[] = isVideo ? ['audio', 'video'] : ['audio'];
+        let permission = await MediaLibrary.getPermissionsAsync(false, permissionsToRequest);
         if (!permission.granted && permission.canAskAgain) {
-          permission = await MediaLibrary.requestPermissionsAsync(false, ['audio']);
+          permission = await MediaLibrary.requestPermissionsAsync(false, permissionsToRequest);
         }
 
         if (permission.granted) {
