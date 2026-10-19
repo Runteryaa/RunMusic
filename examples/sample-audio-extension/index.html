@@ -346,13 +346,17 @@
     }
 
     // RunMusic tema senkronizasyonu
+    function applyTheme(theme) {
+      if (theme && theme.primary) {
+        document.documentElement.style.setProperty('--primary', theme.primary);
+      }
+    }
+
     async function syncTheme() {
       if (window.RunMusic && window.RunMusic.theme) {
         try {
           const theme = await window.RunMusic.theme.getTheme();
-          if (theme && theme.primary) {
-            document.documentElement.style.setProperty('--primary', theme.primary);
-          }
+          applyTheme(theme);
         } catch (e) {
           console.warn('Tema okunamadı', e);
         }
@@ -361,12 +365,28 @@
 
     window.addEventListener('RunMusicReady', () => {
       syncTheme();
+      if (window.RunMusic && window.RunMusic.theme && window.RunMusic.theme.onThemeChange) {
+        window.RunMusic.theme.onThemeChange((newTheme) => {
+          applyTheme(newTheme);
+        });
+      }
+    });
+
+    window.addEventListener('RunMusicThemeChange', (event) => {
+      if (event.detail) {
+        applyTheme(event.detail);
+      }
     });
 
     // İlk render
     renderTracks();
     if (window.RunMusic) {
       syncTheme();
+      if (window.RunMusic.theme && window.RunMusic.theme.onThemeChange) {
+        window.RunMusic.theme.onThemeChange((newTheme) => {
+          applyTheme(newTheme);
+        });
+      }
     }
   </script>
 </body>

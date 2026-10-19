@@ -12,7 +12,16 @@ import type { InstalledExtension, ExtensionBridgeRequest } from '../types/extens
  * WebView içine enjekte edilecek JavaScript istemci SDK kodu.
  * Web uygulamasının window.RunMusic üzerinden native tarafla haberleşmesini sağlar.
  */
-export function generateInjectedJavaScript(extensionId: string): string {
+export function generateInjectedJavaScript(extensionId: string, currentTheme?: any): string {
+  const activeTheme = currentTheme || useThemeStore.getState().theme;
+  const initialThemePayload = {
+    primary: activeTheme?.primary || '#3b82f6',
+    background: '#121212',
+    cardBackground: '#1e1e1e',
+    text: '#ffffff',
+    isDark: true,
+  };
+
   return `
     (function() {
       if (window.__RUNMUSIC_INITIALIZED__) return;
@@ -51,8 +60,19 @@ export function generateInjectedJavaScript(extensionId: string): string {
         });
       }
 
+      function _applyThemeVars(theme) {
+        try {
+          if (document && document.documentElement && theme && theme.primary) {
+            document.documentElement.style.setProperty('--primary', theme.primary);
+            document.documentElement.style.setProperty('--accent-color', theme.primary);
+            document.documentElement.style.setProperty('--runmusic-primary', theme.primary);
+          }
+        } catch(e) {}
+      }
+
       window.RunMusic = {
         extensionId: ${JSON.stringify(extensionId)},
+        _currentTheme: ${JSON.stringify(initialThemePayload)},
 
         // ===================================
         // 1. OYNATICI (PLAYER)
@@ -116,13 +136,25 @@ export function generateInjectedJavaScript(extensionId: string): string {
         // ===================================
         theme: {
           getTheme: function() {
+            if (window.RunMusic && window.RunMusic._currentTheme) {
+              return Promise.resolve(window.RunMusic._currentTheme);
+            }
             return _sendRequest('theme', 'getTheme');
           },
           onThemeChange: function(callback) {
+            if (typeof callback !== 'function') return function(){};
             if (!_eventListeners.has('themeChange')) {
               _eventListeners.set('themeChange', new Set());
             }
             _eventListeners.get('themeChange').add(callback);
+            if (window.RunMusic._currentTheme) {
+              try { callback(window.RunMusic._currentTheme); } catch(e){}
+            }
+            return function() {
+              if (_eventListeners.has('themeChange')) {
+                _eventListeners.get('themeChange').delete(callback);
+              }
+            };
           }
         },
 
@@ -152,13 +184,31 @@ export function generateInjectedJavaScript(extensionId: string): string {
         },
 
         _handleEvent: function(eventName, data) {
+          if (eventName === 'themeChange') {
+            window.RunMusic._currentTheme = data;
+            _applyThemeVars(data);
+          }
           if (_eventListeners.has(eventName)) {
             _eventListeners.get(eventName).forEach(cb => {
               try { cb(data); } catch(e) { console.error(e); }
             });
           }
+          try {
+            window.dispatchEvent(new CustomEvent('RunMusic_' + eventName, { detail: data }));
+            if (eventName === 'themeChange') {
+              window.dispatchEvent(new CustomEvent('RunMusicThemeChange', { detail: data }));
+            }
+          } catch(e) {}
         }
       };
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+          _applyThemeVars(window.RunMusic._currentTheme);
+        });
+      } else {
+        _applyThemeVars(window.RunMusic._currentTheme);
+      }
 
       // Hazır olunduğunu bildir
       window.dispatchEvent(new CustomEvent('RunMusicReady', { detail: { extensionId: ${JSON.stringify(extensionId)} } }));

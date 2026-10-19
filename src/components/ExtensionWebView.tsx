@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo, useEffect } from 'react';
 import {
   View,
   ActivityIndicator,
@@ -19,14 +19,34 @@ interface ExtensionWebViewProps {
 export const ExtensionWebView: React.FC<ExtensionWebViewProps> = ({ extension }) => {
   const theme = useThemeStore((s) => s.theme);
   const webViewRef = useRef<WebView>(null);
+  const isLoadedRef = useRef(false);
 
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
   const injectedJS = useMemo(() => {
-    return generateInjectedJavaScript(extension.manifest.id);
-  }, [extension.manifest.id]);
+    return generateInjectedJavaScript(extension.manifest.id, theme);
+  }, [extension.manifest.id, theme]);
+
+  // Uygulama teması değiştiğinde açık olan WebView içine anında bildir
+  useEffect(() => {
+    if (!isLoadedRef.current || !webViewRef.current) return;
+    const themePayload = {
+      primary: theme.primary,
+      background: '#121212',
+      cardBackground: '#1e1e1e',
+      text: '#ffffff',
+      isDark: true,
+    };
+    const js = `
+      if (window.RunMusic && typeof window.RunMusic._handleEvent === 'function') {
+        window.RunMusic._handleEvent('themeChange', ${JSON.stringify(themePayload)});
+      }
+      true;
+    `;
+    webViewRef.current.injectJavaScript(js);
+  }, [theme.primary]);
 
   const handleMessage = (event: any) => {
     const rawData = event.nativeEvent?.data;
@@ -40,6 +60,7 @@ export const ExtensionWebView: React.FC<ExtensionWebViewProps> = ({ extension })
   const handleReload = () => {
     setHasError(false);
     setIsLoading(true);
+    isLoadedRef.current = false;
     webViewRef.current?.reload();
   };
 
@@ -56,6 +77,22 @@ export const ExtensionWebView: React.FC<ExtensionWebViewProps> = ({ extension })
         }}
         onLoadEnd={() => {
           setIsLoading(false);
+          isLoadedRef.current = true;
+          // Sayfa ilk yüklendiğinde güncel temayı WebView içine gönder
+          const themePayload = {
+            primary: theme.primary,
+            background: '#121212',
+            cardBackground: '#1e1e1e',
+            text: '#ffffff',
+            isDark: true,
+          };
+          const js = `
+            if (window.RunMusic && typeof window.RunMusic._handleEvent === 'function') {
+              window.RunMusic._handleEvent('themeChange', ${JSON.stringify(themePayload)});
+            }
+            true;
+          `;
+          webViewRef.current?.injectJavaScript(js);
         }}
         onError={(syntheticEvent) => {
           const { nativeEvent } = syntheticEvent;

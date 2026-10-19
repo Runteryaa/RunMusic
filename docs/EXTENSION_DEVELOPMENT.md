@@ -137,22 +137,26 @@ await window.RunMusic.storage.removeItem("userFavorites");
 
 ### 3.4. Theme API (`window.RunMusic.theme`)
 
-Adapt your extension's web styling to match RunMusic's active theme:
-```javascript
-const theme = await window.RunMusic.theme.getTheme();
-console.log(theme);
-// Returns:
-// {
-//   primary: "#3b82f6",
-//   background: "#121212",
-//   cardBackground: "#1e1e1e",
-//   text: "#ffffff",
-//   isDark: true
-// }
+Adapt your extension's web styling to match RunMusic's active theme and receive real-time updates when the song or user changes the theme:
 
-// Apply to your CSS variables
-document.documentElement.style.setProperty('--accent-color', theme.primary);
+```javascript
+// 1. Get current active theme
+const theme = await window.RunMusic.theme.getTheme();
+console.log(theme.primary); // e.g. "#3b82f6"
+
+// 2. Listen to real-time theme changes (e.g. when track artwork changes)
+const unsubscribe = window.RunMusic.theme.onThemeChange((newTheme) => {
+  console.log('New theme color:', newTheme.primary);
+  document.documentElement.style.setProperty('--primary', newTheme.primary);
+});
+
+// Or listen to standard DOM event:
+window.addEventListener('RunMusicThemeChange', (event) => {
+  console.log('Theme changed:', event.detail.primary);
+});
 ```
+
+> **Automatic CSS Variables:** RunMusic automatically sets and updates `--primary`, `--accent-color`, and `--runmusic-primary` on `document.documentElement` whenever the theme changes, so you can style elements directly with `var(--primary)` in CSS without writing extra JavaScript.
 
 ---
 
