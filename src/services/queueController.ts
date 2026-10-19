@@ -289,22 +289,73 @@ export async function startPlaybackFromLibrary(params: {
     }
   }
 
-  await TrackPlayer.setQueue(ordered as Track[]);
-  if (startIndex > 0) {
-    await TrackPlayer.skip(startIndex);
+  // Kullanıcının manuel olarak eklediği (Up Next) şarkıları koru
+  const clearOnSelect = useStore.getState().preferences.clearQueueOnTrackSelect;
+  const currentUpNextIds = useStore.getState().upNextIds;
+  let preservedUpNextTracks: Track[] = [];
+
+  if (!clearOnSelect && currentUpNextIds.length > 0) {
+    try {
+      const oldQueue = await TrackPlayer.getQueue();
+      const upNextSet = new Set(currentUpNextIds);
+      const trackMap = new Map<string, Track>();
+      for (const t of oldQueue) {
+        const k = trackKey(t);
+        if (k && upNextSet.has(k) && !trackMap.has(k)) {
+          trackMap.set(k, t);
+        }
+      }
+      preservedUpNextTracks = currentUpNextIds
+        .map((id) => trackMap.get(id))
+        .filter((t): t is Track => Boolean(t) && trackKey(t) !== startId);
+    } catch (e) {
+      console.warn('[queueController] Failed to preserve existing upNext queue:', e);
+    }
+  }
+
+  let finalQueue: Track[];
+  let finalStartIndex: number;
+
+  if (preservedUpNextTracks.length > 0) {
+    const upNextKeys = new Set(preservedUpNextTracks.map((t) => trackKey(t)));
+    if (shuffle) {
+      // Karışık modda startTrack ilk sırada yer alır, ardına upNext eklenir
+      const remainingContext = ordered
+        .filter((t, idx) => idx !== startIndex && !upNextKeys.has(trackKey(t))) as Track[];
+      finalQueue = [startTrack as Track, ...preservedUpNextTracks, ...remainingContext];
+      finalStartIndex = 0;
+    } else {
+      // Doğrusal sırada context sırası korunur, upNext mevcut çalanın hemen ardına yerleşir
+      const before = ordered
+        .slice(0, startIndex + 1)
+        .filter((t, idx) => idx === startIndex || !upNextKeys.has(trackKey(t))) as Track[];
+      const after = ordered
+        .slice(startIndex + 1)
+        .filter((t) => !upNextKeys.has(trackKey(t))) as Track[];
+      finalQueue = [...before, ...preservedUpNextTracks, ...after];
+      finalStartIndex = Math.max(0, before.length - 1);
+    }
+  } else {
+    finalQueue = ordered as Track[];
+    finalStartIndex = startIndex;
+  }
+
+  await TrackPlayer.setQueue(finalQueue);
+  if (finalStartIndex > 0) {
+    await TrackPlayer.skip(finalStartIndex);
   }
   try {
     await TrackPlayer.play();
   } catch (e) {
     console.warn('[queueController] startPlaybackFromLibrary play error:', e);
-    await handlePlaybackError(e, startTrack, startIndex);
+    await handlePlaybackError(e, startTrack, finalStartIndex);
   }
 
   // TEK `set`: zustand persist her set çağrısında TÜM store'u serileştirip
   // diske yazdığı için iki ayrı action çağırmak gereksiz iki yazım demekti.
   useStore.setState({
     contextIds,
-    upNextIds: [],
+    upNextIds: preservedUpNextTracks.map((t) => trackKey(t)),
     playedHistory: [],
     isShuffle: shuffle,
     isSmartShuffle: shuffle ? smartShuffle : false,
@@ -365,6 +416,66 @@ export function playNext(track: QueueTrack): Promise<void> {
 /** Şarkıyı manuel kuyruğun sonuna ekler (bağlamdan önce çalınır). */
 export function addToQueue(track: QueueTrack): Promise<void> {
   return insertManual(track, 'end');
+}
+
+/**
+ * Birden fazla parçayı (ör. eklentiden gelen şarkılar) yüksek öncelikli
+ * "Sırada" bölümünün sonuna veya hemen ardına ekler.
+ */
+export async function addTracksToQueue(
+  tracks: QueueTrack[],
+  position: 'next' | 'end' = 'end'
+): Promise<void> {
+  if (!tracks || tracks.length === 0) return;
+  const { queue, activeIndex } = await readQueueState();
+  const currentUpNext = useStore.getState().upNextIds;
+  const sections = deriveQueueSections(queue, activeIndex, currentUpNext);
+
+  let insertAt: number;
+  if (position === 'next') {
+    insertAt = activeIndex + 1;
+  } else {
+    const last = sections.upNext[sections.upNext.length - 1];
+    insertAt = last ? last.index + 1 : activeIndex + 1;
+  }
+
+  await TrackPlayer.add(tracks as Track[], insertAt);
+
+  const newKeys = tracks.map((t) => trackKey(t));
+  const remaining = currentUpNext.filter((id) => !newKeys.includes(id));
+  useStore.getState().setUpNextIds(
+    position === 'next' ? [...newKeys, ...remaining] : [...remaining, ...newKeys]
+  );
+  await persistQueue();
+}
+
+/**
+ * Düşük öncelikli bağlam (kütüphane) listesindeki bir parçayı
+ * yüksek öncelikli "Sırada" (Up Next) bölümünün sonuna taşır.
+ */
+export async function promoteContextTrackToUpNext(queueIndex: number): Promise<void> {
+  const { queue, activeIndex } = await readQueueState();
+  if (queueIndex <= activeIndex || queueIndex >= queue.length) return;
+
+  const targetTrack = queue[queueIndex];
+  if (!targetTrack) return;
+
+  const currentUpNext = useStore.getState().upNextIds;
+  const sections = deriveQueueSections(queue, activeIndex, currentUpNext);
+
+  const key = trackKey(targetTrack);
+  if (currentUpNext.includes(key)) return;
+
+  const last = sections.upNext[sections.upNext.length - 1];
+  const targetIndex = last ? last.index + 1 : activeIndex + 1;
+
+  if (queueIndex !== targetIndex) {
+    await TrackPlayer.move(queueIndex, targetIndex);
+  }
+
+  const remaining = currentUpNext.filter((id) => id !== key);
+  useStore.getState().setUpNextIds([...remaining, key]);
+  await persistQueue();
 }
 
 /**

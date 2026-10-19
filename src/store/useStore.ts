@@ -68,6 +68,8 @@ export interface AppPreferences {
   hasDismissedDynamicColorBanner: boolean;
   /** Gizli geliştirici modu: Tüm reklamları kapatır ve kilitleri kaldırır. */
   isDevModeActive: boolean;
+  /** Kütüphaneden doğrudan yeni bir şarkı seçildiğinde önceden sıraya eklenmiş şarkıları temizler (varsayılan: false). */
+  clearQueueOnTrackSelect: boolean;
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
@@ -85,6 +87,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   isDynamicColorUnlocked: false,
   hasDismissedDynamicColorBanner: false,
   isDevModeActive: false,
+  clearQueueOnTrackSelect: false,
 };
 
 export interface TrackMetadata {
@@ -195,7 +198,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 9;
+const PERSIST_VERSION = 10;
 
 export const useStore = create<AppState>()(
   persist(
@@ -477,6 +480,7 @@ export const useStore = create<AppState>()(
             dynamicColorFromArtwork: isDynamicUnlocked ? Boolean(incomingPrefs.dynamicColorFromArtwork ?? true) : false,
             hasDismissedDynamicColorBanner: Boolean(incomingPrefs.hasDismissedDynamicColorBanner),
             isDevModeActive: isDevMode,
+            clearQueueOnTrackSelect: Boolean(incomingPrefs.clearQueueOnTrackSelect ?? false),
           },
           isSmartShuffle: Boolean(incoming.isSmartShuffle),
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),

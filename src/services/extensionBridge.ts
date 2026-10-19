@@ -6,7 +6,7 @@ import { useExtensionStore } from '../store/useExtensionStore';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { startDownload, cancelDownload } from './downloadManager';
-import { skipToPreviousTrack } from './queueController';
+import { skipToPreviousTrack, addTracksToQueue, trackKey } from './queueController';
 import { setupTrackPlayerIfNeeded } from './playerBootstrap';
 import type { InstalledExtension, ExtensionBridgeRequest } from '../types/extension';
 
@@ -82,6 +82,9 @@ export function generateInjectedJavaScript(extensionId: string, currentTheme?: a
         player: {
           play: function(track) {
             return _sendRequest('player', 'play', track);
+          },
+          playNext: function(tracks) {
+            return _sendRequest('player', 'playNext', Array.isArray(tracks) ? tracks : [tracks]);
           },
           addToQueue: function(tracks) {
             return _sendRequest('player', 'addToQueue', Array.isArray(tracks) ? tracks : [tracks]);
@@ -264,8 +267,33 @@ export async function handleBridgeMessage(
             ...(trackItem.downloadUrl ? { downloadUrl: trackItem.downloadUrl } : {}),
           } as any;
 
-          // Kuyruğu ayarla ve çal (reset yerine setQueue kullanılarak notification servisi korunur)
-          await TrackPlayer.setQueue([nativeTrack]);
+          // Kullanıcının önceden eklediği Up Next kuyruğunu koru
+          const clearOnSelect = useStore.getState().preferences.clearQueueOnTrackSelect;
+          const currentUpNextIds = useStore.getState().upNextIds;
+          let preservedUpNextTracks: Track[] = [];
+
+          if (!clearOnSelect && currentUpNextIds.length > 0) {
+            try {
+              const oldQueue = await TrackPlayer.getQueue();
+              const upNextSet = new Set(currentUpNextIds);
+              const trackMap = new Map<string, Track>();
+              for (const t of oldQueue) {
+                const k = trackKey(t);
+                if (k && upNextSet.has(k) && !trackMap.has(k)) {
+                  trackMap.set(k, t);
+                }
+              }
+              preservedUpNextTracks = currentUpNextIds
+                .map((id) => trackMap.get(id))
+                .filter((t): t is Track => Boolean(t) && trackKey(t) !== trackId);
+            } catch (e) {
+              console.warn('[extensionBridge] Failed to read existing upNext:', e);
+            }
+          }
+
+          // Kuyruğu ayarla ve çal
+          const newQueue = [nativeTrack, ...preservedUpNextTracks];
+          await TrackPlayer.setQueue(newQueue);
           await TrackPlayer.play();
 
           // Store meta verilerini eşitle
@@ -279,7 +307,7 @@ export async function handleBridgeMessage(
           });
           useStore.setState({
             contextIds: [trackId],
-            upNextIds: [],
+            upNextIds: preservedUpNextTracks.map((t) => trackKey(t)),
           });
 
           // Arayüzün 0ms anında güncellenmesi için iyimser (optimistic) modeli tetikle
@@ -296,7 +324,7 @@ export async function handleBridgeMessage(
           }
 
           reply(true, { success: true, trackId });
-        } else if (action === 'addToQueue') {
+        } else if (action === 'addToQueue' || action === 'playNext') {
           const rawTracks = Array.isArray(payload) ? payload : [payload];
           const tracksToAdd: Track[] = rawTracks
             .filter((t: any) => t && t.streamUrl)
@@ -321,11 +349,11 @@ export async function handleBridgeMessage(
                 upNextIds: [],
               });
             } else {
-              await TrackPlayer.add(tracksToAdd);
-              useStore.getState().setUpNextIds([
-                ...useStore.getState().upNextIds,
-                ...tracksToAdd.map((t) => t.id),
-              ]);
+              // Yüksek öncelikli sıraya (Up Next) ekle
+              await addTracksToQueue(
+                tracksToAdd as any,
+                action === 'playNext' ? 'next' : 'end'
+              );
             }
 
             for (const t of tracksToAdd) {

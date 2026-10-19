@@ -146,9 +146,17 @@ function UpNextRow({ item, index, count, accentColor, onCommit, onRemove }: RowP
               {item.title}
             </Text>
             {item.artist ? (
-              <Text style={styles.artist} numberOfLines={1}>
-                {item.artist}
-              </Text>
+              <View style={styles.artistContainer}>
+                {(item.trackId?.startsWith('ext_') || item.trackUri?.startsWith('http')) && (
+                  <View style={styles.extBadge}>
+                    <Ionicons name="globe-outline" size={10} color="rgba(255,255,255,0.7)" style={{ marginRight: 3 }} />
+                    <Text style={styles.extBadgeText}>Eklenti</Text>
+                  </View>
+                )}
+                <Text style={styles.artist} numberOfLines={1}>
+                  {item.artist}
+                </Text>
+              </View>
             ) : null}
           </View>
         </View>
@@ -182,10 +190,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  artistContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  extBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  extBadgeText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 10,
+    fontWeight: '600',
+  },
   artist: {
     color: 'rgba(255,255,255,0.55)',
     fontSize: 12,
-    marginTop: 2,
+    flex: 1,
   },
   removeAction: {
     width: 72,

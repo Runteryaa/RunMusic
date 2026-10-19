@@ -66,11 +66,13 @@ import {
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import {
   buildQueueRows,
+  clearUpNextQueue,
   cyclePlaybackMode,
   deriveQueueSections,
   getQueueSections,
   markUpNextConsumed,
   moveUpNext,
+  promoteContextTrackToUpNext,
   removeQueueItem,
   playHistoryTrack,
   type QueueEntry,
@@ -627,6 +629,27 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     [player.isRemote, effectiveQueueSections, refreshQueueSections, refreshQueue]
   );
 
+  const handlePromoteToUpNext = useCallback(
+    async (queueIndex: number) => {
+      if (player.isRemote) {
+        return;
+      }
+      await promoteContextTrackToUpNext(queueIndex);
+      await refreshQueueSections();
+      await refreshQueue();
+    },
+    [player.isRemote, refreshQueueSections, refreshQueue]
+  );
+
+  const handleClearUpNext = useCallback(async () => {
+    if (player.isRemote) {
+      return;
+    }
+    await clearUpNextQueue();
+    await refreshQueueSections();
+    await refreshQueue();
+  }, [player.isRemote, refreshQueueSections, refreshQueue]);
+
   const handleQueueItemPress = useCallback(
     async (queueIndex: number, trackId?: string, title?: string, artist?: string) => {
       if (trackId || title) {
@@ -742,48 +765,76 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     entry: QueueEntry<Track>,
     isCurrent = false,
     isHistory = false,
-    historyIndex?: number
-  ) => (
-    <TouchableOpacity
-      style={[styles.queueItem, isCurrent && { backgroundColor: theme.surface }]}
-      activeOpacity={0.7}
-      onPress={() => {
-        if (isHistory && typeof historyIndex === 'number') {
-          if (player.isRemote) {
+    historyIndex?: number,
+    isContext = false
+  ) => {
+    const isExtensionTrack =
+      entry.track.id?.startsWith('ext_') ||
+      (typeof entry.track.url === 'string' && entry.track.url.startsWith('http'));
+
+    return (
+      <TouchableOpacity
+        style={[styles.queueItem, isCurrent && { backgroundColor: theme.surface }]}
+        activeOpacity={0.7}
+        onPress={() => {
+          if (isHistory && typeof historyIndex === 'number') {
+            if (player.isRemote) {
+              handleQueueItemPress(
+                entry.index,
+                entry.track.id,
+                entry.track.title,
+                entry.track.artist
+              );
+            } else {
+              playHistoryTrack(historyIndex, entry.track);
+            }
+          } else {
             handleQueueItemPress(
               entry.index,
               entry.track.id,
               entry.track.title,
               entry.track.artist
             );
-          } else {
-            playHistoryTrack(historyIndex, entry.track);
           }
-        } else {
-          handleQueueItemPress(
-            entry.index,
-            entry.track.id,
-            entry.track.title,
-            entry.track.artist
-          );
-        }
-      }}>
-      <Text style={[styles.queueIndex, isCurrent && { color: theme.primary }]}>
-        {isHistory && typeof historyIndex === 'number' ? historyIndex + 1 : entry.index + 1}
-      </Text>
-      <View style={{ flex: 1 }}>
-        <Text
-          style={[styles.queueTrackTitle, isCurrent && { color: theme.primary }]}
-          numberOfLines={1}>
-          {cleanDisplayTitle(entry.track.title, entry.track.artist)}
+        }}>
+        <Text style={[styles.queueIndex, isCurrent && { color: theme.primary }]}>
+          {isHistory && typeof historyIndex === 'number' ? historyIndex + 1 : entry.index + 1}
         </Text>
-        <Text style={styles.queueTrackArtist} numberOfLines={1}>
-          {entry.track.artist}
-        </Text>
-      </View>
-      {isCurrent ? <Ionicons name="volume-high" size={20} color={theme.primary} /> : null}
-    </TouchableOpacity>
-  );
+        <View style={{ flex: 1 }}>
+          <Text
+            style={[styles.queueTrackTitle, isCurrent && { color: theme.primary }]}
+            numberOfLines={1}>
+            {cleanDisplayTitle(entry.track.title, entry.track.artist)}
+          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+            {isExtensionTrack && (
+              <View style={styles.queueExtBadge}>
+                <Ionicons name="globe-outline" size={10} color="rgba(255,255,255,0.7)" style={{ marginRight: 3 }} />
+                <Text style={styles.queueExtBadgeText}>Eklenti</Text>
+              </View>
+            )}
+            <Text style={styles.queueTrackArtist} numberOfLines={1}>
+              {entry.track.artist}
+            </Text>
+          </View>
+        </View>
+        {isCurrent ? (
+          <Ionicons name="volume-high" size={20} color={theme.primary} />
+        ) : isContext ? (
+          <TouchableOpacity
+            style={styles.queueQuickPromoteBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            activeOpacity={0.7}
+            onPress={(e) => {
+              e.stopPropagation();
+              handlePromoteToUpNext(entry.index);
+            }}>
+            <Ionicons name="arrow-up-circle-outline" size={22} color="rgba(255,255,255,0.45)" />
+          </TouchableOpacity>
+        ) : null}
+      </TouchableOpacity>
+    );
+  };
 
   const renderQueueRow = ({ item }: { item: QueueRow<Track> }) => {
     switch (item.kind) {
@@ -822,18 +873,51 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
       case 'upnext':
         return (
-          <QueueUpNextList
-            items={upNextItems}
-            accentColor={theme.primary}
-            onMove={handleMoveUpNext}
-            onRemove={handleRemoveUpNext}
-          />
+          <View style={styles.upNextSectionWrapper}>
+            <View style={styles.upNextSectionHeader}>
+              <View style={styles.upNextBadgeContainer}>
+                <Ionicons name="sparkles" size={13} color={theme.primary} />
+                <Text style={[styles.upNextBadgeText, { color: theme.primary }]}>
+                  {t('queue.up_next_header') || 'SIRADA (SENİN EKLEDİKLERİN)'}
+                </Text>
+                <View style={[styles.upNextCountBadge, { backgroundColor: `${theme.primary}25` }]}>
+                  <Text style={[styles.upNextCountText, { color: theme.primary }]}>
+                    {upNextItems.length}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={handleClearUpNext}
+                style={styles.clearUpNextButton}
+                activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="trash-outline" size={13} color="#ef4444" style={{ marginRight: 4 }} />
+                <Text style={styles.clearUpNextText}>{t('queue.clear_up_next') || 'Temizle'}</Text>
+              </TouchableOpacity>
+            </View>
+            <QueueUpNextList
+              items={upNextItems}
+              accentColor={theme.primary}
+              onMove={handleMoveUpNext}
+              onRemove={handleRemoveUpNext}
+            />
+          </View>
         );
 
       case 'context':
         return (
           <Swipeable
             overshootRight={false}
+            overshootLeft={false}
+            renderLeftActions={() => (
+              <TouchableOpacity
+                style={[styles.queuePromoteAction, { backgroundColor: theme.primary }]}
+                activeOpacity={0.8}
+                onPress={() => handlePromoteToUpNext(item.entry.index)}>
+                <Ionicons name="arrow-up-circle-outline" size={22} color="#ffffff" />
+                <Text style={styles.queuePromoteText}>{t('queue.promote_to_up_next') || 'Öne Al'}</Text>
+              </TouchableOpacity>
+            )}
             renderRightActions={() => (
               <TouchableOpacity
                 style={[styles.queueRemoveAction, { backgroundColor: '#ef4444' }]}
@@ -842,7 +926,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 <Ionicons name="trash-outline" size={20} color="#ffffff" />
               </TouchableOpacity>
             )}>
-            {renderQueueTrackRow(item.entry)}
+            {renderQueueTrackRow(item.entry, false, false, undefined, true)}
           </Swipeable>
         );
 
@@ -4530,6 +4614,81 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 12,
     marginVertical: 2,
+  },
+  queuePromoteAction: {
+    width: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    marginVertical: 2,
+  },
+  queuePromoteText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  upNextSectionWrapper: {
+    marginVertical: 4,
+  },
+  upNextSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  upNextBadgeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  upNextBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    marginLeft: 6,
+  },
+  upNextCountBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+    marginLeft: 6,
+  },
+  upNextCountText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  clearUpNextButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  clearUpNextText: {
+    color: '#ef4444',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  queueExtBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  queueExtBadgeText: {
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontSize: 9,
+    fontWeight: '600',
+  },
+  queueQuickPromoteBtn: {
+    padding: 6,
+    marginLeft: 6,
   },
   queueItem: {
     flexDirection: 'row',

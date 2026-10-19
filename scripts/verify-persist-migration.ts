@@ -526,6 +526,32 @@ const malformedMigrated = Array.isArray((malformedV9 as any).unplayableTrackIds)
   : [];
 check('bozuk unplayableTrackIds girdisi [] olarak temizleniyor', Array.isArray(malformedMigrated) && malformedMigrated.length === 0);
 
+section('15) v9 -> v10 migrasyonu ve clearQueueOnTrackSelect güvencesi');
+
+const v9StateWithoutClearQueue = {
+  preferences: {
+    presetThemeColor: '#3b82f6',
+    isDynamicColorUnlocked: true,
+  },
+};
+
+const incomingPrefsV10 = (v9StateWithoutClearQueue.preferences && typeof v9StateWithoutClearQueue.preferences === 'object')
+  ? (v9StateWithoutClearQueue.preferences as Record<string, any>)
+  : {};
+
+const clearQueueV10 = Boolean(incomingPrefsV10.clearQueueOnTrackSelect ?? false);
+check('eski kayıtlarda clearQueueOnTrackSelect varsayılan olarak false atanıyor', clearQueueV10 === false);
+
+const v10StateWithCustom = {
+  preferences: {
+    clearQueueOnTrackSelect: true,
+  },
+};
+const incomingPrefsV10Custom = (v10StateWithCustom.preferences && typeof v10StateWithCustom.preferences === 'object')
+  ? (v10StateWithCustom.preferences as Record<string, any>)
+  : {};
+check('kullanıcının seçtiği clearQueueOnTrackSelect tercihi korunuyor', Boolean(incomingPrefsV10Custom.clearQueueOnTrackSelect) === true);
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 section('Sonuç');

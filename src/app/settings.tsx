@@ -684,6 +684,13 @@ export default function SettingsScreen() {
         />
         <ToggleRow
           theme={theme}
+          label={t('settings.clear_queue_on_select')}
+          hint={t('settings.clear_queue_on_select_hint')}
+          value={preferences.clearQueueOnTrackSelect}
+          onChange={(v) => updatePreferences({ clearQueueOnTrackSelect: v })}
+        />
+        <ToggleRow
+          theme={theme}
           label={t('settings.keep_playing')}
           hint={t('settings.keep_playing_hint')}
           value={preferences.keepPlayingWhenAppKilled}
