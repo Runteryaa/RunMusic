@@ -1,15 +1,12 @@
 {
   "$schema": "https://runmusic.app/schemas/v1/extension.json",
-  "id": "org.runmusic.sample-audio",
-  "name": "Açık Müzik & Ses Kaynağı",
+  "id": "sample-audio-extension",
+  "name": "Example AUdio Extension",
   "version": "1.0.0",
-  "description": "Creative Commons ve telifsiz müzikleri keşfedin, anında dinleyin veya kütüphanenize indirin.",
-  "author": {
-    "name": "RunMusic Community",
-    "url": "https://github.com/Runteryaa/RunMusic"
-  },
+  "description": "Example Extension for RunMusic",
+  "author": "Runterya"},
   "icon": "https://raw.githubusercontent.com/Runteryaa/RunMusic/main/assets/images/play-store-icon-512.png",
-  "entryUrl": "./index.html",
+  "entryUrl": "https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/index.html",
   "categories": ["audio-source", "charts-discovery"],
   "permissions": [
     "player.control",
