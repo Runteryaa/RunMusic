@@ -839,11 +839,13 @@ export default function LibraryScreen() {
       <View key={`track-row-${asset.id}`}>
         <Swipeable
           renderLeftActions={renderLeftActions}
-          friction={2}
-          leftThreshold={40}
-          activeOffsetX={[-25, 25]}
+          friction={1}
+          leftThreshold={110}
+          activeOffsetX={[-20, 20]}
           failOffsetY={[-15, 15]}
-          onSwipeableOpen={(direction) => {
+          overshootLeft={false}
+          onSwipeableOpen={(direction, swipeable) => {
+            swipeable?.close?.();
             if (direction === 'left') {
               handleAddToQueue(asset);
             }
@@ -930,11 +932,13 @@ export default function LibraryScreen() {
       <View key={`remote-row-${item.id}`}>
         <Swipeable
           renderLeftActions={renderLeftActions}
-          friction={2}
-          leftThreshold={40}
-          activeOffsetX={[-25, 25]}
+          friction={1}
+          leftThreshold={110}
+          activeOffsetX={[-20, 20]}
           failOffsetY={[-15, 15]}
-          onSwipeableOpen={(direction) => {
+          overshootLeft={false}
+          onSwipeableOpen={(direction, swipeable) => {
+            swipeable?.close?.();
             if (direction === 'left') {
               handleRemoteAddToQueue(item);
             }

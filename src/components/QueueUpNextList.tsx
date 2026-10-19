@@ -133,7 +133,19 @@ function UpNextRow({
 
   return (
     <Animated.View style={[styles.rowWrapper, animatedStyle]}>
-      <Swipeable renderRightActions={renderRightActions} overshootRight={false}>
+      <Swipeable
+        renderRightActions={renderRightActions}
+        overshootRight={false}
+        friction={1}
+        rightThreshold={52}
+        activeOffsetX={[-20, 20]}
+        failOffsetY={[-15, 15]}
+        onSwipeableOpen={(direction, swipeable) => {
+          swipeable?.close?.();
+          if (direction === 'right') {
+            onRemove(index);
+          }
+        }}>
         <View style={styles.cardContainer}>
           {/* Sol: Sürükleme Tutamağı */}
           <GestureDetector gesture={pan}>

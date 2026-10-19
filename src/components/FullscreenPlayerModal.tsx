@@ -1023,6 +1023,19 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           <Swipeable
             overshootRight={false}
             overshootLeft={false}
+            friction={1}
+            leftThreshold={56}
+            rightThreshold={56}
+            activeOffsetX={[-20, 20]}
+            failOffsetY={[-15, 15]}
+            onSwipeableOpen={(direction, swipeable) => {
+              swipeable?.close?.();
+              if (direction === 'left') {
+                handlePromoteToUpNext(item.entry.index, info.trackId || item.entry.track.id);
+              } else if (direction === 'right') {
+                handleRemoveFromContext(item.entry.index, info.trackId || item.entry.track.id);
+              }
+            }}
             renderLeftActions={() => (
               <TouchableOpacity
                 style={[styles.queuePromoteAction, { backgroundColor: theme.primary }]}
