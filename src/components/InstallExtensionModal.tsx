@@ -102,6 +102,17 @@ export const InstallExtensionModal: React.FC = () => {
             )}
           </View>
 
+          <TouchableOpacity
+            style={styles.sampleFillBtn}
+            onPress={() => setUrl('https://raw.githack.com/Runteryaa/RunMusic/main/examples/sample-audio-extension/manifest.json')}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <Ionicons name="sparkles" size={14} color={theme.primary} style={{ marginRight: 6 }} />
+            <Text style={[styles.sampleFillText, { color: theme.primary }]}>
+              Örnek Eklenti Linkini Doldur (Açık Müzik & Ses)
+            </Text>
+          </TouchableOpacity>
+
           <View style={styles.buttonRow}>
             <TouchableOpacity
               style={styles.cancelBtn}
@@ -205,6 +216,18 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 14,
     height: '100%',
+  },
+  sampleFillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  sampleFillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
   buttonRow: {
     flexDirection: 'row',
