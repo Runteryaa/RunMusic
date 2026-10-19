@@ -38,17 +38,21 @@
 
 ---
 
-## Installing an Extension
+## Installing Extensions
 
-- **One-Click Install:** [Install Sample Extension](https://runteryaa.github.io/RunMusic/install?url=https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json)
+### 1. YouTube Music & Video Extension
+- **One-Click Web Install:** [Install YouTube Extension](https://runteryaa.github.io/RunMusic/install?url=https://runteryaa.github.io/RunMusic/examples/youtube-extension/manifest.json)
+- **Direct Deep Link:** `runmusic://install-extension?url=https://runteryaa.github.io/RunMusic/examples/youtube-extension/manifest.json`
+- **Manifest URL:** `https://runteryaa.github.io/RunMusic/examples/youtube-extension/manifest.json`
+
+### 2. Sample Audio Extension
+- **One-Click Web Install:** [Install Sample Extension](https://runteryaa.github.io/RunMusic/install?url=https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json)
 - **Direct Deep Link:** `runmusic://install-extension?url=https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json`
+- **Manifest URL:** `https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json`
 
 Or manually:
 1. Open the app and navigate to the **Extensions** tab.
-2. Enter the extension manifest URL in the top input field:
-   ```text
-   https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json
-   ```
+2. Enter the extension manifest URL in the top input field.
 3. Tap **Add**.
 
 To build your own extension, see the [Extension Development Guide](docs/EXTENSION_DEVELOPMENT.md).

@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>YouTube Audio & Video - RunMusic</title>
+  <style>
+    :root {
+      --primary: #ef4444; /* Canlı kırmızı, RunMusic temasıyla dinamik güncellenir */
+      --bg: #0f0f11;
+      --card-bg: #18181b;
+      --card-hover: #222226;
+      --border: #27272a;
+      --text: #ffffff;
+      --text-muted: #a1a1aa;
+      --text-dim: #71717a;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      padding-bottom: 100px;
+      min-height: 100vh;
+    }
+
+    /* Üst Başlık & Arama Çubuğu */
+    header {
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+      padding-bottom: 12px;
+      z-index: 50;
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .brand-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: #ff0000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #ffffff;
+      font-weight: 900;
+      font-size: 14px;
+    }
+
+    .brand-title {
+      font-size: 19px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+    }
+
+    .brand-badge {
+      font-size: 10px;
+      font-weight: 700;
+      background: #27272a;
+      color: var(--text-muted);
+      padding: 2px 6px;
+      border-radius: 6px;
+      margin-left: auto;
+    }
+
+    .search-box {
+      display: flex;
+      align-items: center;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 4px 6px 4px 14px;
+      gap: 8px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .search-box:focus-within {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+    }
+
+    .search-icon {
+      color: var(--text-dim);
+      font-size: 16px;
+    }
+
+    .search-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-size: 14px;
+      padding: 8px 0;
+    }
+
+    .search-input::placeholder {
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+
+    .clear-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      font-size: 16px;
+      padding: 4px;
+      cursor: pointer;
+      display: none;
+    }
+
+    .search-btn {
+      background: var(--primary);
+      color: #ffffff;
+      border: none;
+      padding: 9px 16px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .search-btn:active {
+      opacity: 0.8;
+    }
+
+    /* Link Algılama Bilgi Şeridi */
+    .link-hint {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    /* Arama Sonuçları Listesi */
+    .section-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-muted);
+      margin: 16px 0 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .results-count {
+      font-size: 11px;
+      background: var(--card-bg);
+      padding: 2px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .results-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* Video Kartı */
+    .video-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 10px;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    .video-card:active {
+      background: var(--card-hover);
+      transform: scale(0.99);
+    }
+
+    .thumb-wrap {
+      position: relative;
+      width: 100px;
+      height: 60px;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #000000;
+      flex-shrink: 0;
+    }
+
+    .thumb-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .duration-badge {
+      position: absolute;
+      bottom: 4px;
+      right: 4px;
+      background: rgba(0, 0, 0, 0.82);
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+
+    .video-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .video-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      line-height: 1.35;
+      margin-bottom: 4px;
+    }
+
+    .video-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .arrow-icon {
+      color: var(--text-dim);
+      font-size: 16px;
+      margin-right: 4px;
+      flex-shrink: 0;
+    }
+
+    /* Özel Video Detay Ekranı */
+    .detail-view {
+      display: none;
+      animation: fadeIn 0.2s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .back-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 16px;
+    }
+
+    .detail-hero-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 16px;
+      text-align: center;
+      margin-bottom: 18px;
+    }
+
+    .detail-artwork-wrap {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      max-height: 230px;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #000000;
+      margin-bottom: 14px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    .detail-artwork {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .detail-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.35;
+      margin-bottom: 6px;
+      text-align: left;
+    }
+
+    .detail-channel {
+      font-size: 14px;
+      color: var(--primary);
+      font-weight: 600;
+      text-align: left;
+      margin-bottom: 8px;
+    }
+
+    .detail-stats {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      text-align: left;
+    }
+
+    /* Özel Sayfa Eylem Butonları */
+    .actions-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .action-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      padding: 14px 18px;
+      border-radius: 14px;
+      font-size: 15px;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+
+    .action-btn:active {
+      transform: scale(0.98);
+      opacity: 0.85;
+    }
+
+    .btn-play-large {
+      background: var(--primary);
+      color: #ffffff;
+      box-shadow: 0 4px 16px rgba(239, 68, 68, 0.3);
+    }
+
+    .btn-download-large {
+      background: #27272a;
+      color: #ffffff;
+      border: 1px solid #3f3f46;
+    }
+
+    .btn-queue-large {
+      background: var(--card-bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    /* Durum & Yükleniyor / Boş Ekran */
+    .state-box {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-muted);
+    }
+
+    .state-icon {
+      font-size: 42px;
+      margin-bottom: 12px;
+      opacity: 0.8;
+    }
+
+    .state-text {
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(255, 255, 255, 0.15);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 12px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Toast Bildirim */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(30px);
+      background: #27272a;
+      color: #ffffff;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+      border: 1px solid #3f3f46;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 999;
+      text-align: center;
+      max-width: 90%;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Üst Arama Bölümü -->
+  <header id="mainHeader">
+    <div class="brand-row">
+      <div class="brand-icon">▶</div>
+      <div class="brand-title">YouTube Music</div>
+      <div class="brand-badge">RunMusic Eklentisi</div>
+    </div>
+
+    <div class="search-box">
+      <span class="search-icon">🔍</span>
+      <input
+        type="text"
+        id="searchInput"
+        class="search-input"
+        placeholder="Şarkı/video ara veya YouTube linki yapıştır..."
+        autocomplete="off"
+        autocorrect="off"
+      />
+      <button class="clear-btn" id="clearBtn" onclick="clearSearch()">✕</button>
+      <button class="search-btn" id="searchBtn" onclick="handleSearchClick()">Ara</button>
+    </div>
+
+    <div class="link-hint" id="linkHint">
+      <span>🔗</span>
+      <span>YouTube bağlantısı algılandı, video açılıyor...</span>
+    </div>
+  </header>
+
+  <!-- 1. Arama Sonuçları Görünümü -->
+  <main id="searchListView">
+    <div class="section-title">
+      <span id="resultsHeading">Popüler YouTube Aramaları</span>
+      <span class="results-count" id="resultsCount">0 sonuç</span>
+    </div>
+
+    <div class="results-container" id="resultsList">
+      <!-- Videolar dinamik listelenir -->
+    </div>
+
+    <div class="state-box" id="stateBox" style="display: none;">
+      <div class="spinner" id="loadingSpinner"></div>
+      <div class="state-icon" id="emptyIcon" style="display: none;">🔍</div>
+      <div class="state-text" id="stateText">Yükleniyor...</div>
+    </div>
+  </main>
+
+  <!-- 2. Özel Video Detay & Eylem Sayfası -->
+  <section class="detail-view" id="videoDetailView">
+    <button class="back-btn" onclick="backToSearch()">
+      ← Arama Sonuçlarına Dön
+    </button>
+
+    <div class="detail-hero-card">
+      <div class="detail-artwork-wrap">
+        <img id="detailImg" class="detail-artwork" src="" alt="Thumbnail" />
+      </div>
+      <h2 class="detail-title" id="detailTitle">Video Başlığı</h2>
+      <div class="detail-channel" id="detailAuthor">Kanal Adı</div>
+      <div class="detail-stats">
+        <span id="detailDuration">⏱ 0:00</span>
+        <span id="detailViews">👁 0 görüntüleme</span>
+        <span id="detailAgo">📅 -</span>
+      </div>
+    </div>
+
+    <!-- Oynat, İndir, Queue Butonları -->
+    <div class="actions-grid">
+      <button class="action-btn btn-play-large" id="btnPlay" onclick="actionPlay()">
+        <span>▶</span>
+        <span id="btnPlayText">Oynat (Stream)</span>
+      </button>
+
+      <button class="action-btn btn-download-large" id="btnDownload" onclick="actionDownload()">
+        <span>⬇</span>
+        <span id="btnDownloadText">Cihaza İndir</span>
+      </button>
+
+      <button class="action-btn btn-queue-large" id="btnQueue" onclick="actionQueue()">
+        <span>➕</span>
+        <span id="btnQueueText">Kuyruğa Ekle</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Toast Bildirimi -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const SEARCH_API_BASE = 'https://backend1.tioo.eu.org/api/search/yts?q=';
+    const DOWNLOADER_API_BASE = 'https://backend1.tioo.eu.org/api/downloader/youtube?url=';
+
+    let currentResults = [];
+    let activeVideo = null; // { id, url, title, author, thumbnail, duration, durationSec, views, ago }
+    const streamCache = new Map(); // id -> { mp3, mp4, title, author, thumbnail }
+
+    const searchInput = document.getElementById('searchInput');
+    const clearBtn = document.getElementById('clearBtn');
+    const linkHint = document.getElementById('linkHint');
+
+    // YouTube URL Desenleri
+    function extractYouTubeVideoId(input) {
+      if (!input) return null;
+      const str = input.trim();
+
+      // youtu.be/ID
+      const shortMatch = str.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/i);
+      if (shortMatch) return shortMatch[1];
+
+      // youtube.com/watch?v=ID
+      const watchMatch = str.match(/(?:youtube\.com|music\.youtube\.com)\/watch\?(?:.*&)?v=([a-zA-Z0-9_-]{11})/i);
+      if (watchMatch) return watchMatch[1];
+
+      // youtube.com/shorts/ID
+      const shortsMatch = str.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/i);
+      if (shortsMatch) return shortsMatch[1];
+
+      // youtube.com/embed/ID
+      const embedMatch = str.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/i);
+      if (embedMatch) return embedMatch[1];
+
+      return null;
+    }
+
+    // Arama kutusuna yapıştırma veya yazma dinleyicisi
+    searchInput.addEventListener('input', () => {
+      const val = searchInput.value;
+      clearBtn.style.display = val.length > 0 ? 'block' : 'none';
+
+      const detectedId = extractYouTubeVideoId(val);
+      if (detectedId) {
+        linkHint.style.display = 'flex';
+        openVideoByDirectUrl(`https://www.youtube.com/watch?v=${detectedId}`, detectedId);
+      } else {
+        linkHint.style.display = 'none';
+      }
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        handleSearchClick();
+      }
+    });
+
+    function clearSearch() {
+      searchInput.value = '';
+      clearBtn.style.display = 'none';
+      linkHint.style.display = 'none';
+      searchInput.focus();
+    }
+
+    function handleSearchClick() {
+      const val = searchInput.value.trim();
+      if (!val) return;
+
+      const detectedId = extractYouTubeVideoId(val);
+      if (detectedId) {
+        openVideoByDirectUrl(`https://www.youtube.com/watch?v=${detectedId}`, detectedId);
+        return;
+      }
+
+      performSearch(val);
+    }
+
+    // Arama İsteği (İlk 10 sonuç kuralı)
+    async function performSearch(query) {
+      showLoading(true, `"${query}" aranıyor...`);
+      document.getElementById('resultsHeading').textContent = `"${query}" Sonuçları`;
+
+      try {
+        const res = await fetch(`${SEARCH_API_BASE}${encodeURIComponent(query)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        const videos = (data.videos || []).slice(0, 10);
+        currentResults = videos;
+
+        renderResults(videos);
+      } catch (err) {
+        console.error('Arama hatası:', err);
+        showError('Arama sonuçları getirilemedi. Lütfen bağlantınızı kontrol edin.');
+      }
+    }
+
+    function renderResults(videos) {
+      const container = document.getElementById('resultsList');
+      const countEl = document.getElementById('resultsCount');
+      showLoading(false);
+
+      if (!videos || videos.length === 0) {
+        container.innerHTML = '';
+        countEl.textContent = '0 sonuç';
+        showEmpty('Sonuç bulunamadı. Lütfen başka bir arama terimi deneyin.');
+        return;
+      }
+
+      countEl.textContent = `${videos.length} sonuç`;
+      container.innerHTML = videos.map((v, idx) => {
+        const thumb = v.image || v.thumbnail || `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
+        const title = v.title || 'Başlıksız Video';
+        const channel = v.author?.name || 'YouTube Sanatçısı';
+        const duration = v.timestamp || (v.seconds ? formatSeconds(v.seconds) : '');
+        const viewsStr = v.views ? formatNumber(v.views) + ' görüntüleme' : '';
+        const agoStr = v.ago ? ` • ${v.ago}` : '';
+
+        return `
+          <div class="video-card" onclick="selectVideo(${idx})">
+            <div class="thumb-wrap">
+              <img class="thumb-img" src="${thumb}" alt="${escapeHtml(title)}" loading="lazy" />
+              ${duration ? `<span class="duration-badge">${duration}</span>` : ''}
+            </div>
+            <div class="video-info">
+              <div class="video-title">${escapeHtml(title)}</div>
+              <div class="video-meta">${escapeHtml(channel)} • ${viewsStr}${agoStr}</div>
+            </div>
+            <div class="arrow-icon">›</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Arama listesinden video seçilince özel sayfayı aç
+    function selectVideo(index) {
+      const v = currentResults[index];
+      if (!v) return;
+
+      activeVideo = {
+        id: v.videoId,
+        url: v.url || `https://www.youtube.com/watch?v=${v.videoId}`,
+        title: v.title,
+        author: v.author?.name || 'YouTube Sanatçısı',
+        thumbnail: v.image || v.thumbnail || `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
+        duration: v.timestamp || (v.seconds ? formatSeconds(v.seconds) : '3:30'),
+        durationSec: v.seconds || 210,
+        views: v.views ? formatNumber(v.views) + ' görüntüleme' : '',
+        ago: v.ago || ''
+      };
+
+      showDetailView(activeVideo);
+    }
+
+    // Direkt link yapıştırıldığında özel sayfayı aç ve bilgileri getir
+    async function openVideoByDirectUrl(url, videoId) {
+      // Önce mevcutsa göster
+      activeVideo = {
+        id: videoId,
+        url: url,
+        title: 'YouTube Videosu Yükleniyor...',
+        author: 'YouTube',
+        thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        duration: '...',
+        durationSec: 0,
+        views: '',
+        ago: ''
+      };
+
+      showDetailView(activeVideo);
+      showToast('Video bilgileri alınıyor...');
+
+      // Downloader API'sinden detayları ve akışı çek
+      try {
+        const streamData = await fetchStreamData(url, videoId);
+        if (streamData) {
+          activeVideo.title = streamData.title || activeVideo.title;
+          activeVideo.author = streamData.author || activeVideo.author;
+          activeVideo.thumbnail = streamData.thumbnail || activeVideo.thumbnail;
+
+          document.getElementById('detailTitle').textContent = activeVideo.title;
+          document.getElementById('detailAuthor').textContent = activeVideo.author;
+          document.getElementById('detailImg').src = activeVideo.thumbnail;
+        }
+      } catch (err) {
+        console.warn('Detay getirme hatası:', err);
+      }
+    }
+
+    function showDetailView(v) {
+      document.getElementById('searchListView').style.display = 'none';
+      document.getElementById('videoDetailView').style.display = 'block';
+
+      document.getElementById('detailImg').src = v.thumbnail;
+      document.getElementById('detailTitle').textContent = v.title;
+      document.getElementById('detailAuthor').textContent = v.author;
+      document.getElementById('detailDuration').textContent = `⏱ ${v.duration || '-'}`;
+      document.getElementById('detailViews').textContent = v.views ? `👁 ${v.views}` : '';
+      document.getElementById('detailAgo').textContent = v.ago ? `📅 ${v.ago}` : '';
+
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function backToSearch() {
+      document.getElementById('videoDetailView').style.display = 'none';
+      document.getElementById('searchListView').style.display = 'block';
+      activeVideo = null;
+    }
+
+    // Downloader API'sinden MP3 Stream URL'sini çek
+    async function fetchStreamData(url, videoId) {
+      const cacheKey = videoId || extractYouTubeVideoId(url) || url;
+      if (streamCache.has(cacheKey)) {
+        return streamCache.get(cacheKey);
+      }
+
+      const reqUrl = `${DOWNLOADER_API_BASE}${encodeURIComponent(url)}`;
+      const res = await fetch(reqUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+
+      if (!json || (!json.mp3 && !json.mp4)) {
+        throw new Error('Ses akışı alınamadı.');
+      }
+
+      const result = {
+        title: json.title,
+        author: json.author,
+        thumbnail: json.thumbnail,
+        mp3: json.mp3 || json.mp4,
+        mp4: json.mp4
+      };
+
+      streamCache.set(cacheKey, result);
+      return result;
+    }
+
+    // ==========================================
+    // 3 ANA BUTON EYLEMLERİ: Oynat, İndir, Queue
+    // ==========================================
+
+    async function actionPlay() {
+      if (!activeVideo) return;
+      const btnText = document.getElementById('btnPlayText');
+      const originalText = btnText.textContent;
+      btnText.textContent = 'Bağlanıyor...';
+
+      try {
+        const streamData = await fetchStreamData(activeVideo.url, activeVideo.id);
+        const streamUrl = streamData.mp3;
+
+        if (window.RunMusic && window.RunMusic.player) {
+          await window.RunMusic.player.play({
+            id: `yt_${activeVideo.id}`,
+            title: streamData.title || activeVideo.title,
+            artist: streamData.author || activeVideo.author,
+            artwork: streamData.thumbnail || activeVideo.thumbnail,
+            streamUrl: streamUrl,
+            duration: activeVideo.durationSec || 0
+          });
+          showToast(`▶ Oynatılıyor: ${streamData.title || activeVideo.title}`);
+        } else {
+          showToast('RunMusic oynatıcı köprüsü hazır değil.');
+        }
+      } catch (err) {
+        console.error('Oynatma hatası:', err);
+        showToast(`Oynatma hatası: ${err.message || 'Akış alınamadı'}`);
+      } finally {
+        btnText.textContent = originalText;
+      }
+    }
+
+    async function actionDownload() {
+      if (!activeVideo) return;
+      const btnText = document.getElementById('btnDownloadText');
+      const originalText = btnText.textContent;
+      btnText.textContent = 'Hazırlanıyor...';
+
+      try {
+        const streamData = await fetchStreamData(activeVideo.url, activeVideo.id);
+        const downloadUrl = streamData.mp3;
+        const finalTitle = streamData.title || activeVideo.title;
+        const finalArtist = streamData.author || activeVideo.author;
+
+        if (window.RunMusic && window.RunMusic.downloader) {
+          const res = await window.RunMusic.downloader.download({
+            title: finalTitle,
+            artist: finalArtist,
+            artwork: streamData.thumbnail || activeVideo.thumbnail,
+            downloadUrl: downloadUrl,
+            suggestedFileName: `${finalArtist} - ${finalTitle}.mp3`,
+            storageTarget: 'public'
+          });
+          showToast(`⬇ İndirme başlatıldı! (ID: ${res.downloadId})`);
+        } else {
+          showToast('RunMusic indirme yöneticisi bulunamadı.');
+        }
+      } catch (err) {
+        console.error('İndirme hatası:', err);
+        showToast(`İndirme hatası: ${err.message || 'Dosya alınamadı'}`);
+      } finally {
+        btnText.textContent = originalText;
+      }
+    }
+
+    async function actionQueue() {
+      if (!activeVideo) return;
+      const btnText = document.getElementById('btnQueueText');
+      const originalText = btnText.textContent;
+      btnText.textContent = 'Ekleniyor...';
+
+      try {
+        const streamData = await fetchStreamData(activeVideo.url, activeVideo.id);
+        const streamUrl = streamData.mp3;
+
+        if (window.RunMusic && window.RunMusic.player) {
+          await window.RunMusic.player.addToQueue([{
+            id: `yt_${activeVideo.id}`,
+            title: streamData.title || activeVideo.title,
+            artist: streamData.author || activeVideo.author,
+            artwork: streamData.thumbnail || activeVideo.thumbnail,
+            streamUrl: streamUrl,
+            duration: activeVideo.durationSec || 0
+          }]);
+          showToast(`➕ Kuyruğa eklendi: ${streamData.title || activeVideo.title}`);
+        } else {
+          showToast('RunMusic kuyruk köprüsü hazır değil.');
+        }
+      } catch (err) {
+        console.error('Kuyruk hatası:', err);
+        showToast(`Kuyruğa eklenemedi: ${err.message}`);
+      } finally {
+        btnText.textContent = originalText;
+      }
+    }
+
+    // ==========================================
+    // Yardımcı UI & Tema Fonksiyonları
+    // ==========================================
+
+    function showLoading(show, text = 'Yükleniyor...') {
+      const box = document.getElementById('stateBox');
+      const spinner = document.getElementById('loadingSpinner');
+      const icon = document.getElementById('emptyIcon');
+      const textEl = document.getElementById('stateText');
+
+      if (show) {
+        box.style.display = 'block';
+        spinner.style.display = 'block';
+        icon.style.display = 'none';
+        textEl.textContent = text;
+        document.getElementById('resultsList').innerHTML = '';
+      } else {
+        box.style.display = 'none';
+      }
+    }
+
+    function showEmpty(text) {
+      const box = document.getElementById('stateBox');
+      const spinner = document.getElementById('loadingSpinner');
+      const icon = document.getElementById('emptyIcon');
+      const textEl = document.getElementById('stateText');
+
+      box.style.display = 'block';
+      spinner.style.display = 'none';
+      icon.style.display = 'block';
+      icon.textContent = '🔍';
+      textEl.textContent = text;
+    }
+
+    function showError(text) {
+      const box = document.getElementById('stateBox');
+      const spinner = document.getElementById('loadingSpinner');
+      const icon = document.getElementById('emptyIcon');
+      const textEl = document.getElementById('stateText');
+
+      box.style.display = 'block';
+      spinner.style.display = 'none';
+      icon.style.display = 'block';
+      icon.textContent = '⚠️';
+      textEl.textContent = text;
+    }
+
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 2800);
+    }
+
+    function formatNumber(num) {
+      if (!num) return '0';
+      if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+      if (num >= 1000) return (num / 1000).toFixed(1) + 'B';
+      return num.toLocaleString();
+    }
+
+    function formatSeconds(sec) {
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // RunMusic Canlı Tema Entegrasyonu
+    function applyTheme(theme) {
+      if (theme && theme.primary) {
+        document.documentElement.style.setProperty('--primary', theme.primary);
+      }
+    }
+
+    window.addEventListener('RunMusicReady', () => {
+      if (window.RunMusic && window.RunMusic.theme) {
+        window.RunMusic.theme.getTheme().then(applyTheme).catch(console.warn);
+        if (window.RunMusic.theme.onThemeChange) {
+          window.RunMusic.theme.onThemeChange(applyTheme);
+        }
+      }
+    });
+
+    window.addEventListener('RunMusicThemeChange', (e) => {
+      if (e.detail) applyTheme(e.detail);
+    });
+
+    // Başlangıç araması (Varsayılan olarak popüler müzik aramasını yükle)
+    performSearch('Popüler Türkçe Müzik 2026');
+  </script>
+</body>
+</html>

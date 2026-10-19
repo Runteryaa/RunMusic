@@ -1,0 +1,10 @@
+{
+  "id": "youtube-extension",
+  "name": "YouTube Music & Video",
+  "version": "1.0.0",
+  "description": "YouTube'da video veya şarkı arayın, link yapıştırın, RunMusic ile reklamsız dinleyin veya cihazınıza indirin.",
+  "author": "RunMusic",
+  "icon": "https://raw.githubusercontent.com/Runteryaa/RunMusic/main/assets/images/play-store-icon-512.png",
+  "page": "https://runteryaa.github.io/RunMusic/examples/youtube-extension/index.html",
+  "url": "https://runteryaa.github.io/RunMusic/examples/youtube-extension/manifest.json"
+}

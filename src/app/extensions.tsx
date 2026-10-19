@@ -295,18 +295,33 @@ export default function ExtensionsScreen() {
       <Text style={styles.emptySubtitle}>
         Yukarıdaki alana bir eklenti manifest {"URL'si"} girip {`"Ekle"`} butonuna basarak kütüphanenize yeni eklentiler ekleyebilirsiniz.
       </Text>
-      <TouchableOpacity
-        style={[styles.emptyQuickAddBtn, { borderColor: theme.primary }]}
-        onPress={() => {
-          setInputUrl('https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json');
-        }}
-        activeOpacity={0.7}
-      >
-        <Ionicons name="sparkles" size={16} color={theme.primary} style={{ marginRight: 6 }} />
-        <Text style={[styles.emptyQuickAddBtnText, { color: theme.primary }]}>
-          Örnek Eklenti {"URL'sini"} Doldur
-        </Text>
-      </TouchableOpacity>
+      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+        <TouchableOpacity
+          style={[styles.emptyQuickAddBtn, { borderColor: '#ef4444' }]}
+          onPress={() => {
+            setInputUrl('https://runteryaa.github.io/RunMusic/examples/youtube-extension/manifest.json');
+          }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="logo-youtube" size={15} color="#ef4444" style={{ marginRight: 6 }} />
+          <Text style={[styles.emptyQuickAddBtnText, { color: '#ef4444' }]}>
+            YouTube Eklentisi
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.emptyQuickAddBtn, { borderColor: theme.primary }]}
+          onPress={() => {
+            setInputUrl('https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json');
+          }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="sparkles" size={15} color={theme.primary} style={{ marginRight: 6 }} />
+          <Text style={[styles.emptyQuickAddBtnText, { color: theme.primary }]}>
+            Açık Müzik Örneği
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -381,17 +396,30 @@ export default function ExtensionsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Quick Sample Fill */}
-        <TouchableOpacity
-          style={styles.sampleChip}
-          onPress={() => setInputUrl('https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json')}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="sparkles-outline" size={13} color={theme.primary} style={{ marginRight: 6 }} />
-          <Text style={[styles.sampleChipText, { color: theme.primary }]}>
-            Örnek Eklenti {"URL'sini"} Yapıştır (RunMusic Sample)
-          </Text>
-        </TouchableOpacity>
+        {/* Quick Sample Fill Chips */}
+        <View style={styles.sampleChipRow}>
+          <TouchableOpacity
+            style={styles.sampleChip}
+            onPress={() => setInputUrl('https://runteryaa.github.io/RunMusic/examples/youtube-extension/manifest.json')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="logo-youtube" size={13} color="#ef4444" style={{ marginRight: 5 }} />
+            <Text style={[styles.sampleChipText, { color: '#ef4444' }]}>
+              YouTube Eklentisi
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.sampleChip}
+            onPress={() => setInputUrl('https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="sparkles-outline" size={13} color={theme.primary} style={{ marginRight: 5 }} />
+            <Text style={[styles.sampleChipText, { color: theme.primary }]}>
+              Açık Müzik Örneği
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Extensions List Header */}
@@ -517,11 +545,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  sampleChipRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginTop: 8,
+    flexWrap: 'wrap',
+  },
   sampleChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 10,
-    alignSelf: 'flex-start',
     paddingVertical: 4,
     paddingHorizontal: 2,
   },
