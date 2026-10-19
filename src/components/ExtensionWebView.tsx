@@ -47,7 +47,7 @@ export const ExtensionWebView: React.FC<ExtensionWebViewProps> = ({ extension })
     <View style={styles.container}>
       <WebView
         ref={webViewRef}
-        source={{ uri: extension.manifest.entryUrl }}
+        source={{ uri: extension.manifest.page || extension.manifest.entryUrl || '' }}
         injectedJavaScriptBeforeContentLoaded={injectedJS}
         onMessage={handleMessage}
         onLoadStart={() => {

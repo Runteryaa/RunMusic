@@ -104,9 +104,14 @@ export default function ExtensionsScreen() {
   };
 
   const handleExtensionOptions = (ext: InstalledExtension) => {
+    const authorStr =
+      typeof ext.manifest.author === 'string'
+        ? ext.manifest.author
+        : ext.manifest.author?.name || 'Topluluk';
+
     Alert.alert(
       ext.manifest.name,
-      `${ext.manifest.description || 'Web Eklentisi'}\nSürüm: v${ext.manifest.version}\nYazar: ${ext.manifest.author || 'Topluluk'}\n\nManifest: ${ext.manifestUrl}`,
+      `${ext.manifest.description || 'Web Eklentisi'}\nSürüm: v${ext.manifest.version}\nYazar: ${authorStr}\n\nManifest: ${ext.manifest.url || ext.manifestUrl}`,
       [
         { text: t('common.cancel') || 'İptal', style: 'cancel' },
         {
@@ -170,7 +175,7 @@ export default function ExtensionsScreen() {
                 {openedExtension.manifest.name}
               </Text>
               <Text style={styles.webHeaderSubtitle} numberOfLines={1}>
-                {openedExtension.manifest.entryUrl}
+                {openedExtension.manifest.page || openedExtension.manifest.entryUrl}
               </Text>
             </View>
           </View>
@@ -245,11 +250,19 @@ export default function ExtensionsScreen() {
             <Text style={styles.trackTitle} numberOfLines={1}>
               {item.manifest.name}
             </Text>
-            <Text style={styles.trackDuration} numberOfLines={1}>
-              v{item.manifest.version}
-              {item.manifest.author ? ` • ${item.manifest.author}` : ''}
-              {item.manifest.description ? ` • ${item.manifest.description}` : ''}
-            </Text>
+            {(() => {
+              const authorStr =
+                typeof item.manifest.author === 'string'
+                  ? item.manifest.author
+                  : item.manifest.author?.name || '';
+              return (
+                <Text style={styles.trackDuration} numberOfLines={1}>
+                  v{item.manifest.version}
+                  {authorStr ? ` • ${authorStr}` : ''}
+                  {item.manifest.description ? ` • ${item.manifest.description}` : ''}
+                </Text>
+              );
+            })()}
           </View>
 
           {/* Açma Oku */}

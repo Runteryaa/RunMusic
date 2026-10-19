@@ -1,17 +1,10 @@
 {
-  "$schema": "https://runmusic.app/schemas/v1/extension.json",
   "id": "sample-audio-extension",
-  "name": "Example AUdio Extension",
+  "name": "Example Audio Extension",
   "version": "1.0.0",
   "description": "Example Extension for RunMusic",
-  "author": "Runterya"},
+  "author": "Runterya",
   "icon": "https://raw.githubusercontent.com/Runteryaa/RunMusic/main/assets/images/play-store-icon-512.png",
-  "entryUrl": "https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/index.html",
-  "categories": ["audio-source", "charts-discovery"],
-  "permissions": [
-    "player.control",
-    "downloader.save",
-    "storage.scoped",
-    "theme.read"
-  ]
+  "page": "https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/index.html",
+  "url": "https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json"
 }

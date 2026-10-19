@@ -89,16 +89,38 @@ export const useExtensionStore = create<ExtensionStoreState>()(
           throw new Error('Geçersiz manifest: "name" alanı zorunludur.');
         }
 
-        if (!manifest.entryUrl || typeof manifest.entryUrl !== 'string') {
-          throw new Error('Geçersiz manifest: "entryUrl" alanı zorunludur.');
+        const rawPage = manifest.page || manifest.entryUrl;
+        if (!rawPage || typeof rawPage !== 'string') {
+          throw new Error('Geçersiz manifest: "page" alanı zorunludur.');
         }
 
-        // Giriş URL'sini göreceli ise mutlak hale getir
+        // Web sayfası URL'sini göreceli ise mutlak hale getir
+        let resolvedPage = rawPage;
         try {
-          const resolvedEntry = new URL(manifest.entryUrl, fetchUrl).toString();
-          manifest.entryUrl = resolvedEntry;
+          resolvedPage = new URL(rawPage, fetchUrl).toString();
         } catch {
           // URL çözümleme hatası olursa orijinalini koru
+        }
+        manifest.page = resolvedPage;
+        manifest.entryUrl = resolvedPage;
+
+        // İkon URL'sini göreceli ise mutlak hale getir
+        if (manifest.icon && typeof manifest.icon === 'string') {
+          try {
+            manifest.icon = new URL(manifest.icon, fetchUrl).toString();
+          } catch {
+            // koru
+          }
+        }
+
+        // Manifest URL'sini garantiye al
+        if (!manifest.url) {
+          manifest.url = fetchUrl;
+        }
+
+        // Yazar bilgisi obje ise ismini al
+        if (typeof manifest.author === 'object' && manifest.author !== null && 'name' in manifest.author) {
+          manifest.author = (manifest.author as any).name;
         }
 
         const now = Date.now();
@@ -106,7 +128,7 @@ export const useExtensionStore = create<ExtensionStoreState>()(
 
         const newExt: InstalledExtension = {
           manifest,
-          manifestUrl: fetchUrl,
+          manifestUrl: manifest.url || fetchUrl,
           installedAt: existing ? existing.installedAt : now,
           updatedAt: now,
           isEnabled: existing ? existing.isEnabled : true,
@@ -130,8 +152,9 @@ export const useExtensionStore = create<ExtensionStoreState>()(
         const ext = get().extensions.find((e) => e.manifest.id === id);
         if (!ext) return null;
 
+        const updateUrl = ext.manifest.url || ext.manifestUrl;
         try {
-          const res = await fetch(ext.manifestUrl, { headers: { Accept: 'application/json' } });
+          const res = await fetch(updateUrl, { headers: { Accept: 'application/json' } });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const manifest: ExtensionManifest = await res.json();
 
@@ -139,10 +162,37 @@ export const useExtensionStore = create<ExtensionStoreState>()(
             throw new Error('Güncellenen manifest ID eşleşmiyor.');
           }
 
+          const rawPage = manifest.page || manifest.entryUrl;
+          if (rawPage && typeof rawPage === 'string') {
+            try {
+              const resolved = new URL(rawPage, updateUrl).toString();
+              manifest.page = resolved;
+              manifest.entryUrl = resolved;
+            } catch {
+              manifest.page = rawPage;
+              manifest.entryUrl = rawPage;
+            }
+          }
+
+          if (manifest.icon && typeof manifest.icon === 'string') {
+            try {
+              manifest.icon = new URL(manifest.icon, updateUrl).toString();
+            } catch {}
+          }
+
+          if (!manifest.url) {
+            manifest.url = updateUrl;
+          }
+
+          if (typeof manifest.author === 'object' && manifest.author !== null && 'name' in manifest.author) {
+            manifest.author = (manifest.author as any).name;
+          }
+
           const now = Date.now();
           const updated: InstalledExtension = {
             ...ext,
             manifest: { ...manifest },
+            manifestUrl: manifest.url || updateUrl,
             updatedAt: now,
           };
 

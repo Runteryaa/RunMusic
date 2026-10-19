@@ -39,18 +39,30 @@ export interface ExtensionAuthor {
 }
 
 export interface ExtensionManifest {
-  $schema?: string;
   id: string;
   name: string;
   version: string;
+  page?: string; // Web URL loaded inside WebView
+  url?: string; // Manifest.json URL
   description?: string;
   author?: string | ExtensionAuthor;
   icon?: string;
   homepage?: string;
-  entryUrl: string;
+  entryUrl?: string; // Backward compatibility alias for page
+  $schema?: string;
   categories?: (ExtensionCategory | string)[];
   permissions?: (ExtensionPermission | string)[];
   settingsSchema?: ExtensionSettingItem[];
+}
+
+export function getExtensionAuthor(author?: string | ExtensionAuthor): string {
+  if (!author) return '';
+  if (typeof author === 'string') return author;
+  return author.name || '';
+}
+
+export function getExtensionPageUrl(manifest: ExtensionManifest): string {
+  return manifest.page || manifest.entryUrl || '';
 }
 
 export interface InstalledExtension {

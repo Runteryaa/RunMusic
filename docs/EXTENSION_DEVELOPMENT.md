@@ -10,39 +10,29 @@ No native code, app compilation, or store approval required. Extensions run insi
 
 Every extension must provide a publicly accessible `manifest.json` file.
 
-### Example Manifest:
+### Example Manifest (`manifest.json`):
 ```json
 {
-  "$schema": "https://runmusic.app/schemas/v1/extension.json",
-  "id": "org.community.sample-audio",
-  "name": "Open Audio Explorer",
+  "id": "sample-audio-extension",
+  "name": "Example Audio Extension",
   "version": "1.0.0",
-  "description": "Explore, stream, and download Creative Commons & royalty-free music.",
-  "author": {
-    "name": "Community Contributor",
-    "url": "https://github.com/community"
-  },
-  "icon": "https://example.com/icon.png",
-  "entryUrl": "https://example.com/index.html",
-  "categories": ["audio-source", "charts-discovery"],
-  "permissions": [
-    "player.control",
-    "downloader.save",
-    "storage.scoped",
-    "theme.read"
-  ]
+  "description": "Example Extension for RunMusic",
+  "author": "Runterya",
+  "icon": "https://raw.githubusercontent.com/Runteryaa/RunMusic/main/assets/images/play-store-icon-512.png",
+  "page": "https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/index.html",
+  "url": "https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json"
 }
 ```
 
 ### Manifest Fields:
-- `id` *(required)*: Unique reverse-DNS identifier (e.g. `com.example.my-addon`).
+- `id` *(required)*: Unique identifier string for the extension (e.g. `sample-audio-extension`).
 - `name` *(required)*: Display name of your extension.
 - `version` *(required)*: SemVer version string (e.g. `1.0.0`).
-- `entryUrl` *(required)*: The HTTPS URL to load in the RunMusic WebView container.
+- `page` *(required)*: The HTTPS URL or relative path to the HTML page loaded inside RunMusic's WebView.
+- `url`: The URL to this `manifest.json` itself (used for updates and deep-linking).
 - `description`: A short summary of what your extension provides.
-- `icon`: Square icon URL (PNG/SVG, 128x128px recommended).
-- `categories`: Array of extension tags (`audio-source`, `media-server`, `lyrics-provider`, `metadata-provider`, etc.).
-- `permissions`: Declared capabilities.
+- `author`: The author/creator name string (e.g. `"Runterya"`).
+- `icon`: Square icon image URL (PNG/WebP/SVG recommended).
 
 ---
 

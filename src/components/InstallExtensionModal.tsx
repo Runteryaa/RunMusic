@@ -104,7 +104,7 @@ export const InstallExtensionModal: React.FC = () => {
 
           <TouchableOpacity
             style={styles.sampleFillBtn}
-            onPress={() => setUrl('https://raw.githack.com/Runteryaa/RunMusic/main/examples/sample-audio-extension/manifest.json')}
+            onPress={() => setUrl('https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json')}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           >
             <Ionicons name="sparkles" size={14} color={theme.primary} style={{ marginRight: 6 }} />
