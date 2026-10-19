@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
-index b2409a0..35dccfb 100644
+index b2409a0..830c857 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 @@ -251,7 +251,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
@@ -146,7 +146,7 @@ index b2409a0..35dccfb 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          musicService.skipToPrevious()
-@@ -419,10 +420,10 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -419,147 +420,155 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
          }
  
          callback.resolve(null)
@@ -158,9 +158,16 @@ index b2409a0..35dccfb 100644
 +    fun reset(callback: Promise) { scope.launch {
          if (verifyServiceBoundOrReject(callback)) return@launch
  
-         musicService.stop()
-@@ -430,136 +431,136 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
-         musicService.clear()
+-        musicService.stop()
+-        delay(300) // Allow playback to stop
+-        musicService.clear()
++        if (musicService.appKilledPlaybackBehavior == MusicService.AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION) {
++            musicService.stopPlaybackAndRemoveNotification()
++        } else {
++            musicService.stop()
++            delay(300) // Allow playback to stop
++            musicService.clear()
++        }
  
          callback.resolve(null)
 -    }
@@ -191,7 +198,12 @@ index b2409a0..35dccfb 100644
 +    fun stop(callback: Promise) { scope.launch {
          if (verifyServiceBoundOrReject(callback)) return@launch
  
-         musicService.stop()
+-        musicService.stop()
++        if (musicService.appKilledPlaybackBehavior == MusicService.AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION) {
++            musicService.stopPlaybackAndRemoveNotification()
++        } else {
++            musicService.stop()
++        }
          callback.resolve(null)
 -    }
 +    } }
@@ -331,7 +343,7 @@ index b2409a0..35dccfb 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          try {
-@@ -569,61 +570,63 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -569,61 +578,76 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
          } catch (exception: Exception) {
              rejectWithException(callback, exception)
          }
@@ -411,11 +423,23 @@ index b2409a0..35dccfb 100644
 +    fun getPlaybackState(callback: Promise) { scope.launch {
          if (verifyServiceBoundOrReject(callback)) return@launch
          callback.resolve(Arguments.fromBundle(musicService.getPlayerStateBundle(musicService.state)))
--    }
 +    } }
++
++    override fun onCatalystInstanceDestroy() {
++        super.onCatalystInstanceDestroy()
++        try {
++            if (::musicService.isInitialized && musicService.appKilledPlaybackBehavior == MusicService.AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION) {
++                android.os.Handler(android.os.Looper.getMainLooper()).post {
++                    musicService.stopPlaybackAndRemoveNotification()
++                }
++            }
++        } catch (e: Throwable) {
++            // ignore
++        }
+     }
  }
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
-index afa6b0f..682a1a1 100644
+index afa6b0f..8a4d2cd 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
 @@ -30,8 +30,10 @@ import com.doublesymmetry.trackplayer.module.MusicEvents.Companion.METADATA_PAYL
@@ -430,7 +454,41 @@ index afa6b0f..682a1a1 100644
  import com.facebook.react.modules.core.DeviceEventManagerModule
  import com.google.android.exoplayer2.ui.R as ExoPlayerR
  import kotlinx.coroutines.*
-@@ -461,9 +463,12 @@ class MusicService : HeadlessJsTaskService() {
+@@ -58,7 +60,7 @@ class MusicService : HeadlessJsTaskService() {
+         CONTINUE_PLAYBACK("continue-playback"), PAUSE_PLAYBACK("pause-playback"), STOP_PLAYBACK_AND_REMOVE_NOTIFICATION("stop-playback-and-remove-notification")
+     }
+ 
+-    private var appKilledPlaybackBehavior = AppKilledPlaybackBehavior.CONTINUE_PLAYBACK
++    var appKilledPlaybackBehavior = AppKilledPlaybackBehavior.CONTINUE_PLAYBACK
+     private var stopForegroundGracePeriod: Int = DEFAULT_STOP_FOREGROUND_GRACE_PERIOD
+ 
+     val tracks: List<Track>
+@@ -160,6 +162,13 @@ class MusicService : HeadlessJsTaskService() {
+         player.automaticallyUpdateNotificationMetadata = automaticallyUpdateNotificationMetadata
+         observeEvents()
+         setupForegrounding()
++
++        val androidSetupOptions = playerOptions?.getBundle(ANDROID_OPTIONS_KEY)
++        val setupBehaviorString = androidSetupOptions?.getString(APP_KILLED_PLAYBACK_BEHAVIOR_KEY)
++            ?: playerOptions?.getString(APP_KILLED_PLAYBACK_BEHAVIOR_KEY)
++        if (setupBehaviorString != null) {
++            appKilledPlaybackBehavior = AppKilledPlaybackBehavior::string.find(setupBehaviorString) ?: appKilledPlaybackBehavior
++        }
+     }
+ 
+     @MainThread
+@@ -167,7 +176,9 @@ class MusicService : HeadlessJsTaskService() {
+         latestOptions = options
+         val androidOptions = options.getBundle(ANDROID_OPTIONS_KEY)
+ 
+-        appKilledPlaybackBehavior = AppKilledPlaybackBehavior::string.find(androidOptions?.getString(APP_KILLED_PLAYBACK_BEHAVIOR_KEY)) ?: AppKilledPlaybackBehavior.CONTINUE_PLAYBACK
++        val behaviorString = androidOptions?.getString(APP_KILLED_PLAYBACK_BEHAVIOR_KEY)
++            ?: options.getString(APP_KILLED_PLAYBACK_BEHAVIOR_KEY)
++        appKilledPlaybackBehavior = AppKilledPlaybackBehavior::string.find(behaviorString) ?: AppKilledPlaybackBehavior.CONTINUE_PLAYBACK
+ 
+         BundleUtils.getIntOrNull(androidOptions, STOP_FOREGROUND_GRACE_PERIOD_KEY)?.let { stopForegroundGracePeriod = it }
+ 
+@@ -461,9 +472,12 @@ class MusicService : HeadlessJsTaskService() {
          val b = Bundle()
          b.putDouble("lastPosition", oldPosition)
          if (tracks.isNotEmpty()) {
@@ -446,7 +504,7 @@ index afa6b0f..682a1a1 100644
                  b.putInt("lastIndex", previousIndex)
                  b.putBundle("lastTrack", tracks[previousIndex].originalItem)
              }
-@@ -739,9 +744,25 @@ class MusicService : HeadlessJsTaskService() {
+@@ -739,9 +753,25 @@ class MusicService : HeadlessJsTaskService() {
          return bundle
      }
  
@@ -473,7 +531,7 @@ index afa6b0f..682a1a1 100644
              ?.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
              ?.emit(event, data?.let { Arguments.fromBundle(it) })
      }
-@@ -751,7 +772,7 @@ class MusicService : HeadlessJsTaskService() {
+@@ -751,7 +781,7 @@ class MusicService : HeadlessJsTaskService() {
          val payload = Arguments.createArray()
          data.forEach { payload.pushMap(Arguments.fromBundle(it)) }
  
@@ -482,3 +540,61 @@ index afa6b0f..682a1a1 100644
              ?.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
              ?.emit(event, payload)
      }
+@@ -765,6 +795,38 @@ class MusicService : HeadlessJsTaskService() {
+         return binder
+     }
+ 
++    @MainThread
++    fun stopPlaybackAndRemoveNotification() {
++        if (!::player.isInitialized) return
++        try {
++            player.clear()
++            player.stop()
++            player.notificationManager.hideNotification()
++        } catch (e: Throwable) {
++            // ignore
++        }
++
++        try {
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
++                stopForeground(STOP_FOREGROUND_REMOVE)
++            } else {
++                @Suppress("DEPRECATION")
++                stopForeground(true)
++            }
++        } catch (e: Throwable) {
++            // ignore
++        }
++
++        try {
++            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
++            notificationManager?.cancelAll()
++        } catch (e: Throwable) {
++            // ignore
++        }
++
++        stopSelf()
++    }
++
+     @MainThread
+     override fun onTaskRemoved(rootIntent: Intent?) {
+         super.onTaskRemoved(rootIntent)
+@@ -774,17 +836,7 @@ class MusicService : HeadlessJsTaskService() {
+         when (appKilledPlaybackBehavior) {
+             AppKilledPlaybackBehavior.PAUSE_PLAYBACK -> player.pause()
+             AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION -> {
+-                player.clear()
+-                player.stop()
+-
+-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+-                    stopForeground(STOP_FOREGROUND_REMOVE)
+-                } else {
+-                    @Suppress("DEPRECATION")
+-                    stopForeground(true)
+-                }
+-
+-                stopSelf()
++                stopPlaybackAndRemoveNotification()
+                 exitProcess(0)
+             }
+             else -> {}

@@ -11,6 +11,7 @@ import {
   TextInput,
   Modal,
   Pressable,
+  BackHandler,
 } from 'react-native';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import * as FileSystem from 'expo-file-system';
@@ -383,6 +384,41 @@ export default function LibraryScreen() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Donanım geri tuşu: Modal veya arama açıksa kapat; ana ekrandan çıkılırken kapatılınca çalma kapalıysa müziği durdur
+  useEffect(() => {
+    const onBackPress = () => {
+      if (selectedTrackForMenu) {
+        setSelectedTrackForMenu(null);
+        return true;
+      }
+      if (trackToEdit) {
+        setTrackToEdit(null);
+        return true;
+      }
+      if (isSortModalOpen) {
+        setIsSortModalOpen(false);
+        return true;
+      }
+      if (isSearchOpen) {
+        setIsSearchOpen(false);
+        setSearchQuery('');
+        return true;
+      }
+
+      const keepPlaying = useStore.getState().preferences?.keepPlayingWhenAppKilled ?? true;
+      if (!keepPlaying) {
+        TrackPlayer.stop().catch(() => {});
+        TrackPlayer.reset().catch(() => {});
+      }
+      return false;
+    };
+
+    const backSub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => {
+      backSub.remove();
+    };
+  }, [selectedTrackForMenu, trackToEdit, isSortModalOpen, isSearchOpen]);
 
   // Compute info once per track to avoid O(N log N) regex operations during sorting
   const libraryWithInfo = useMemo(() => {

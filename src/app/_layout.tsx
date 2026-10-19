@@ -67,6 +67,17 @@ function MainAppLayout() {
     syncAppKilledPlaybackBehavior(keepPlayingWhenAppKilled);
   }, [keepPlayingWhenAppKilled]);
 
+  // Kök uygulama kapatıldığında (unmount) kullanıcı tercihi kapalıysa müziği tamamen durdur
+  useEffect(() => {
+    return () => {
+      const keepPlaying = useStore.getState().preferences?.keepPlayingWhenAppKilled ?? true;
+      if (!keepPlaying) {
+        TrackPlayer.stop().catch(() => {});
+        TrackPlayer.reset().catch(() => {});
+      }
+    };
+  }, []);
+
   const isRemoteServiceEnabled = useRemoteConnectStore((s) => s.isServiceEnabled);
   useEffect(() => {
     if (isRemoteServiceEnabled) {

@@ -49,15 +49,18 @@ export function getTrackPlayerOptions(keepPlaying?: boolean) {
       ? keepPlaying
       : useStore.getState().preferences?.keepPlayingWhenAppKilled ?? true;
 
+  const behavior = shouldKeepPlaying
+    ? AppKilledPlaybackBehavior.ContinuePlayback
+    : AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification;
+
   return {
     capabilities: PLAYBACK_CAPABILITIES,
     notificationCapabilities: NOTIFICATION_CAPABILITIES,
     compactCapabilities: COMPACT_CAPABILITIES,
     progressUpdateEventInterval: 2,
+    appKilledPlaybackBehavior: behavior,
     android: {
-      appKilledPlaybackBehavior: shouldKeepPlaying
-        ? AppKilledPlaybackBehavior.ContinuePlayback
-        : AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
+      appKilledPlaybackBehavior: behavior,
     },
   };
 }
