@@ -1,9 +1,9 @@
-import { Tabs } from 'expo-router';
+import { Tabs, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Linking from 'expo-linking';
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { View, Alert } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import TrackPlayer, { State, useActiveTrack } from 'react-native-track-player';
 
@@ -27,6 +27,7 @@ import { PairChallengeModal } from '../components/PairChallengeModal';
 import { PairVerifyModal } from '../components/PairVerifyModal';
 import { DeviceSelectorModal } from '../components/DeviceSelectorModal';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
+import { useExtensionStore } from '../store/useExtensionStore';
 
 let MusicWidgetModule: any = null;
 try {
@@ -193,6 +194,70 @@ function MainAppLayout() {
   );
 }
 
+let lastHandledDeepLinkUrl: string | null = null;
+let lastHandledDeepLinkTime = 0;
+
+export async function handleAppDeepLink(url: string | null): Promise<void> {
+  if (!url) return;
+  try {
+    const parsed = Linking.parse(url);
+    const host = (parsed.hostname || '').toLowerCase();
+    const path = (parsed.path || '').toLowerCase();
+
+    // Check if this is an extension install deep link
+    const isExtensionLink =
+      host === 'extension' ||
+      host === 'extensions' ||
+      host === 'install-extension' ||
+      host === 'install' ||
+      path.includes('extension') ||
+      path.includes('install');
+
+    const manifestUrl =
+      (parsed.queryParams?.url as string) ||
+      (parsed.queryParams?.manifest as string) ||
+      (parsed.queryParams?.install as string) ||
+      (parsed.queryParams?.extension_url as string);
+
+    if (isExtensionLink && manifestUrl) {
+      const cleanUrl = decodeURIComponent(manifestUrl).trim();
+      const now = Date.now();
+      if (cleanUrl === lastHandledDeepLinkUrl && now - lastHandledDeepLinkTime < 3000) {
+        return;
+      }
+      lastHandledDeepLinkUrl = cleanUrl;
+      lastHandledDeepLinkTime = now;
+
+      // Extensions sekmesine geçiş yap
+      try {
+        router.push('/extensions');
+      } catch {
+        // ignore navigation if not ready
+      }
+
+      // Eklentiyi otomatik yükle
+      try {
+        const ext = await useExtensionStore.getState().installExtension(cleanUrl);
+        Alert.alert(
+          'Eklenti Yüklendi',
+          `"${ext.manifest.name}" başarıyla kuruldu.`
+        );
+      } catch (err: any) {
+        Alert.alert(
+          'Eklenti Kurulamadı',
+          err?.message || 'Eklenti manifest dosyası yüklenemedi.'
+        );
+      }
+      return;
+    }
+
+    // Widget başlatma / çalma URL kontrolü
+    await handleWidgetLaunchUrl(url);
+  } catch (err) {
+    console.warn('[handleAppDeepLink] error:', err);
+  }
+}
+
 async function handleWidgetLaunchUrl(url: string | null) {
   if (!url) return;
   try {
@@ -242,7 +307,7 @@ export default function TabLayout() {
 
   useEffect(() => {
     const sub = Linking.addEventListener('url', (event) => {
-      handleWidgetLaunchUrl(event.url);
+      handleAppDeepLink(event.url);
     });
     return () => {
       sub.remove();
@@ -300,7 +365,7 @@ export default function TabLayout() {
         try {
           const initialUrl = await Linking.getInitialURL();
           if (initialUrl) {
-            await handleWidgetLaunchUrl(initialUrl);
+            await handleAppDeepLink(initialUrl);
           }
         } catch (linkErr) {
           console.warn('Initial URL handle notice:', linkErr);

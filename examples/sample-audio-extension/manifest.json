@@ -8,7 +8,7 @@
     "name": "RunMusic Community",
     "url": "https://github.com/Runteryaa/RunMusic"
   },
-  "icon": "https://raw.githubusercontent.com/Runteryaa/RunMusic/main/assets/icon.png",
+  "icon": "https://raw.githubusercontent.com/Runteryaa/RunMusic/main/assets/images/play-store-icon-512.png",
   "entryUrl": "./index.html",
   "categories": ["audio-source", "charts-discovery"],
   "permissions": [

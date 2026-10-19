@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { useLocalSearchParams } from 'expo-router';
 import {
   View,
   Text,
@@ -45,6 +46,25 @@ export default function ExtensionsScreen() {
     if (!openedExtensionId) return null;
     return extensions.find((e) => e.manifest.id === openedExtensionId) || null;
   }, [extensions, openedExtensionId]);
+
+  // Deep Link ile gelen ?url= veya ?install= parametrelerini yakala
+  const params = useLocalSearchParams<{ url?: string; install?: string }>();
+  const lastParamUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const rawUrl = params.url || params.install;
+    if (rawUrl && rawUrl !== lastParamUrlRef.current) {
+      lastParamUrlRef.current = rawUrl;
+      const cleanUrl = decodeURIComponent(rawUrl).trim();
+      installExtension(cleanUrl)
+        .then((ext) => {
+          Alert.alert('Eklenti Yüklendi', `"${ext.manifest.name}" başarıyla kuruldu.`);
+        })
+        .catch((err) => {
+          Alert.alert('Kurulum Başarısız', err?.message || 'Eklenti yüklenemedi.');
+        });
+    }
+  }, [params.url, params.install, installExtension]);
 
   // Donanım geri tuşu: Eğer eklenti sitesi açıksa kapat ve listeye dön
   useEffect(() => {
@@ -265,7 +285,7 @@ export default function ExtensionsScreen() {
       <TouchableOpacity
         style={[styles.emptyQuickAddBtn, { borderColor: theme.primary }]}
         onPress={() => {
-          setInputUrl('https://runteryaa.github.io/RunMusic/manifest.json');
+          setInputUrl('https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json');
         }}
         activeOpacity={0.7}
       >
@@ -351,7 +371,7 @@ export default function ExtensionsScreen() {
         {/* Quick Sample Fill */}
         <TouchableOpacity
           style={styles.sampleChip}
-          onPress={() => setInputUrl('https://runteryaa.github.io/RunMusic/manifest.json')}
+          onPress={() => setInputUrl('https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json')}
           activeOpacity={0.7}
         >
           <Ionicons name="sparkles-outline" size={13} color={theme.primary} style={{ marginRight: 6 }} />

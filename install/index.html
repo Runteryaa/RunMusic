@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Install Extension - RunMusic</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background: #121212;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 24px;
+      text-align: center;
+    }
+    .card {
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 20px;
+      padding: 36px 24px;
+      max-width: 440px;
+      width: 100%;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+    .icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 16px;
+      margin-bottom: 16px;
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    p {
+      color: #a1a1aa;
+      font-size: 14px;
+      line-height: 1.5;
+      margin: 0 0 16px;
+    }
+    .btn {
+      display: block;
+      background: #3b82f6;
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: 700;
+      padding: 14px 24px;
+      border-radius: 12px;
+      margin-top: 16px;
+      font-size: 15px;
+      transition: background 0.2s;
+    }
+    .btn:hover {
+      background: #2563eb;
+    }
+    .secondary-btn {
+      display: inline-block;
+      color: #71717a;
+      text-decoration: none;
+      margin-top: 18px;
+      font-size: 13px;
+    }
+    .secondary-btn:hover {
+      color: #a1a1aa;
+    }
+    .url-box {
+      color: #71717a;
+      font-size: 12px;
+      word-break: break-all;
+      background: #09090b;
+      border: 1px solid #27272a;
+      padding: 10px 12px;
+      border-radius: 8px;
+      margin: 12px 0;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img src="../assets/images/play-store-icon-512.png" alt="RunMusic" class="icon" />
+    <h2>RunMusic Extension</h2>
+    <p>Opening RunMusic to install this extension...</p>
+    <div id="manifestUrl" class="url-box"></div>
+    <a id="openBtn" href="#" class="btn">Open in RunMusic</a>
+    <a href="https://github.com/Runteryaa/RunMusic/releases" class="secondary-btn">Don't have RunMusic? Download APK</a>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const rawUrl = params.get('url') || params.get('manifest') || '';
+    if (rawUrl) {
+      document.getElementById('manifestUrl').textContent = rawUrl;
+      const deepLink = 'runmusic://install-extension?url=' + encodeURIComponent(rawUrl);
+      document.getElementById('openBtn').href = deepLink;
+      // Try to open deep link automatically
+      setTimeout(() => {
+        window.location.href = deepLink;
+      }, 100);
+    } else {
+      document.getElementById('manifestUrl').textContent = 'No extension URL provided.';
+    }
+  </script>
+</body>
+</html>
