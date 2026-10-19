@@ -10,6 +10,7 @@ import {
   computeUpcomingOrder,
   deriveQueueSections,
   findNextPlayableIndex,
+  reorderQueueOnTrackSelect,
   shuffleArray,
   smartShuffleArray,
   trackKey,
@@ -24,11 +25,19 @@ export {
   computeUpcomingOrder,
   deriveQueueSections,
   findNextPlayableIndex,
+  reorderQueueOnTrackSelect,
   shuffleArray,
   smartShuffleArray,
   trackKey,
 };
-export type { QueueEntry, QueueRow, QueueSections, QueueTrackLike, QueueSectionLabels } from './queueMath';
+export type {
+  QueueEntry,
+  QueueRow,
+  QueueSections,
+  QueueTrackLike,
+  QueueSectionLabels,
+  ReorderQueueResult,
+} from './queueMath';
 
 /**
  * Kuyruk yönetimi — Apple Music / Spotify semantiği.
@@ -258,6 +267,93 @@ export async function getQueueSections(): Promise<QueueSections<Track>> {
     playedHistory as any,
     activeKey
   );
+}
+
+/**
+ * Kullanıcı kuyruk listesinden (veya kütüphanede zaten kuyrukta olan) bir parçaya
+ * dokunduğunda o parçayı çalar.
+ *
+ * Eğer "Öncelikli Sıra"da bekleyen parçalar varken "Önceliksiz Sıra"dan bir parçaya
+ * basıldıysa, öncelikli parçalar yeni parçanın hemen ardına taşınır (kaybolmaz).
+ */
+export async function playQueueTrack(
+  queueIndex: number,
+  trackId?: string
+): Promise<void> {
+  const queue = await TrackPlayer.getQueue().catch(() => []);
+  if (queue.length === 0) return;
+
+  let targetIndex = -1;
+  if (trackId) {
+    targetIndex = queue.findIndex(
+      (t) => trackKey(t) === trackId || t.id === trackId || t.url === trackId
+    );
+  }
+  if (targetIndex < 0 && queueIndex >= 0 && queueIndex < queue.length) {
+    targetIndex = queueIndex;
+  }
+  if (targetIndex < 0 || targetIndex >= queue.length) return;
+
+  const currentUpNextIds = useStore.getState().upNextIds;
+  const clearOnSelect = useStore.getState().preferences.clearQueueOnTrackSelect;
+
+  const { newQueue, newStartIndex, newUpNextIds } = reorderQueueOnTrackSelect({
+    queue,
+    targetIndex,
+    upNextIds: currentUpNextIds,
+    clearOnSelect,
+  });
+
+  const targetTrack = newQueue[newStartIndex];
+  if (!targetTrack) return;
+
+  // Optimistik arayüz ve dinamik tema güncellemesi
+  const allAssets = useStore.getState().allAssets;
+  const canonicalId = resolveTrackId(targetTrack, allAssets);
+  const meta =
+    (canonicalId && useStore.getState().metadataMap[canonicalId]) ||
+    useStore.getState().metadataMap[targetTrack.id];
+  const art =
+    meta?.artwork ||
+    (canonicalId && useStore.getState().artworkMap[canonicalId]) ||
+    useStore.getState().artworkMap[targetTrack.id] ||
+    (typeof targetTrack.artwork === 'string' ? targetTrack.artwork : null);
+
+  const summary = {
+    id: canonicalId || targetTrack.id,
+    title: meta?.title || targetTrack.title || 'Unknown Title',
+    artist: meta?.artist || targetTrack.artist || 'Unknown Artist',
+    duration: targetTrack.duration || 0,
+    hasArtwork: !!art,
+  };
+  useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+  if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
+    useThemeStore.getState().updateThemeFromArtwork(art);
+  }
+
+  const queueChanged =
+    newQueue.length !== queue.length ||
+    newQueue.some((t, i) => trackKey(t) !== trackKey(queue[i]));
+
+  if (queueChanged) {
+    setIsMutatingQueue(true);
+    try {
+      await TrackPlayer.setQueue(newQueue);
+      if (newStartIndex > 0) {
+        await TrackPlayer.skip(newStartIndex);
+      }
+      await TrackPlayer.play();
+    } finally {
+      setIsMutatingQueue(false);
+    }
+  } else {
+    await TrackPlayer.skip(newStartIndex);
+    await TrackPlayer.play();
+  }
+
+  useStore.getState().setUpNextIds(newUpNextIds);
+  await persistQueue();
+  useStore.getState().bumpQueueRevision();
 }
 
 /** Kullanıcı kütüphaneden bir parçaya dokunduğunda kuyruğu kurar ve çalar. */

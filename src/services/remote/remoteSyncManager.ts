@@ -14,6 +14,7 @@ import { getArtworkAsync } from '../../../modules/audio-artwork/src';
 import {
   skipToPreviousTrack,
   moveUpNext,
+  playQueueTrack,
   removeQueueItem,
   setShuffle,
   startPlaybackFromLibrary,
@@ -697,8 +698,7 @@ class RemoteSyncManager {
       }
 
       if (targetIndex >= 0) {
-        await TrackPlayer.skip(targetIndex);
-        await TrackPlayer.play();
+        await playQueueTrack(targetIndex, msg.trackId);
         return;
       }
 

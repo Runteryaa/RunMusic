@@ -16,6 +16,7 @@ import {
   computeUpcomingOrder,
   deriveQueueSections,
   findNextPlayableIndex,
+  reorderQueueOnTrackSelect,
   shuffleArray,
   smartShuffleArray,
   trackKey,
@@ -589,6 +590,98 @@ section('16) findNextPlayableIndex — çalınamayan şarkıları atlama ve dön
   check('boş kuyruk -1 döner', findNextPlayableIndex([], 0, () => false) === -1);
 }
 
+section('17) reorderQueueOnTrackSelect — önceliksiz sıradan parça seçildiğinde öncelikli sıranın korunması');
+{
+  const queue = [t('A'), t('U1'), t('U2'), t('C1'), t('C2'), t('C3')];
+  const upNextIds = ['U1', 'U2'];
+
+  // 1. Kullanıcı C2'ye (önceliksiz sıra, targetIndex: 4) dokunursa:
+  // C2 başa/mevcut konuma gelir, U1 ve U2 C2'nin HEMEN ARDINA taşınır.
+  const res1 = reorderQueueOnTrackSelect({
+    queue,
+    targetIndex: 4,
+    upNextIds,
+    clearOnSelect: false,
+  });
+
+  check(
+    'C2 dokunulduğunda yeni aktif indeks C2 olmalı',
+    res1.newStartIndex === 2 && trackKey(res1.newQueue[res1.newStartIndex]) === 'C2'
+  );
+  check(
+    'U1 ve U2 C2 ardında korunmalı (yeni sıra: [A, C1, C2, U1, U2, C3])',
+    res1.newQueue.map(trackKey).join(',') === 'A,C1,C2,U1,U2,C3'
+  );
+  check(
+    'upNextIds U1 ve U2 olarak korunmalı',
+    res1.newUpNextIds.join(',') === 'U1,U2'
+  );
+
+  // 2. Bu yeni sırada C2 bittiğinde/skiplendiğinde (indeks ilerlediğinde) ne olur?
+  // Native TrackPlayer 2'den 3'e geçer -> U1 çalar!
+  const sectionsAfterC2 = deriveQueueSections(
+    res1.newQueue,
+    res1.newStartIndex,
+    res1.newUpNextIds
+  );
+  check(
+    'deriveQueueSections: şu an çalan C2 olmalı',
+    sectionsAfterC2.current?.track.id === 'C2'
+  );
+  check(
+    'deriveQueueSections: öncelikli sırada U1 ve U2 görünmeli',
+    sectionsAfterC2.upNext.map((e) => e.track.id).join(',') === 'U1,U2'
+  );
+  check(
+    'deriveQueueSections: context bölümünde C3 yer almalı',
+    sectionsAfterC2.context.map((e) => e.track.id).join(',') === 'C3'
+  );
+
+  // 3. Kullanıcı öncelikli sıradaki U2'ye (targetIndex: 2) doğrudan dokunursa:
+  const res2 = reorderQueueOnTrackSelect({
+    queue,
+    targetIndex: 2,
+    upNextIds,
+    clearOnSelect: false,
+  });
+  check(
+    'U2 dokunulduğunda hedef indeks 2 kalmalı',
+    res2.newStartIndex === 2 && trackKey(res2.newQueue[2]) === 'U2'
+  );
+  check(
+    'U2 çalındığı için upNextIds listesinden düşmeli (kalan: [U1])',
+    res2.newUpNextIds.join(',') === 'U1'
+  );
+
+  // 4. clearOnSelect true olduğunda öncelikli sıra temizlenmeli
+  const res3 = reorderQueueOnTrackSelect({
+    queue,
+    targetIndex: 4,
+    upNextIds,
+    clearOnSelect: true,
+  });
+  check(
+    'clearOnSelect true iken upNextIds boşalmalı',
+    res3.newUpNextIds.length === 0
+  );
+  check(
+    'clearOnSelect true iken sıra değiştirilmeden hedef indekse atlanmalı',
+    res3.newStartIndex === 4 && trackKey(res3.newQueue[4]) === 'C2'
+  );
+
+  // 5. Öncelikli sıra boşken doğrudan atlama yapılmalı
+  const resEmpty = reorderQueueOnTrackSelect({
+    queue,
+    targetIndex: 3,
+    upNextIds: [],
+    clearOnSelect: false,
+  });
+  check(
+    'upNextIds boşken sıra aynen korunmalı',
+    resEmpty.newStartIndex === 3 && resEmpty.newQueue.map(trackKey).join(',') === 'A,U1,U2,C1,C2,C3'
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 section('Sonuç');
@@ -598,3 +691,4 @@ if (failures === 0) {
   console.log(`  ${failures} TEST BAŞARISIZ ❌`);
   throw new Error(`${failures} doğrulama başarısız`);
 }
+

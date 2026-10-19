@@ -72,6 +72,7 @@ import {
   getQueueSections,
   markUpNextConsumed,
   moveUpNext,
+  playQueueTrack,
   promoteContextTrackToUpNext,
   removeQueueItem,
   playHistoryTrack,
@@ -770,25 +771,14 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         return;
       }
       try {
-        const freshQueue = await TrackPlayer.getQueue();
-        let targetIndex = -1;
-        if (trackId) {
-          targetIndex = freshQueue.findIndex(
-            (t) => trackKey(t) === trackId || t.id === trackId || t.url === trackId
-          );
-        }
-        if (targetIndex < 0 && queueIndex >= 0 && queueIndex < freshQueue.length) {
-          targetIndex = queueIndex;
-        }
-        if (targetIndex >= 0) {
-          await TrackPlayer.skip(targetIndex);
-          await TrackPlayer.play();
-        }
+        await playQueueTrack(queueIndex, trackId);
+        await refreshQueue();
+        await refreshQueueSections();
       } catch (e) {
         console.warn('Queue skip failed', e);
       }
     },
-    [player.isRemote, metadataMap, artworkMap, allAssets]
+    [player.isRemote, metadataMap, artworkMap, allAssets, refreshQueue, refreshQueueSections]
   );
 
   const queueSectionLabels = useMemo(

@@ -467,3 +467,111 @@ export function buildQueueRows<T extends QueueTrackLike>(
 
   return rows;
 }
+
+export interface ReorderQueueResult<T> {
+  newQueue: T[];
+  newStartIndex: number;
+  newUpNextIds: string[];
+}
+
+/**
+ * Kuyruk içinden bir parça seçildiğinde (dokunulduğunda) kuyruk düzenini ve
+ * öncelikli sırayı (Up Next) yeniden düzenler.
+ *
+ * Spotify / Apple Music davranışı:
+ * - Eğer kullanıcı "Öncelikli Sıra"da bekleyen parçalar varken "Önceliksiz Sıra"dan
+ *   (bağlam/kütüphane) bir parçayı doğrudan başlatırsa:
+ *   Öncelikli parçalar kaybolmaz veya geçmişte kalmaz; başlatılan yeni parçanın
+ *   HEMEN ARDINA taşınırlar. Böylece çalan parça bittiğinde veya skiplendiğinde
+ *   öncelikli sıra çalmaya devam eder.
+ * - Eğer dokunulan parça zaten Öncelikli Sıra içindeyse, parça çalınır ve öncelikli
+ *   listeden tüketilir.
+ * - `clearOnSelect` true ise (kullanıcı tercihi), öncelikli sıra temizlenir.
+ */
+export function reorderQueueOnTrackSelect<T extends QueueTrackLike>(params: {
+  queue: T[];
+  targetIndex: number;
+  upNextIds: string[];
+  clearOnSelect?: boolean;
+}): ReorderQueueResult<T> {
+  const { queue, targetIndex, upNextIds, clearOnSelect = false } = params;
+
+  if (targetIndex < 0 || targetIndex >= queue.length) {
+    return {
+      newQueue: [...queue],
+      newStartIndex: Math.max(0, targetIndex),
+      newUpNextIds: [...upNextIds],
+    };
+  }
+
+  const targetTrack = queue[targetIndex];
+  const targetKey = trackKey(targetTrack);
+
+  // 1. Öncelikli sıra boşsa veya kullanıcı tercihi parçaya dokununca sırayı temizlemek ise
+  if (clearOnSelect || upNextIds.length === 0) {
+    return {
+      newQueue: [...queue],
+      newStartIndex: targetIndex,
+      newUpNextIds: clearOnSelect ? [] : [...upNextIds],
+    };
+  }
+
+  const upNextSet = new Set(upNextIds);
+
+  // 2. Dokunulan parça zaten Öncelikli Sıra (upNext) içindeyse
+  if (upNextSet.has(targetKey)) {
+    const newUpNextIds = upNextIds.filter((id) => id !== targetKey);
+    return {
+      newQueue: [...queue],
+      newStartIndex: targetIndex,
+      newUpNextIds,
+    };
+  }
+
+  // 3. Dokunulan parça Önceliksiz Sıra (bağlam/kütüphane) içindeyse:
+  // Mevcut kuyruktaki öncelikli parçaları upNextIds sırasına göre topla
+  const trackMap = new Map<string, T>();
+  for (const t of queue) {
+    const k = trackKey(t);
+    if (k && upNextSet.has(k) && !trackMap.has(k)) {
+      trackMap.set(k, t);
+    }
+  }
+
+  const preservedUpNextTracks = upNextIds
+    .map((id) => trackMap.get(id))
+    .filter((t): t is T => Boolean(t) && trackKey(t) !== targetKey);
+
+  if (preservedUpNextTracks.length === 0) {
+    return {
+      newQueue: [...queue],
+      newStartIndex: targetIndex,
+      newUpNextIds: [],
+    };
+  }
+
+  // Öncelikli parçaları mevcut kuyruktan ayıkla
+  const nonUpNextTracks = queue.filter((t) => !upNextSet.has(trackKey(t)));
+  const targetInNonUpNext = nonUpNextTracks.findIndex((t) => trackKey(t) === targetKey);
+
+  if (targetInNonUpNext < 0) {
+    return {
+      newQueue: [...queue],
+      newStartIndex: targetIndex,
+      newUpNextIds: [...upNextIds],
+    };
+  }
+
+  const before = nonUpNextTracks.slice(0, targetInNonUpNext + 1);
+  const after = nonUpNextTracks.slice(targetInNonUpNext + 1);
+
+  const newQueue = [...before, ...preservedUpNextTracks, ...after];
+  const newStartIndex = targetInNonUpNext;
+
+  return {
+    newQueue,
+    newStartIndex,
+    newUpNextIds: preservedUpNextTracks.map((t) => trackKey(t)),
+  };
+}
+

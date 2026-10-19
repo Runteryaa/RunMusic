@@ -37,6 +37,7 @@ import {
   addToQueue,
   handlePlaybackError,
   playNext,
+  playQueueTrack,
   startPlaybackFromLibrary,
   type QueueTrack,
 } from '../services/queueController';
@@ -677,8 +678,7 @@ export default function LibraryScreen() {
         }
 
         try {
-          await TrackPlayer.skip(existingIndex);
-          await TrackPlayer.play();
+          await playQueueTrack(existingIndex, selectedAsset.id);
         } catch (playErr) {
           console.warn('[index.tsx] play existing track error:', playErr);
           const queue = await TrackPlayer.getQueue();
