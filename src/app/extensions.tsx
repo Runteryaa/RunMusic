@@ -118,10 +118,36 @@ export default function ExtensionsScreen() {
           text: 'Güncellemeleri Kontrol Et',
           onPress: async () => {
             const res = await updateExtension(ext.manifest.id);
-            if (res) {
-              Alert.alert('Güncellendi', `"${res.manifest.name}" başarıyla güncellendi.`);
+            if (!res) {
+              Alert.alert(
+                'Güncelleme Başarısız',
+                'Eklenti güncellemeleri kontrol edilirken bir hata oluştu veya eklenti adresine ulaşılamadı.'
+              );
+            } else if (res.hasUpdate) {
+              Alert.alert(
+                'Güncellendi 🎉',
+                `"${res.extension.manifest.name}" başarıyla v${res.oldVersion} sürümünden v${res.newVersion} sürümüne güncellendi.`
+              );
             } else {
-              Alert.alert('Bilgi', 'Eklenti güncellenemedi veya zaten en son sürümde.');
+              Alert.alert(
+                'En Güncel Sürüm',
+                `"${res.extension.manifest.name}" zaten en güncel sürümde (v${res.extension.manifest.version}).`,
+                [
+                  { text: 'Tamam' },
+                  {
+                    text: 'Yeniden Yükle (Zorla)',
+                    onPress: async () => {
+                      const forcedRes = await updateExtension(ext.manifest.id, true);
+                      if (forcedRes) {
+                        Alert.alert(
+                          'Yenilendi',
+                          `"${forcedRes.extension.manifest.name}" önbelleği temizlendi ve yeniden yüklendi.`
+                        );
+                      }
+                    },
+                  },
+                ]
+              );
             }
           },
         },
@@ -181,6 +207,23 @@ export default function ExtensionsScreen() {
           </View>
 
           <View style={styles.webHeaderRight}>
+            {/* Hızlı Yenileme / Güncelleme Butonu */}
+            <TouchableOpacity
+              style={styles.headerActionBtn}
+              onPress={async () => {
+                const res = await updateExtension(openedExtension.manifest.id, true);
+                if (res) {
+                  Alert.alert(
+                    'Yenilendi',
+                    `"${res.extension.manifest.name}" önbelleği temizlendi ve yeniden yüklendi.`
+                  );
+                }
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="refresh-outline" size={20} color="#ffffff" />
+            </TouchableOpacity>
+
             {/* Downloads Manager Button */}
             <TouchableOpacity
               style={styles.headerActionBtn}
@@ -208,7 +251,10 @@ export default function ExtensionsScreen() {
 
         {/* WebView İçeriği */}
         <View style={styles.webContent}>
-          <ExtensionWebView key={openedExtension.manifest.id} extension={openedExtension} />
+          <ExtensionWebView
+            key={`${openedExtension.manifest.id}-${openedExtension.manifest.version}-${openedExtension.updatedAt || 0}`}
+            extension={openedExtension}
+          />
         </View>
 
         <DownloadsModal />

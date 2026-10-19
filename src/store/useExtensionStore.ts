@@ -3,6 +3,46 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { ExtensionManifest, InstalledExtension } from '../types/extension';
 
+export interface ExtensionUpdateResult {
+  extension: InstalledExtension;
+  hasUpdate: boolean;
+  oldVersion: string;
+  newVersion: string;
+}
+
+export function compareVersions(vA?: string, vB?: string): number {
+  if (!vA && !vB) return 0;
+  if (!vA) return -1;
+  if (!vB) return 1;
+
+  const cleanA = String(vA).replace(/^v/i, '').trim();
+  const cleanB = String(vB).replace(/^v/i, '').trim();
+
+  const partsA = cleanA.split('.').map((p) => parseInt(p, 10));
+  const partsB = cleanB.split('.').map((p) => parseInt(p, 10));
+
+  const maxLen = Math.max(partsA.length, partsB.length);
+  for (let i = 0; i < maxLen; i++) {
+    const numA = isNaN(partsA[i]) ? 0 : partsA[i];
+    const numB = isNaN(partsB[i]) ? 0 : partsB[i];
+    if (numA > numB) return 1;
+    if (numA < numB) return -1;
+  }
+
+  return cleanA.localeCompare(cleanB, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+export function addCacheBuster(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('_t', String(Date.now()));
+    return parsed.toString();
+  } catch {
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}_t=${Date.now()}`;
+  }
+}
+
 interface ExtensionStoreState {
   extensions: InstalledExtension[];
   activeExtensionId: string | null;
@@ -11,7 +51,7 @@ interface ExtensionStoreState {
 
   // Actions
   installExtension: (manifestUrl: string) => Promise<InstalledExtension>;
-  updateExtension: (id: string) => Promise<InstalledExtension | null>;
+  updateExtension: (id: string, force?: boolean) => Promise<ExtensionUpdateResult | null>;
   uninstallExtension: (id: string) => void;
   toggleExtension: (id: string, isEnabled?: boolean) => void;
   setActiveExtensionId: (id: string | null) => void;
@@ -51,9 +91,14 @@ export const useExtensionStore = create<ExtensionStoreState>()(
 
         let manifest: ExtensionManifest;
         try {
-          const res = await fetch(fetchUrl, {
+          const res = await fetch(addCacheBuster(fetchUrl), {
             signal: controller.signal,
-            headers: { Accept: 'application/json' },
+            headers: {
+              Accept: 'application/json',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              Pragma: 'no-cache',
+              Expires: '0',
+            },
           });
           if (!res.ok) {
             throw new Error(`HTTP error: ${res.status}`);
@@ -62,8 +107,13 @@ export const useExtensionStore = create<ExtensionStoreState>()(
         } catch (fetchErr: any) {
           // İkinci deneme: Eğer manifest.json ile denediysek ve 404 aldıysa ham URL'yi dene
           if (fetchUrl !== manifestUrl) {
-            const fallbackRes = await fetch(manifestUrl, {
-              headers: { Accept: 'application/json' },
+            const fallbackRes = await fetch(addCacheBuster(manifestUrl), {
+              headers: {
+                Accept: 'application/json',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                Pragma: 'no-cache',
+                Expires: '0',
+              },
             });
             if (fallbackRes.ok) {
               manifest = await fallbackRes.json();
@@ -124,7 +174,13 @@ export const useExtensionStore = create<ExtensionStoreState>()(
         }
 
         const now = Date.now();
-        const existing = get().extensions.find((e) => e.manifest.id === manifest.id);
+        const existing = get().extensions.find(
+          (e) =>
+            e.manifest.id === manifest.id ||
+            (e.manifestUrl && (e.manifestUrl === fetchUrl || e.manifestUrl === manifest.url)) ||
+            (e.manifest.id === 'youtube-extension' && manifest.id === 'youtube') ||
+            (e.manifest.id === 'youtube' && manifest.id === 'youtube-extension')
+        );
 
         const newExt: InstalledExtension = {
           manifest,
@@ -137,7 +193,9 @@ export const useExtensionStore = create<ExtensionStoreState>()(
         };
 
         set((state) => {
-          const filtered = state.extensions.filter((e) => e.manifest.id !== manifest.id);
+          const filtered = state.extensions.filter(
+            (e) => e.manifest.id !== manifest.id && (!existing || e.manifest.id !== existing.manifest.id)
+          );
           return {
             extensions: [...filtered, newExt],
             activeExtensionId: state.activeExtensionId || manifest.id,
@@ -148,18 +206,45 @@ export const useExtensionStore = create<ExtensionStoreState>()(
         return newExt;
       },
 
-      updateExtension: async (id: string) => {
-        const ext = get().extensions.find((e) => e.manifest.id === id);
+      updateExtension: async (id: string, force = false): Promise<ExtensionUpdateResult | null> => {
+        let ext = get().extensions.find((e) => e.manifest.id === id);
+        if (!ext) {
+          if (id === 'youtube') {
+            ext = get().extensions.find((e) => e.manifest.id === 'youtube-extension');
+          } else if (id === 'youtube-extension') {
+            ext = get().extensions.find((e) => e.manifest.id === 'youtube');
+          }
+        }
         if (!ext) return null;
 
         const updateUrl = ext.manifest.url || ext.manifestUrl;
+        if (!updateUrl) return null;
+
         try {
-          const res = await fetch(updateUrl, { headers: { Accept: 'application/json' } });
+          const res = await fetch(addCacheBuster(updateUrl), {
+            headers: {
+              Accept: 'application/json',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              Pragma: 'no-cache',
+              Expires: '0',
+            },
+          });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const manifest: ExtensionManifest = await res.json();
 
-          if (manifest.id !== id) {
-            throw new Error('Güncellenen manifest ID eşleşmiyor.');
+          if (!manifest || typeof manifest !== 'object') {
+            throw new Error('Geçersiz manifest verisi alındı.');
+          }
+
+          const isMatchingId =
+            manifest.id === ext.manifest.id ||
+            manifest.id === id ||
+            (ext.manifest.id === 'youtube-extension' && manifest.id === 'youtube') ||
+            (ext.manifest.id === 'youtube' && manifest.id === 'youtube-extension') ||
+            Boolean(ext.manifestUrl && ext.manifestUrl.includes('youtube'));
+
+          if (!isMatchingId) {
+            throw new Error(`Güncellenen manifest ID (${manifest.id}) mevcut ID (${ext.manifest.id}) ile eşleşmiyor.`);
           }
 
           const rawPage = manifest.page || manifest.entryUrl;
@@ -188,6 +273,20 @@ export const useExtensionStore = create<ExtensionStoreState>()(
             manifest.author = (manifest.author as any).name;
           }
 
+          const oldVersion = ext.manifest.version || '1.0.0';
+          const newVersion = manifest.version || '1.0.0';
+          const versionDiff = compareVersions(newVersion, oldVersion);
+          const hasNewVersion = versionDiff > 0 || (manifest.version !== ext.manifest.version);
+
+          if (!hasNewVersion && !force) {
+            return {
+              extension: ext,
+              hasUpdate: false,
+              oldVersion,
+              newVersion,
+            };
+          }
+
           const now = Date.now();
           const updated: InstalledExtension = {
             ...ext,
@@ -197,10 +296,21 @@ export const useExtensionStore = create<ExtensionStoreState>()(
           };
 
           set((state) => ({
-            extensions: state.extensions.map((e) => (e.manifest.id === id ? updated : e)),
+            extensions: state.extensions
+              .filter((e) => e.manifest.id !== manifest.id && e.manifest.id !== ext.manifest.id && e.manifest.id !== id)
+              .concat(updated),
+            activeExtensionId:
+              state.activeExtensionId === ext.manifest.id || state.activeExtensionId === id
+                ? manifest.id
+                : state.activeExtensionId,
           }));
 
-          return updated;
+          return {
+            extension: updated,
+            hasUpdate: true,
+            oldVersion,
+            newVersion,
+          };
         } catch (err) {
           console.warn('[useExtensionStore] Güncelleme hatası:', err);
           return null;

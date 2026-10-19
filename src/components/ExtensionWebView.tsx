@@ -57,6 +57,29 @@ export const ExtensionWebView: React.FC<ExtensionWebViewProps> = ({ extension })
     });
   };
 
+  const webSourceUri = useMemo(() => {
+    const rawUrl = extension.manifest.page || extension.manifest.entryUrl || '';
+    if (!rawUrl) return '';
+    const updateTime = extension.updatedAt || extension.installedAt || 0;
+    try {
+      const parsed = new URL(rawUrl);
+      parsed.searchParams.set('v', extension.manifest.version || '1.0.0');
+      if (updateTime) {
+        parsed.searchParams.set('_t', String(updateTime));
+      }
+      return parsed.toString();
+    } catch {
+      const sep = rawUrl.includes('?') ? '&' : '?';
+      return `${rawUrl}${sep}v=${extension.manifest.version || '1.0.0'}&_t=${updateTime}`;
+    }
+  }, [
+    extension.manifest.page,
+    extension.manifest.entryUrl,
+    extension.manifest.version,
+    extension.updatedAt,
+    extension.installedAt,
+  ]);
+
   const handleReload = () => {
     setHasError(false);
     setIsLoading(true);
@@ -67,8 +90,9 @@ export const ExtensionWebView: React.FC<ExtensionWebViewProps> = ({ extension })
   return (
     <View style={styles.container}>
       <WebView
+        key={webSourceUri}
         ref={webViewRef}
-        source={{ uri: extension.manifest.page || extension.manifest.entryUrl || '' }}
+        source={{ uri: webSourceUri }}
         injectedJavaScriptBeforeContentLoaded={injectedJS}
         onMessage={handleMessage}
         onLoadStart={() => {
