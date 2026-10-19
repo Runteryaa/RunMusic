@@ -225,6 +225,42 @@ export function deriveQueueSections<T extends QueueTrackLike>(
 }
 
 /**
+ * Verilen kuyrukta, belirtilen geçerli indeksten sonraki ilk çalınabilir parçanın indeksini bulur.
+ * Çalınamaz parçalar listesinde olan öğeleri atlar.
+ *
+ * isQueueRepeat: true ise (RepeatMode.Queue) kuyruk sonuna gelindiğinde başa sararak (modulo) arar.
+ * isQueueRepeat: false ise (RepeatMode.Off / RepeatMode.Track) yalnızca ileriye doğru arar.
+ *
+ * Eğer kuyruktaki tüm parçalar çalınamaz durumdaysa veya ileriye doğru başka çalınabilir parça kalmadıysa -1 döner.
+ */
+export function findNextPlayableIndex<T extends QueueTrackLike>(
+  queue: T[],
+  currentIndex: number,
+  isUnplayable: (track: T) => boolean,
+  isQueueRepeat: boolean = false
+): number {
+  if (!queue || queue.length === 0) return -1;
+  const len = queue.length;
+
+  if (isQueueRepeat) {
+    for (let offset = 1; offset < len; offset++) {
+      const idx = (currentIndex + offset) % len;
+      if (!isUnplayable(queue[idx])) {
+        return idx;
+      }
+    }
+  } else {
+    for (let idx = Math.max(0, currentIndex + 1); idx < len; idx++) {
+      if (!isUnplayable(queue[idx])) {
+        return idx;
+      }
+    }
+  }
+
+  return -1;
+}
+
+/**
  * Çalma sırasını üretir.
  *
  * Shuffle kapalıyken bağlamın kendi sırası korunur. Shuffle açıkken hedef parça

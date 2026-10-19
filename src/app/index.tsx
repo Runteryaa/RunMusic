@@ -33,6 +33,7 @@ import { getBatchMetadataAsync, getArtworkAsync } from '../../modules/audio-artw
 import { cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import {
   addToQueue,
+  handlePlaybackError,
   playNext,
   startPlaybackFromLibrary,
   type QueueTrack,
@@ -562,8 +563,14 @@ export default function LibraryScreen() {
       // önceki liste düzeninde kalır ve "shuffle seçili ama sıra karışmıyor"
       // durumu ortaya çıkar.
       if (existingIndex >= 0 && !isShuffle) {
-        await TrackPlayer.skip(existingIndex);
-        await TrackPlayer.play();
+        try {
+          await TrackPlayer.skip(existingIndex);
+          await TrackPlayer.play();
+        } catch (playErr) {
+          console.warn('[index.tsx] play existing track error:', playErr);
+          const queue = await TrackPlayer.getQueue();
+          await handlePlaybackError(playErr, queue[existingIndex], existingIndex);
+        }
         openFullscreenPlayer();
 
         if (!targetArtwork) {

@@ -15,6 +15,7 @@ import {
   buildQueueRows,
   computeUpcomingOrder,
   deriveQueueSections,
+  findNextPlayableIndex,
   shuffleArray,
   smartShuffleArray,
   trackKey,
@@ -544,6 +545,38 @@ section('15) buildQueueRows — AKILLI KARIŞIK başlığı');
     'klasik karıştırmada başlık KARIŞIK içerir',
     classicSection !== undefined && classicSection.title.includes('KARIŞIK') && !classicSection.title.includes('AKILLI')
   );
+}
+
+section('16) findNextPlayableIndex — çalınamayan şarkıları atlama ve döngü koruması');
+{
+  const queue = [t('1'), t('2'), t('3'), t('4')];
+
+  // 1. Basit atlama: index 0 bozuksa index 1'e geçer
+  const next1 = findNextPlayableIndex(queue, 0, (track) => track.id === '1');
+  check('bozuk ilk parçadan sonraki ilk çalınabilir parçaya geçer (1)', next1 === 1);
+
+  // 2. Ardışık bozuk parçalar: index 0 ve 1 bozuksa index 2'ye geçer
+  const next2 = findNextPlayableIndex(queue, 0, (track) => track.id === '1' || track.id === '2');
+  check('peş peşe bozuk parçaları atlayıp çalınabilir olanı bulur (2)', next2 === 2);
+
+  // 3. Kuyruk sonu ve tüm parçalar bozuk: -1 döner (pause güvencesi)
+  const nextAllBroken = findNextPlayableIndex(queue, 0, () => true);
+  check('tüm parçalar bozuksa -1 döner (sonsuz döngüye girmez)', nextAllBroken === -1);
+
+  // 4. Kuyruk sonundaki parça bozuksa (RepeatMode.Off): -1 döner
+  const nextAtEnd = findNextPlayableIndex(queue, 3, () => false, false);
+  check('kuyruk sonunda ileride başka parça yoksa -1 döner', nextAtEnd === -1);
+
+  // 5. RepeatMode.Queue açıkken kuyruk sonundaki parça bozuksa: başa sarıp arar
+  const nextRepeatQueue = findNextPlayableIndex(queue, 3, (track) => track.id === '1' || track.id === '4', true);
+  check('RepeatMode.Queue: kuyruk sonundan başa sararak ilk çalınabilir parçayı bulur (1)', nextRepeatQueue === 1);
+
+  // 6. RepeatMode.Queue açık ama tüm parçalar bozuksa: -1 döner (sonsuz döngü engeli)
+  const nextRepeatAllBroken = findNextPlayableIndex(queue, 2, () => true, true);
+  check('RepeatMode.Queue: tüm parçalar bozuksa sonsuz modulo döngüsüne girmeden -1 döner', nextRepeatAllBroken === -1);
+
+  // 7. Boş veya geçersiz kuyruk: -1 döner
+  check('boş kuyruk -1 döner', findNextPlayableIndex([], 0, () => false) === -1);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

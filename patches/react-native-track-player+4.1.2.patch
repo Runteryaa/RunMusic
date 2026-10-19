@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
-index b2409a0..c9669d7 100644
+index b2409a0..35dccfb 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 @@ -251,7 +251,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
@@ -331,7 +331,7 @@ index b2409a0..c9669d7 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          try {
-@@ -569,61 +570,61 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -569,61 +570,63 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
          } catch (exception: Exception) {
              rejectWithException(callback, exception)
          }
@@ -352,14 +352,17 @@ index b2409a0..c9669d7 100644
 -    fun getActiveTrack(callback: Promise) = scope.launch {
 +    fun getActiveTrack(callback: Promise) { scope.launch {
          if (verifyServiceBoundOrReject(callback)) return@launch
++        val index = musicService.getCurrentTrackIndex()
          callback.resolve(
-             if (musicService.tracks.isEmpty()) null
+-            if (musicService.tracks.isEmpty()) null
 -            else Arguments.fromBundle(
 -                musicService.tracks[musicService.getCurrentTrackIndex()].originalItem
 -            )
-+            else musicService.tracks[musicService.getCurrentTrackIndex()].originalItem?.let {
-+                Arguments.fromBundle(it)
-+            }
++            if (0 <= index && index < musicService.tracks.size) {
++                musicService.tracks[index].originalItem?.let {
++                    Arguments.fromBundle(it)
++                }
++            } else null
          )
 -    }
 +    } }
@@ -412,7 +415,7 @@ index b2409a0..c9669d7 100644
 +    } }
  }
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
-index afa6b0f..6f91445 100644
+index afa6b0f..682a1a1 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
 @@ -30,8 +30,10 @@ import com.doublesymmetry.trackplayer.module.MusicEvents.Companion.METADATA_PAYL
@@ -427,7 +430,23 @@ index afa6b0f..6f91445 100644
  import com.facebook.react.modules.core.DeviceEventManagerModule
  import com.google.android.exoplayer2.ui.R as ExoPlayerR
  import kotlinx.coroutines.*
-@@ -739,9 +741,25 @@ class MusicService : HeadlessJsTaskService() {
+@@ -461,9 +463,12 @@ class MusicService : HeadlessJsTaskService() {
+         val b = Bundle()
+         b.putDouble("lastPosition", oldPosition)
+         if (tracks.isNotEmpty()) {
+-            b.putInt("index", player.currentIndex)
+-            b.putBundle("track", tracks[player.currentIndex].originalItem)
+-            if (previousIndex != null) {
++            val currentIndex = player.currentIndex
++            if (0 <= currentIndex && currentIndex < tracks.size) {
++                b.putInt("index", currentIndex)
++                b.putBundle("track", tracks[currentIndex].originalItem)
++            }
++            if (previousIndex != null && 0 <= previousIndex && previousIndex < tracks.size) {
+                 b.putInt("lastIndex", previousIndex)
+                 b.putBundle("lastTrack", tracks[previousIndex].originalItem)
+             }
+@@ -739,9 +744,25 @@ class MusicService : HeadlessJsTaskService() {
          return bundle
      }
  
@@ -454,7 +473,7 @@ index afa6b0f..6f91445 100644
              ?.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
              ?.emit(event, data?.let { Arguments.fromBundle(it) })
      }
-@@ -751,7 +769,7 @@ class MusicService : HeadlessJsTaskService() {
+@@ -751,7 +772,7 @@ class MusicService : HeadlessJsTaskService() {
          val payload = Arguments.createArray()
          data.forEach { payload.pushMap(Arguments.fromBundle(it)) }
  

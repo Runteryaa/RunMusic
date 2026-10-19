@@ -308,6 +308,7 @@ const fullPersistedState = {
   isShuffle: true,
   repeatMode: 2,
   hiddenTrackIds: ['asset-3', 'asset-7'],
+  unplayableTrackIds: ['asset-3'],
   artworkMap: Object.fromEntries(
     Array.from({ length: 200 }, (_, i) => [`asset-${i}`, `file:///art/${i}.jpg`])
   ),
@@ -335,6 +336,10 @@ check('repeatMode korundu', reduced.repeatMode === 2);
 check(
   'gizlenen şarkılar (hiddenTrackIds) korundu',
   JSON.stringify(reduced.hiddenTrackIds) === JSON.stringify(fullPersistedState.hiddenTrackIds)
+);
+check(
+  'çalınamayan şarkılar (unplayableTrackIds) korundu',
+  JSON.stringify(reduced.unplayableTrackIds) === JSON.stringify(fullPersistedState.unplayableTrackIds)
 );
 check(
   'meta veriler (metadataMap) korundu',
@@ -485,6 +490,41 @@ const incomingPrefsV8 = (v7State.preferences && typeof v7State.preferences === '
 
 const isDevModeV8 = Boolean(incomingPrefsV8.isDevModeActive);
 check('eski kayıtlarda dev mode varsayılan olarak kapalıdır (isDevModeActive = false)', isDevModeV8 === false);
+
+section('14) v8 -> v9 migrasyonu ve unplayableTrackIds güvencesi');
+
+const v8StateWithoutUnplayable = {
+  hiddenTrackIds: ['asset-1'],
+  // unplayableTrackIds eski kayıtlarda yok
+};
+
+const incomingV9 = (v8StateWithoutUnplayable && typeof v8StateWithoutUnplayable === 'object')
+  ? (v8StateWithoutUnplayable as Record<string, any>)
+  : {};
+
+const unplayableTrackIdsV9 = Array.isArray(incomingV9.unplayableTrackIds)
+  ? incomingV9.unplayableTrackIds
+  : [];
+
+check('eski kayıtlarda unplayableTrackIds varsayılan olarak [] atanıyor', Array.isArray(unplayableTrackIdsV9) && unplayableTrackIdsV9.length === 0);
+
+const v9StateWithUnplayable = {
+  unplayableTrackIds: ['broken-1', 'broken-2'],
+  hiddenTrackIds: ['broken-1', 'broken-2'],
+};
+const migratedV9Unplayable = Array.isArray(v9StateWithUnplayable.unplayableTrackIds)
+  ? v9StateWithUnplayable.unplayableTrackIds
+  : [];
+
+check('mevcut unplayableTrackIds kayıtları migrasyonda korunuyor', migratedV9Unplayable.length === 2 && migratedV9Unplayable[0] === 'broken-1');
+
+const malformedV9 = {
+  unplayableTrackIds: 'not-an-array',
+};
+const malformedMigrated = Array.isArray((malformedV9 as any).unplayableTrackIds)
+  ? (malformedV9 as any).unplayableTrackIds
+  : [];
+check('bozuk unplayableTrackIds girdisi [] olarak temizleniyor', Array.isArray(malformedMigrated) && malformedMigrated.length === 0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 

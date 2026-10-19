@@ -10,7 +10,11 @@ import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
-import { skipToPreviousTrack, setShuffle as setLocalShuffle } from '../services/queueController';
+import {
+  skipToPreviousTrack,
+  setShuffle as setLocalShuffle,
+  handlePlaybackError,
+} from '../services/queueController';
 import { findLyricsInCache } from '../services/persistSanitize';
 import { parseAnySyncedLyrics, getLyricsCacheKeys, type LyricLine } from '../services/lyricsService';
 import type { RemoteTrackSummary, RemoteLyricsSummary } from '../services/remote/remoteTypes';
@@ -152,18 +156,32 @@ export function useActivePlayer(): ActivePlayerState {
   // LOCAL CONTROLS & STATE
   // ==========================================
   const localPlay = useCallback(async () => {
-    await TrackPlayer.play();
+    try {
+      await TrackPlayer.play();
+    } catch (err) {
+      console.warn('[useActivePlayer] localPlay error:', err);
+      await handlePlaybackError(err);
+    }
   }, []);
 
   const localPause = useCallback(async () => {
-    await TrackPlayer.pause();
+    try {
+      await TrackPlayer.pause();
+    } catch {
+      // ignore
+    }
   }, []);
 
   const localTogglePlayPause = useCallback(async () => {
-    if (localIsPlaying) {
-      await TrackPlayer.pause();
-    } else {
-      await TrackPlayer.play();
+    try {
+      if (localIsPlaying) {
+        await TrackPlayer.pause();
+      } else {
+        await TrackPlayer.play();
+      }
+    } catch (err) {
+      console.warn('[useActivePlayer] localTogglePlayPause error:', err);
+      await handlePlaybackError(err);
     }
   }, [localIsPlaying]);
 
@@ -196,10 +214,11 @@ export function useActivePlayer(): ActivePlayerState {
           useThemeStore.getState().updateThemeFromArtwork(art);
         }
       }
-    } catch {
-      // ignore
+      await TrackPlayer.skipToNext();
+    } catch (err) {
+      console.warn('[useActivePlayer] localSkipNext error:', err);
+      await handlePlaybackError(err);
     }
-    await TrackPlayer.skipToNext();
   }, [localRepeatMode]);
 
   const localSkipPrevious = useCallback(async () => {
@@ -236,10 +255,11 @@ export function useActivePlayer(): ActivePlayerState {
           useThemeStore.getState().updateThemeFromArtwork(art);
         }
       }
-    } catch {
-      // ignore
+      await skipToPreviousTrack();
+    } catch (err) {
+      console.warn('[useActivePlayer] localSkipPrevious error:', err);
+      await handlePlaybackError(err);
     }
-    await skipToPreviousTrack();
   }, [localRepeatMode]);
 
   const localSeekTo = useCallback(async (position: number) => {

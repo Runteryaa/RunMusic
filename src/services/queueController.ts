@@ -7,6 +7,7 @@ import {
   buildQueueRows,
   computeUpcomingOrder,
   deriveQueueSections,
+  findNextPlayableIndex,
   shuffleArray,
   smartShuffleArray,
   trackKey,
@@ -20,6 +21,7 @@ export {
   buildQueueRows,
   computeUpcomingOrder,
   deriveQueueSections,
+  findNextPlayableIndex,
   shuffleArray,
   smartShuffleArray,
   trackKey,
@@ -246,12 +248,19 @@ export async function startPlaybackFromLibrary(params: {
     .filter((t): t is QueueTrack => Boolean(t));
 
   const startIndex = Math.max(0, orderIds.indexOf(startId));
+  const startTrack = ordered[startIndex];
+  recordAttemptedTrack(startTrack, startIndex);
 
   await TrackPlayer.setQueue(ordered as Track[]);
   if (startIndex > 0) {
     await TrackPlayer.skip(startIndex);
   }
-  await TrackPlayer.play();
+  try {
+    await TrackPlayer.play();
+  } catch (e) {
+    console.warn('[queueController] startPlaybackFromLibrary play error:', e);
+    await handlePlaybackError(e, startTrack, startIndex);
+  }
 
   // TEK `set`: zustand persist her set çağrısında TÜM store'u serileştirip
   // diske yazdığı için iki ayrı action çağırmak gereksiz iki yazım demekti.
@@ -515,4 +524,198 @@ export function markUpNextConsumed(track: { id?: string; url?: string } | null |
   if (ids.includes(key)) {
     useStore.getState().setUpNextIds(ids.filter((id) => id !== key));
   }
+}
+
+/**
+ * Parça nesnesinden (veya id/url) kütüphanedeki kanonik MediaLibrary Asset ID'sini bulur.
+ */
+export function resolveTrackId(
+  track: Track | QueueTrack | { id?: string; url?: string } | null | undefined,
+  allAssets = useStore.getState().allAssets
+): string {
+  if (!track) return '';
+  const rawId = String(track.id ?? track.url ?? '').trim();
+  const rawUrl = String(track.url ?? '').trim();
+  if (!rawId && !rawUrl) return '';
+
+  const matched = allAssets.find(
+    (a) => a.id === rawId || a.uri === rawId || (rawUrl && a.uri === rawUrl)
+  );
+  return matched ? matched.id : rawId;
+}
+
+/**
+ * Parçanın çalınamaz olarak işaretlenip işaretlenmediğini kontrol eder.
+ */
+export function isTrackInUnplayable(
+  track: Track | QueueTrack | { id?: string; url?: string } | null | undefined,
+  unplayableIds: string[],
+  allAssets = useStore.getState().allAssets
+): boolean {
+  if (!track) return true;
+  const canonicalId = resolveTrackId(track, allAssets);
+  if (canonicalId && unplayableIds.includes(canonicalId)) return true;
+
+  const rawId = String(track.id ?? '').trim();
+  if (rawId && unplayableIds.includes(rawId)) return true;
+
+  const rawUrl = String(track.url ?? '').trim();
+  if (rawUrl && unplayableIds.includes(rawUrl)) return true;
+
+  return false;
+}
+
+let lastAttemptedTrack: Track | QueueTrack | null = null;
+let lastAttemptedIndex: number = -1;
+
+export function recordAttemptedTrack(
+  track: Track | QueueTrack | { id?: string; url?: string } | null | undefined,
+  index?: number
+): void {
+  if (track) {
+    lastAttemptedTrack = track as Track | QueueTrack;
+  }
+  if (typeof index === 'number' && index >= 0) {
+    lastAttemptedIndex = index;
+  }
+}
+
+export function clearSessionFailedTracks(): void {
+  // Geriye dönük uyumluluk için dışa aktarım korunur
+}
+
+let errorHandlingQueue = Promise.resolve();
+
+async function processPlaybackError(
+  error?: unknown,
+  failedTrackHint?: Track | QueueTrack | null,
+  failedIndexHint?: number
+): Promise<void> {
+  try {
+    const queue = await TrackPlayer.getQueue();
+    if (!queue || queue.length === 0) {
+      await TrackPlayer.pause();
+      return;
+    }
+
+    const activeTrack = await TrackPlayer.getActiveTrack().catch(() => null);
+    const rawIndex = await TrackPlayer.getActiveTrackIndex().catch(() => null);
+    const activeIndex =
+      typeof failedIndexHint === 'number' && failedIndexHint >= 0
+        ? failedIndexHint
+        : typeof rawIndex === 'number' && rawIndex >= 0
+        ? rawIndex
+        : lastAttemptedIndex >= 0 && lastAttemptedIndex < queue.length
+        ? lastAttemptedIndex
+        : 0;
+    const currentTrack =
+      failedTrackHint ||
+      activeTrack ||
+      lastAttemptedTrack ||
+      (activeIndex >= 0 && activeIndex < queue.length ? queue[activeIndex] : null);
+
+    const allAssets = useStore.getState().allAssets;
+    const failedTrackId = resolveTrackId(currentTrack, allAssets);
+    const failedKey = trackKey(currentTrack);
+    const idToMark = failedTrackId || failedKey;
+
+    const store = useStore.getState();
+
+    // Mükerrer / Stale Hata Koruması:
+    // Eğer bu parça zaten çalınamaz olarak işaretlenmişse:
+    if (idToMark && store.unplayableTrackIds.includes(idToMark)) {
+      // Eğer oynatıcı şu an bu parçada DEĞİLSE (yani önceki bir skip başarılı olmuş ve
+      // oynatıcı başka bir parçaya geçmişse), gelen bu hata eski parçadan kalan gecikmiş
+      // mükerrer bir hatadır. Yeni ve masum parçayı etkilememek için hemen çık.
+      const nowActive = await TrackPlayer.getActiveTrack();
+      const nowActiveKey = trackKey(nowActive);
+      const nowActiveId = resolveTrackId(nowActive, allAssets);
+      if (
+        (nowActiveKey && nowActiveKey !== failedKey && nowActiveKey !== failedTrackId) ||
+        (nowActiveId && nowActiveId !== failedTrackId && nowActiveId !== failedKey)
+      ) {
+        return;
+      }
+    }
+
+    // Şarkıyı sessizce çalınamaz ve gizli olarak işaretle (kütüphaneden anında kalkar)
+    if (idToMark) {
+      store.markTrackUnplayable(idToMark);
+    }
+
+    // Başarısız olan parçanın kuyruktaki tam indeksini belirle
+    let currentIndex = -1;
+    if (typeof failedIndexHint === 'number' && failedIndexHint >= 0 && failedIndexHint < queue.length) {
+      currentIndex = failedIndexHint;
+    } else if (failedKey) {
+      currentIndex = queue.findIndex(
+        (t) => trackKey(t) === failedKey || (failedTrackId && resolveTrackId(t, allAssets) === failedTrackId)
+      );
+    }
+    if (currentIndex === -1) {
+      currentIndex = activeIndex >= 0 && activeIndex < queue.length ? activeIndex : 0;
+    }
+
+    const currentUnplayableIds = useStore.getState().unplayableTrackIds;
+    const isTrackUnplayable = (t: Track): boolean => {
+      if (!t) return true;
+      return isTrackInUnplayable(t, currentUnplayableIds, allAssets);
+    };
+
+    const isQueueRepeat = store.repeatMode === RepeatMode.Queue;
+    const nextPlayableIndex = findNextPlayableIndex(
+      queue,
+      currentIndex,
+      isTrackUnplayable,
+      isQueueRepeat
+    );
+
+    // Güvenlik Önlemi: Kuyruk tükendi veya tüm parçalar bozuksa sonsuz döngüye girmeden dur
+    if (nextPlayableIndex === -1) {
+      console.warn('[queueController] Kuyruk tükendi veya çalınabilir parça kalmadı. Oynatma durduruluyor.');
+      await TrackPlayer.pause();
+      return;
+    }
+
+    // Bildirim veya toast çıkarmadan SESSİZCE sıradaki parçaya atla
+    try {
+      await TrackPlayer.skip(nextPlayableIndex);
+      await TrackPlayer.play();
+    } catch (skipErr) {
+      console.warn('[queueController] Sonraki parçaya geçiş hatası:', skipErr);
+      const failedCandidate = queue[nextPlayableIndex];
+      if (failedCandidate) {
+        const cId = resolveTrackId(failedCandidate, allAssets) || trackKey(failedCandidate);
+        if (cId) {
+          useStore.getState().markTrackUnplayable(cId);
+        }
+      }
+      // Rekürsif devam: bir sonraki parçayı dene
+      await processPlaybackError(skipErr, failedCandidate, nextPlayableIndex);
+    }
+  } catch (err) {
+    console.warn('[queueController] processPlaybackError yakalanan hata:', err);
+    try {
+      await TrackPlayer.pause();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Çalma hatası meydana geldiğinde (Event.PlaybackError veya play() istisnası) çağrılır.
+ * Eşzamanlı çağrıları Promise zinciriyle sıraya sokarak yarış durumlarını ve mükerrer atlamaları önler.
+ */
+export function handlePlaybackError(
+  error?: unknown,
+  failedTrackHint?: Track | QueueTrack | null,
+  failedIndexHint?: number
+): Promise<void> {
+  errorHandlingQueue = errorHandlingQueue
+    .then(() => processPlaybackError(error, failedTrackHint, failedIndexHint))
+    .catch((err) => {
+      console.warn('[queueController] handlePlaybackError zincir hatası:', err);
+    });
+  return errorHandlingQueue;
 }

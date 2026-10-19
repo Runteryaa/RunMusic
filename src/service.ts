@@ -5,6 +5,9 @@ import {
   recordTrackToHistory,
   skipToPreviousTrack,
   getIsNavigatingHistory,
+  handlePlaybackError,
+  clearSessionFailedTracks,
+  recordAttemptedTrack,
 } from './services/queueController';
 import { useThemeStore } from './store/useThemeStore';
 import { useRemoteConnectStore } from './store/useRemoteConnectStore';
@@ -63,6 +66,9 @@ export default async function playbackService() {
       await TrackPlayer.play();
     } catch (e) {
       console.warn('RemotePlay error in service:', e);
+      const activeTrack = await TrackPlayer.getActiveTrack();
+      const activeIndex = await TrackPlayer.getActiveTrackIndex();
+      await handlePlaybackError(e, activeTrack, activeIndex);
     }
   });
   TrackPlayer.addEventListener(Event.RemotePause, async () => {
@@ -90,7 +96,19 @@ export default async function playbackService() {
       await TrackPlayer.play();
     } catch (e) {
       console.warn('RemoteNext error in service:', e);
+      const activeTrack = await TrackPlayer.getActiveTrack();
+      const activeIndex = await TrackPlayer.getActiveTrackIndex();
+      await handlePlaybackError(e, activeTrack, activeIndex);
     }
+  });
+  TrackPlayer.addEventListener(Event.PlaybackError, async (event) => {
+    if (useRemoteConnectStore.getState().isRemoteConnected()) {
+      return;
+    }
+    console.warn('[playbackService] PlaybackError event received:', event);
+    const activeTrack = await TrackPlayer.getActiveTrack();
+    const activeIndex = await TrackPlayer.getActiveTrackIndex();
+    await handlePlaybackError(event, activeTrack, activeIndex);
   });
   TrackPlayer.addEventListener(Event.RemotePrevious, async () => {
     if (useRemoteConnectStore.getState().isRemoteConnected()) {
@@ -136,6 +154,8 @@ export default async function playbackService() {
         recordTrackToHistory(event.lastTrack);
       }
       if (event.track && typeof event.index === 'number') {
+        clearSessionFailedTracks();
+        recordAttemptedTrack(event.track, event.index);
         const trackId = String(event.track.id ?? event.track.url ?? '');
         await saveLastPlayback(
           {
@@ -171,8 +191,20 @@ export default async function playbackService() {
     }
   });
 
-  // Çalma durumu değiştiğinde (play/pause) widget simgesini güncelle
+  // Çalma durumu değiştiğinde (play/pause/error)
   TrackPlayer.addEventListener(Event.PlaybackState, async (event) => {
+    if (event.state === State.Playing) {
+      clearSessionFailedTracks();
+    }
+    if (event.state === State.Error) {
+      if (useRemoteConnectStore.getState().isRemoteConnected()) {
+        return;
+      }
+      console.warn('[playbackService] PlaybackState is Error:', event);
+      const activeTrack = await TrackPlayer.getActiveTrack().catch(() => null);
+      const activeIndex = await TrackPlayer.getActiveTrackIndex().catch(() => null);
+      await handlePlaybackError(event, activeTrack, typeof activeIndex === 'number' ? activeIndex : undefined);
+    }
     if (MusicWidgetModule && MusicWidgetModule.updateWidget) {
       try {
         const active = await TrackPlayer.getActiveTrack();

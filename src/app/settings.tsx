@@ -56,6 +56,7 @@ export default function SettingsScreen() {
   const unlockDynamicColor = useStore((s) => s.unlockDynamicColor);
   const resetPreferences = useStore((s) => s.resetPreferences);
   const hiddenTrackIds = useStore((s) => s.hiddenTrackIds);
+  const unplayableTrackIds = useStore((s) => s.unplayableTrackIds);
   const allAssets = useStore((s) => s.allAssets);
   const unhideTrack = useStore((s) => s.unhideTrack);
   const unhideAllTracks = useStore((s) => s.unhideAllTracks);
@@ -125,9 +126,10 @@ export default function SettingsScreen() {
       let title = rawTitle
         ? cleanDisplayTitle(rawTitle, artist || undefined)
         : t('settings.track_fallback', { id });
-      return { id, asset, title, duration: asset?.duration };
+      const isUnplayable = unplayableTrackIds.includes(id);
+      return { id, asset, title, artist, duration: asset?.duration, isUnplayable };
     });
-  }, [allAssets, hiddenTrackIds, metadataMap, t]);
+  }, [allAssets, hiddenTrackIds, metadataMap, unplayableTrackIds, t]);
 
   const cachedLyricsCount = useMemo(() => {
     // Alternatif anahtarlar kanonik kayda işaretçidir ({ ref }). Gerçek kayıtlı
@@ -942,17 +944,35 @@ export default function SettingsScreen() {
                       iconSize={18}
                     />
                     <View style={styles.hiddenTrackInfo}>
-                      <Text style={styles.hiddenTrackTitle} numberOfLines={1}>
-                        {item.title}
-                      </Text>
-                      {item.duration != null ? (
-                        <Text style={styles.smallMuted}>
-                          {Math.floor(item.duration / 60)}:
-                          {Math.floor(item.duration % 60)
-                            .toString()
-                            .padStart(2, '0')}
+                      <View style={styles.hiddenTrackTitleRow}>
+                        <Text style={styles.hiddenTrackTitle} numberOfLines={1}>
+                          {item.title}
                         </Text>
-                      ) : null}
+                        {item.isUnplayable ? (
+                          <View style={styles.unplayableBadge}>
+                            <Ionicons name="warning" size={11} color="#f59e0b" style={{ marginRight: 3 }} />
+                            <Text style={styles.unplayableBadgeText}>
+                              {t('settings.unplayable_badge')}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <View style={styles.hiddenTrackSubtitleRow}>
+                        {item.artist ? (
+                          <Text style={styles.smallMuted} numberOfLines={1}>
+                            {item.artist}
+                            {item.duration != null ? ' • ' : ''}
+                          </Text>
+                        ) : null}
+                        {item.duration != null ? (
+                          <Text style={styles.smallMuted}>
+                            {Math.floor(item.duration / 60)}:
+                            {Math.floor(item.duration % 60)
+                              .toString()
+                              .padStart(2, '0')}
+                          </Text>
+                        ) : null}
+                      </View>
                     </View>
                     <View style={styles.hiddenTrackActions}>
                       <TouchableOpacity
@@ -1486,11 +1506,38 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     marginRight: 8,
   },
+  hiddenTrackTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
   hiddenTrackTitle: {
     fontSize: 14,
     fontWeight: '600',
     color: '#ffffff',
-    marginBottom: 2,
+    flexShrink: 1,
+  },
+  hiddenTrackSubtitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  unplayableBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    flexShrink: 0,
+  },
+  unplayableBadgeText: {
+    color: '#f59e0b',
+    fontSize: 10,
+    fontWeight: '700',
   },
   emptyState: {
     paddingVertical: 24,

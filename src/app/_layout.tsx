@@ -11,7 +11,7 @@ import playbackService from '../service';
 
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
-import { restoreQueueIfNeeded, syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
+import { restoreQueueIfNeeded, syncAppKilledPlaybackBehavior, attachGlobalPlayerEventListeners } from '../services/playerBootstrap';
 import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
@@ -274,6 +274,7 @@ export default function TabLayout() {
         }
 
         // Açılışta tam kuyruğu, çalma konumunu ve durumunu geri yükle
+        attachGlobalPlayerEventListeners();
         await restoreQueueIfNeeded();
 
         // Widget veya deep link ile arka planda başlatıldıysa

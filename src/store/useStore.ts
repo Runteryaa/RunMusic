@@ -125,6 +125,9 @@ interface AppState {
   unhideTrack: (id: string) => void;
   unhideAllTracks: () => void;
 
+  unplayableTrackIds: string[];
+  markTrackUnplayable: (id: string) => void;
+
   artworkMap: Record<string, string>;
   setArtwork: (id: string, uri: string) => void;
   setBatchArtworks: (artworks: Record<string, string>) => void;
@@ -192,7 +195,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 8;
+const PERSIST_VERSION = 9;
 
 export const useStore = create<AppState>()(
   persist(
@@ -355,24 +358,52 @@ export const useStore = create<AppState>()(
           const hiddenTrackIds = state.hiddenTrackIds.includes(id)
             ? state.hiddenTrackIds
             : [...state.hiddenTrackIds, id];
+          const baseAssets = state.allAssets.length > 0 ? state.allAssets : state.library;
           return {
             hiddenTrackIds,
-            library: state.allAssets.filter((a) => !hiddenTrackIds.includes(a.id)),
+            library: baseAssets.filter((a) => !hiddenTrackIds.includes(a.id)),
           };
         }),
       unhideTrack: (id) =>
         set((state) => {
           const hiddenTrackIds = state.hiddenTrackIds.filter((x) => x !== id);
+          const unplayableTrackIds = state.unplayableTrackIds.filter((x) => x !== id);
+          const baseAssets = state.allAssets.length > 0 ? state.allAssets : state.library;
           return {
             hiddenTrackIds,
-            library: state.allAssets.filter((a) => !hiddenTrackIds.includes(a.id)),
+            unplayableTrackIds,
+            library: baseAssets.filter((a) => !hiddenTrackIds.includes(a.id)),
           };
         }),
       unhideAllTracks: () =>
-        set((state) => ({
-          hiddenTrackIds: [],
-          library: state.allAssets,
-        })),
+        set((state) => {
+          const baseAssets = state.allAssets.length > 0 ? state.allAssets : state.library;
+          return {
+            hiddenTrackIds: [],
+            unplayableTrackIds: [],
+            library: baseAssets,
+          };
+        }),
+
+      unplayableTrackIds: [],
+      markTrackUnplayable: (id) =>
+        set((state) => {
+          if (!id) return state;
+          const unplayableTrackIds = state.unplayableTrackIds.includes(id)
+            ? state.unplayableTrackIds
+            : [...state.unplayableTrackIds, id];
+          const hiddenTrackIds = state.hiddenTrackIds.includes(id)
+            ? state.hiddenTrackIds
+            : [...state.hiddenTrackIds, id];
+          const baseAssets = state.allAssets.length > 0 ? state.allAssets : state.library;
+          return {
+            unplayableTrackIds,
+            hiddenTrackIds,
+            contextIds: state.contextIds.filter((x) => x !== id),
+            upNextIds: state.upNextIds.filter((x) => x !== id),
+            library: baseAssets.filter((a) => !hiddenTrackIds.includes(a.id)),
+          };
+        }),
 
       library: [],
       setLibrary: (assets) =>
@@ -425,8 +456,17 @@ export const useStore = create<AppState>()(
         const isDynamicUnlocked = Boolean(incomingPrefs.isDynamicColorUnlocked);
         const isDevMode = Boolean(incomingPrefs.isDevModeActive);
 
+        const unplayableTrackIds = Array.isArray(incoming.unplayableTrackIds)
+          ? incoming.unplayableTrackIds
+          : [];
+        const hiddenTrackIds = Array.isArray(incoming.hiddenTrackIds)
+          ? incoming.hiddenTrackIds
+          : [];
+
         const migrated = {
           ...incoming,
+          hiddenTrackIds,
+          unplayableTrackIds,
           // Tercihler eksik/yarım olabilir (v1 kayıtlarında hiç yoktu). Varsayılanlarla
           // birleştirilir ki ileride eklenecek yeni anahtarlar da güvenle dolsun.
           preferences: {
@@ -455,6 +495,7 @@ export const useStore = create<AppState>()(
         isSmartShuffle: state.isSmartShuffle,
         repeatMode: state.repeatMode,
         hiddenTrackIds: state.hiddenTrackIds,
+        unplayableTrackIds: state.unplayableTrackIds,
         artworkMap: state.artworkMap,
         metadataMap: state.metadataMap,
         // Söz önbelleği tekilleştirilmiş + hafifletilmiş olarak yazılır.

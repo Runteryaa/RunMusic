@@ -173,7 +173,7 @@ function jsonBytes(value: unknown): number {
  *  4. Son çare: söz önbelleğinin tamamı
  *
  * Kullanıcı tercihleri (settings, isShuffle, repeatMode, hiddenTrackIds,
- * metadataMap) HER ZAMAN korunur — bunlar geri getirilemez verilerdir.
+ * unplayableTrackIds, metadataMap) HER ZAMAN korunur — bunlar geri getirilemez verilerdir.
  */
 export function reducePersistedState<T extends Record<string, any>>(
   state: T,

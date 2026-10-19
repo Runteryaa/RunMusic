@@ -3,10 +3,14 @@ import TrackPlayer, {
   Capability,
   AppKilledPlaybackBehavior,
   Track,
+  Event,
+  State,
 } from 'react-native-track-player';
 import { getQueueSnapshot, getLastPlayback } from './playbackStorage';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
+import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
+import { handlePlaybackError } from './queueController';
 
 let MusicWidgetModule: any = null;
 try {
@@ -70,6 +74,34 @@ export async function syncAppKilledPlaybackBehavior(keepPlaying?: boolean): Prom
 
 let isPlayerInitializing = false;
 let isPlayerInitialized = false;
+let isGlobalListenersAttached = false;
+
+export function attachGlobalPlayerEventListeners(): void {
+  if (isGlobalListenersAttached) return;
+  isGlobalListenersAttached = true;
+
+  TrackPlayer.addEventListener(Event.PlaybackError, async (event) => {
+    if (useRemoteConnectStore.getState().isRemoteConnected()) {
+      return;
+    }
+    console.warn('[playerBootstrap] PlaybackError event received:', event);
+    const activeTrack = await TrackPlayer.getActiveTrack().catch(() => null);
+    const activeIndex = await TrackPlayer.getActiveTrackIndex().catch(() => null);
+    await handlePlaybackError(event, activeTrack, typeof activeIndex === 'number' ? activeIndex : undefined);
+  });
+
+  TrackPlayer.addEventListener(Event.PlaybackState, async (event) => {
+    if (event.state === State.Error) {
+      if (useRemoteConnectStore.getState().isRemoteConnected()) {
+        return;
+      }
+      console.warn('[playerBootstrap] PlaybackState is Error:', event);
+      const activeTrack = await TrackPlayer.getActiveTrack().catch(() => null);
+      const activeIndex = await TrackPlayer.getActiveTrackIndex().catch(() => null);
+      await handlePlaybackError(event, activeTrack, typeof activeIndex === 'number' ? activeIndex : undefined);
+    }
+  });
+}
 
 export async function setupTrackPlayerIfNeeded(): Promise<boolean> {
   if (isPlayerInitialized) return true;
@@ -107,6 +139,8 @@ export async function setupTrackPlayerIfNeeded(): Promise<boolean> {
       // ignore
     }
 
+    attachGlobalPlayerEventListeners();
+
     isPlayerInitialized = true;
     return true;
   } catch (e) {
@@ -121,8 +155,23 @@ export async function restoreQueueIfNeeded(): Promise<boolean> {
   await setupTrackPlayerIfNeeded();
 
   try {
+    const playbackState = await TrackPlayer.getPlaybackState().catch(() => null);
+    const isPlayingOrBuffering =
+      playbackState?.state === State.Playing || playbackState?.state === State.Buffering;
+    if (isPlayingOrBuffering) {
+      return true; // Asla aktif çalan kuyruğu ezme!
+    }
+
     const currentQueue = await TrackPlayer.getQueue();
     if (currentQueue && currentQueue.length > 0) {
+      const snapshot = await getQueueSnapshot().catch(() => null);
+      if (snapshot && useStore.getState().contextIds.length === 0) {
+        useStore.setState({
+          contextIds: snapshot.contextIds ?? currentQueue.map((t) => t.id),
+          upNextIds: snapshot.upNextIds ?? [],
+          isShuffle: Boolean(snapshot.isShuffle),
+        });
+      }
       return true; // Zaten yüklü
     }
   } catch {
