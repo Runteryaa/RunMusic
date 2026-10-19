@@ -518,12 +518,12 @@
 
       <button class="action-btn btn-download-large" id="btnDownloadFast" onclick="actionDownload('fast')">
         <span>⚡</span>
-        <span id="btnDownloadFastText">Hızlı İndir (HD - MP4)</span>
+        <span id="btnDownloadFastText">Hızlı İndir (MP3)</span>
       </button>
 
       <button class="action-btn btn-download-audio" id="btnDownloadAudio" onclick="actionDownload('audio')">
         <span>🎵</span>
-        <span id="btnDownloadAudioText">Sadece Ses İndir (MP3)</span>
+        <span id="btnDownloadAudioText">Sadece Ses İndir (Düşük Boyut)</span>
       </button>
 
       <button class="action-btn btn-queue-large" id="btnQueue" onclick="actionQueue()">
@@ -823,9 +823,10 @@
         let fileName = '';
 
         if (format === 'fast') {
-          // streamData.mp4 ratebypass=yes içerir ve bant genişliği kısıtı olmaksızın 2-3 saniyede iner
+          // streamData.mp4 ratebypass=yes içerir ve bant genişliği kısıtı olmaksızın 2-3 saniyede iner.
+          // Müzik çalarımız ve cihaz kütüphanesi için doğrudan .mp3 uzantısıyla kaydedilir.
           downloadUrl = streamData.mp4 || streamData.mp3;
-          fileName = `${finalArtist} - ${finalTitle}.mp4`;
+          fileName = `${finalArtist} - ${finalTitle}.mp3`;
         } else {
           // streamData.mp3 saf ses akışıdır (YouTube sunucusu tarafından playback hızına kısıtlanır)
           downloadUrl = streamData.mp3 || streamData.mp4;
@@ -841,7 +842,7 @@
             suggestedFileName: fileName,
             storageTarget: 'private'
           });
-          const modeLabel = format === 'fast' ? '⚡ Hızlı İndirme (MP4)' : '🎵 Ses İndirme (MP3)';
+          const modeLabel = format === 'fast' ? '⚡ Hızlı İndirme (MP3)' : '🎵 Ses İndirme (Düşük Boyut)';
           showToast(`${modeLabel} başlatıldı! (ID: ${res.downloadId})`);
         } else {
           showToast('RunMusic indirme yöneticisi bulunamadı.');

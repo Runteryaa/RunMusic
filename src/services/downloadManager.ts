@@ -31,17 +31,18 @@ export async function startDownload(params: StartDownloadParams): Promise<{ down
   const title = (params.title || 'Unknown Title').trim();
   const artist = (params.artist || 'Unknown Artist').trim();
 
-  // Dosya uzantısını belirle (.mp3, .m4a veya .mp4 varsayılan)
+  // Dosya uzantısını belirle (.mp3 varsayılan)
   let ext = '.mp3';
   if (params.suggestedFileName && params.suggestedFileName.includes('.')) {
     const rawExt = params.suggestedFileName.substring(params.suggestedFileName.lastIndexOf('.')).toLowerCase();
-    if (['.mp3', '.m4a', '.aac', '.flac', '.wav', '.ogg', '.mp4'].includes(rawExt)) {
+    // Kullanıcı talebi: mp4 olarak indirilen hızlı akışlar doğrudan .mp3 uzantısıyla saklanır
+    if (rawExt === '.mp4') {
+      ext = '.mp3';
+    } else if (['.mp3', '.m4a', '.aac', '.flac', '.wav', '.ogg'].includes(rawExt)) {
       ext = rawExt;
     }
   } else if (params.downloadUrl.includes('.m4a')) {
     ext = '.m4a';
-  } else if (params.downloadUrl.includes('.mp4') || params.downloadUrl.includes('mime=video%2Fmp4')) {
-    ext = '.mp4';
   }
 
   const baseName = sanitizeFileName(params.suggestedFileName?.replace(/\.[^/.]+$/, '') || `${artist} - ${title}`);
@@ -207,18 +208,35 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
     throw new Error('İndirilen yerel dosya bulunamadı.');
   }
 
-  const isVideo = task.fileName.toLowerCase().endsWith('.mp4');
-  const permissionsToRequest: ('audio' | 'video')[] = isVideo ? ['audio', 'video'] : ['audio'];
-  let permission = await MediaLibrary.getPermissionsAsync(false, permissionsToRequest);
+  let targetFileUri = task.localFileUri;
+  let targetFileName = task.fileName;
+
+  // Kullanıcı talebi: Eğer dosya .mp4 uzantılıysa, kütüphaneye .mp3 olarak aktar
+  if (targetFileUri.toLowerCase().endsWith('.mp4')) {
+    const newFileUri = targetFileUri.replace(/\.mp4$/i, '.mp3');
+    try {
+      await FileSystem.moveAsync({ from: targetFileUri, to: newFileUri });
+      targetFileUri = newFileUri;
+      targetFileName = targetFileName.replace(/\.mp4$/i, '.mp3');
+      useDownloadStore.getState().updateTask(downloadId, {
+        localFileUri: targetFileUri,
+        fileName: targetFileName,
+      });
+    } catch (moveErr) {
+      console.warn('[downloadManager] mp4 -> mp3 dönüştürme uyarısı:', moveErr);
+    }
+  }
+
+  let permission = await MediaLibrary.getPermissionsAsync(false, ['audio']);
   if (!permission.granted && permission.canAskAgain) {
-    permission = await MediaLibrary.requestPermissionsAsync(false, permissionsToRequest);
+    permission = await MediaLibrary.requestPermissionsAsync(false, ['audio']);
   }
 
   if (!permission.granted) {
     throw new Error('Cihaz medya kütüphanesi erişim izni verilmedi.');
   }
 
-  const createdAsset = await MediaLibrary.createAssetAsync(task.localFileUri);
+  const createdAsset = await MediaLibrary.createAssetAsync(targetFileUri);
 
   // RunMusic ana kütüphanesine varlığı anında ekle
   const currentLib = useStore.getState().library;
