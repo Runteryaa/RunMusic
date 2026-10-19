@@ -255,6 +255,16 @@ section('10) Sıralama sonrası tutarlılık (move senaryosu)');
   check('indeksler kuyruğa denk', indicesMatch(moved, s.upNext) && indicesMatch(moved, s.context));
 }
 
+section('10b) activeTrackKey ile kanonik parça kurtarma (sahte indeks kayması)');
+
+{
+  const moved = [t('C1'), t('C2'), t('M2'), t('C3'), t('M1'), t('C4')];
+  // activeIndex sahte olarak 2 (M2) bildirilse bile activeTrackKey C2 ise düzeltilmeli
+  const s = deriveQueueSections(moved, 2, ['M1', 'M2'], undefined, 'C2');
+  check('sahte indeks yerine C2 doğru çözümlendi', s.current?.track.id === 'C2' && s.current?.index === 1);
+  check('upNext C2 ardındaki manuel öğeler', JSON.stringify(ids(s.upNext)) === JSON.stringify(['M2', 'M1']));
+}
+
 section('11) Panel satır sırası (buildQueueRows)');
 
 {

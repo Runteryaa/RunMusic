@@ -563,7 +563,26 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     return sections;
   }, [player.isRemote, player.activeTrack, player.artworkUri, remoteState.queue, remoteState.upNext]);
 
-  const effectiveQueueSections = player.isRemote ? derivedRemoteQueueSections : queueSections;
+  const effectiveQueueSections = useMemo(() => {
+    if (player.isRemote) return derivedRemoteQueueSections;
+    if (!queueSections) return null;
+    const realKey = trackKey(activeTrack || localActiveTrack);
+    if (!realKey || (queueSections.current && trackKey(queueSections.current.track) === realKey)) {
+      return queueSections;
+    }
+    // Eğer native activeIndex kaymış ve queueSections.current sahte bir parçayı gösteriyorsa doğrula
+    const foundIdx = queue.findIndex((t) => trackKey(t) === realKey);
+    if (foundIdx >= 0) {
+      return deriveQueueSections(
+        queue,
+        foundIdx,
+        useStore.getState().upNextIds,
+        useStore.getState().playedHistory as any,
+        realKey
+      );
+    }
+    return queueSections;
+  }, [player.isRemote, derivedRemoteQueueSections, queueSections, activeTrack, localActiveTrack, queue]);
 
   const resolveTrackDisplay = useCallback(
     (track: Track | QueueTrackLike) => {

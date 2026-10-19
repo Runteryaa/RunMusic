@@ -342,18 +342,7 @@ export default function ExtensionsScreen() {
         Yukarıdaki alana bir eklenti manifest {"URL'si"} girip {`"Ekle"`} butonuna basarak kütüphanenize yeni eklentiler ekleyebilirsiniz.
       </Text>
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-        <TouchableOpacity
-          style={[styles.emptyQuickAddBtn, { borderColor: '#ef4444' }]}
-          onPress={() => {
-            setInputUrl('https://runteryaa.github.io/RunMusic/examples/youtube-extension/manifest.json');
-          }}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="logo-youtube" size={15} color="#ef4444" style={{ marginRight: 6 }} />
-          <Text style={[styles.emptyQuickAddBtnText, { color: '#ef4444' }]}>
-            YouTube Eklentisi
-          </Text>
-        </TouchableOpacity>
+
 
         <TouchableOpacity
           style={[styles.emptyQuickAddBtn, { borderColor: theme.primary }]}
@@ -364,7 +353,7 @@ export default function ExtensionsScreen() {
         >
           <Ionicons name="sparkles" size={15} color={theme.primary} style={{ marginRight: 6 }} />
           <Text style={[styles.emptyQuickAddBtnText, { color: theme.primary }]}>
-            Açık Müzik Örneği
+            Example Extension
           </Text>
         </TouchableOpacity>
       </View>

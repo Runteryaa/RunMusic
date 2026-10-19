@@ -172,13 +172,22 @@ export function deriveQueueSections<T extends QueueTrackLike>(
   queue: T[],
   activeIndex: number,
   upNextIds: string[],
-  playedHistory?: T[]
+  playedHistory?: T[],
+  activeTrackKey?: string
 ): QueueSections<T> {
+  let resolvedIndex = activeIndex;
+  if (activeTrackKey) {
+    const foundIdx = queue.findIndex((t) => trackKey(t) === activeTrackKey);
+    if (foundIdx >= 0) {
+      resolvedIndex = foundIdx;
+    }
+  }
+
   const pending = new Set(upNextIds);
 
   const current =
-    activeIndex >= 0 && activeIndex < queue.length
-      ? { index: activeIndex, track: queue[activeIndex] }
+    resolvedIndex >= 0 && resolvedIndex < queue.length
+      ? { index: resolvedIndex, track: queue[resolvedIndex] }
       : null;
 
   // Geçmiş: Gerçek dinleme geçmişi sağlandıysa, dinlenme sırasına göre (eskiden yeniye).
@@ -203,7 +212,7 @@ export function deriveQueueSections<T extends QueueTrackLike>(
       history.push({ index: idx, track: t });
     }
   } else if (current) {
-    for (let i = 0; i < activeIndex; i++) {
+    for (let i = 0; i < resolvedIndex; i++) {
       history.push({ index: i, track: queue[i] });
     }
   }
@@ -211,7 +220,7 @@ export function deriveQueueSections<T extends QueueTrackLike>(
   const upNext: QueueEntry<T>[] = [];
   const context: QueueEntry<T>[] = [];
 
-  for (let i = activeIndex + 1; i < queue.length; i++) {
+  for (let i = resolvedIndex + 1; i < queue.length; i++) {
     const key = trackKey(queue[i]);
     if (pending.has(key)) {
       pending.delete(key);

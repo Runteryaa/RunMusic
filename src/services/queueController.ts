@@ -62,6 +62,7 @@ export interface QueueTrack {
 }
 
 let isNavigatingHistory = false;
+let isMutatingQueue = false;
 
 export function getIsNavigatingHistory(): boolean {
   return isNavigatingHistory;
@@ -69,6 +70,14 @@ export function getIsNavigatingHistory(): boolean {
 
 export function setIsNavigatingHistory(val: boolean): void {
   isNavigatingHistory = val;
+}
+
+export function getIsMutatingQueue(): boolean {
+  return isMutatingQueue;
+}
+
+export function setIsMutatingQueue(val: boolean): void {
+  isMutatingQueue = val;
 }
 
 /**
@@ -223,21 +232,31 @@ async function persistQueue(): Promise<void> {
   s.bumpQueueRevision();
 }
 
-async function readQueueState(): Promise<{ queue: Track[]; activeIndex: number }> {
-  const queue = await TrackPlayer.getQueue();
-  const rawIndex = await TrackPlayer.getActiveTrackIndex();
-  const activeIndex = typeof rawIndex === 'number' && rawIndex >= 0 ? rawIndex : 0;
-  return { queue, activeIndex };
+async function readQueueState(): Promise<{ queue: Track[]; activeIndex: number; activeTrack: Track | null }> {
+  const queue = await TrackPlayer.getQueue().catch(() => []);
+  const activeTrack = await TrackPlayer.getActiveTrack().catch(() => null);
+  let activeIndex = -1;
+  if (activeTrack) {
+    const aKey = trackKey(activeTrack);
+    activeIndex = queue.findIndex((t) => trackKey(t) === aKey);
+  }
+  if (activeIndex < 0) {
+    const rawIndex = await TrackPlayer.getActiveTrackIndex().catch(() => null);
+    activeIndex = typeof rawIndex === 'number' && rawIndex >= 0 && rawIndex < queue.length ? rawIndex : 0;
+  }
+  return { queue, activeIndex, activeTrack: activeTrack ?? null };
 }
 
 export async function getQueueSections(): Promise<QueueSections<Track>> {
-  const { queue, activeIndex } = await readQueueState();
+  const { queue, activeIndex, activeTrack } = await readQueueState();
   const playedHistory = useStore.getState().playedHistory;
+  const activeKey = activeTrack ? trackKey(activeTrack) : undefined;
   return deriveQueueSections(
     queue,
     activeIndex,
     useStore.getState().upNextIds,
-    playedHistory as any
+    playedHistory as any,
+    activeKey
   );
 }
 
@@ -477,7 +496,7 @@ export async function addTracksToQueue(
  * yüksek öncelikli "Sırada" (Up Next) bölümünün sonuna taşır.
  */
 export async function promoteContextTrackToUpNext(queueIndex: number, trackId?: string): Promise<void> {
-  const { queue, activeIndex } = await readQueueState();
+  const { queue, activeIndex, activeTrack } = await readQueueState();
   let targetIndex = queueIndex;
   if (trackId) {
     const resolved = queue.findIndex(
@@ -491,7 +510,8 @@ export async function promoteContextTrackToUpNext(queueIndex: number, trackId?: 
   if (!targetTrack) return;
 
   const currentUpNext = useStore.getState().upNextIds;
-  const sections = deriveQueueSections(queue, activeIndex, currentUpNext);
+  const activeKey = activeTrack ? trackKey(activeTrack) : undefined;
+  const sections = deriveQueueSections(queue, activeIndex, currentUpNext, undefined, activeKey);
 
   const key = trackKey(targetTrack);
   if (currentUpNext.includes(key)) return;
@@ -499,13 +519,21 @@ export async function promoteContextTrackToUpNext(queueIndex: number, trackId?: 
   const last = sections.upNext[sections.upNext.length - 1];
   const targetDesiredIndex = last ? last.index + 1 : activeIndex + 1;
 
-  if (targetIndex !== targetDesiredIndex) {
-    await TrackPlayer.move(targetIndex, targetDesiredIndex);
+  setIsMutatingQueue(true);
+  try {
+    if (targetIndex !== targetDesiredIndex) {
+      await TrackPlayer.move(targetIndex, targetDesiredIndex);
+    }
+    const remaining = currentUpNext.filter((id) => id !== key);
+    useStore.getState().setUpNextIds([...remaining, key]);
+    await persistQueue();
+  } catch (err) {
+    console.warn('[queueController] promoteContextTrackToUpNext error:', err);
+  } finally {
+    setTimeout(() => {
+      setIsMutatingQueue(false);
+    }, 400);
   }
-
-  const remaining = currentUpNext.filter((id) => id !== key);
-  useStore.getState().setUpNextIds([...remaining, key]);
-  await persistQueue();
 }
 
 /**
@@ -523,9 +551,23 @@ export async function removeQueueItem(index: number, trackId?: string): Promise<
   }
   if (targetIndex <= activeIndex || targetIndex >= queue.length) return;
 
-  await TrackPlayer.remove(targetIndex);
-  await resyncUpNextFromQueue();
-  await persistQueue();
+  setIsMutatingQueue(true);
+  try {
+    await TrackPlayer.remove(targetIndex);
+    if (trackId) {
+      const currentUpNext = useStore.getState().upNextIds.filter((id) => id !== trackId);
+      useStore.getState().setUpNextIds(currentUpNext);
+    } else {
+      await resyncUpNextFromQueue();
+    }
+    await persistQueue();
+  } catch (err) {
+    console.warn('[queueController] removeQueueItem error:', err);
+  } finally {
+    setTimeout(() => {
+      setIsMutatingQueue(false);
+    }, 400);
+  }
 }
 
 /**
@@ -536,32 +578,67 @@ export async function removeQueueItem(index: number, trackId?: string): Promise<
  * (sondan başa doğru, indeksler kaymasın diye), sonra liste boşaltılır.
  */
 export async function clearUpNextQueue(): Promise<void> {
-  const { queue, activeIndex } = await readQueueState();
-  const sections = deriveQueueSections(queue, activeIndex, useStore.getState().upNextIds);
+  const { queue, activeIndex, activeTrack } = await readQueueState();
+  const activeKey = activeTrack ? trackKey(activeTrack) : undefined;
+  const sections = deriveQueueSections(queue, activeIndex, useStore.getState().upNextIds, undefined, activeKey);
 
   const indices = sections.upNext.map((entry) => entry.index).sort((a, b) => b - a);
-  for (const index of indices) {
-    try {
-      await TrackPlayer.remove(index);
-    } catch (e) {
-      console.warn('Failed to remove up-next item', e);
+  setIsMutatingQueue(true);
+  try {
+    for (const index of indices) {
+      try {
+        if (index > activeIndex) {
+          await TrackPlayer.remove(index);
+        }
+      } catch (e) {
+        console.warn('Failed to remove up-next item', e);
+      }
     }
+    useStore.getState().clearUpNext();
+    await persistQueue();
+  } catch (err) {
+    console.warn('[queueController] clearUpNextQueue error:', err);
+  } finally {
+    setTimeout(() => {
+      setIsMutatingQueue(false);
+    }, 400);
   }
-
-  useStore.getState().clearUpNext();
-  await persistQueue();
 }
 
-/** "Sırada" bölümü içinde yeniden sıralama (indeksler bölüme görelidir). */export async function moveUpNext(from: number, to: number): Promise<void> {
-  const { queue, activeIndex } = await readQueueState();
-  const sections = deriveQueueSections(queue, activeIndex, useStore.getState().upNextIds);
-
-  if (from < 0 || to < 0 || from >= sections.upNext.length || to >= sections.upNext.length) return;
+/** "Sırada" bölümü içinde yeniden sıralama (indeksler bölüme görelidir). */
+export async function moveUpNext(from: number, to: number): Promise<void> {
+  const currentUpNextIds = [...useStore.getState().upNextIds];
+  if (from < 0 || to < 0 || from >= currentUpNextIds.length || to >= currentUpNextIds.length) return;
   if (from === to) return;
 
-  await TrackPlayer.move(sections.upNext[from].index, sections.upNext[to].index);
-  await resyncUpNextFromQueue();
-  await persistQueue();
+  const { queue, activeIndex, activeTrack } = await readQueueState();
+  const activeKey = activeTrack ? trackKey(activeTrack) : undefined;
+  const sections = deriveQueueSections(queue, activeIndex, currentUpNextIds, undefined, activeKey);
+
+  if (!sections.upNext[from] || !sections.upNext[to]) return;
+  const fromIndex = sections.upNext[from].index;
+  const toIndex = sections.upNext[to].index;
+
+  // Güvenlik kontrolü: Asla şu an çalan parçayı veya geçmişi taşımaya çalışma!
+  if (fromIndex <= activeIndex || toIndex <= activeIndex) return;
+
+  // 1. Önce Zustand store'daki upNextIds listesini doğrudan güncelle
+  const [movedId] = currentUpNextIds.splice(from, 1);
+  currentUpNextIds.splice(to, 0, movedId);
+  useStore.getState().setUpNextIds(currentUpNextIds);
+
+  // 2. Native TrackPlayer'da taşıma yaparken sahte parça geçişlerini engellemek için kilitle
+  setIsMutatingQueue(true);
+  try {
+    await TrackPlayer.move(fromIndex, toIndex);
+    await persistQueue();
+  } catch (err) {
+    console.warn('[queueController] moveUpNext error:', err);
+  } finally {
+    setTimeout(() => {
+      setIsMutatingQueue(false);
+    }, 400);
+  }
 }
 
 /**

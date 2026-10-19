@@ -5,10 +5,12 @@ import {
   recordTrackToHistory,
   skipToPreviousTrack,
   getIsNavigatingHistory,
+  getIsMutatingQueue,
   handlePlaybackError,
   clearSessionFailedTracks,
   recordAttemptedTrack,
   resolveTrackId,
+  trackKey,
 } from './services/queueController';
 import { cleanYouTubeTitle, cleanDisplayTitle } from './services/lyricsService';
 import { useStore } from './store/useStore';
@@ -153,11 +155,27 @@ export default async function playbackService() {
     if (useRemoteConnectStore.getState().isRemoteConnected()) {
       return; // Uzak bağlantı gölge parçası yerel geçmişe veya son çalınanlara kaydedilmez
     }
+    if (getIsMutatingQueue()) {
+      return; // Kuyruk operasyonları (taşıma, ekleme, silme) sırasındaki sahte geçişleri yoksay
+    }
     try {
-      if (event.lastTrack && !getIsNavigatingHistory()) {
-        recordTrackToHistory(event.lastTrack);
-      }
       if (event.track && typeof event.index === 'number') {
+        const realActive = await TrackPlayer.getActiveTrack().catch(() => null);
+        if (realActive) {
+          const realKey = trackKey(realActive);
+          const eventKey = trackKey(event.track);
+          if (realKey && eventKey && realKey !== eventKey) {
+            // Native katmanda sıra kayması nedeniyle gelen sahte olay; gerçek çalan parça değişmedi!
+            return;
+          }
+        }
+        if (event.lastTrack && !getIsNavigatingHistory()) {
+          const lastKey = trackKey(event.lastTrack);
+          const currentKey = trackKey(event.track);
+          if (lastKey && currentKey && lastKey !== currentKey) {
+            recordTrackToHistory(event.lastTrack);
+          }
+        }
         clearSessionFailedTracks();
         recordAttemptedTrack(event.track, event.index);
         const rawId = String(event.track.id ?? '').trim();

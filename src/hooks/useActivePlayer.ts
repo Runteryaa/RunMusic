@@ -3,7 +3,6 @@ import TrackPlayer, {
   useActiveTrack,
   useIsPlaying,
   RepeatMode,
-  type Track,
 } from 'react-native-track-player';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { useStore } from '../store/useStore';
@@ -14,6 +13,8 @@ import {
   skipToPreviousTrack,
   setShuffle as setLocalShuffle,
   handlePlaybackError,
+  trackKey,
+  resolveTrackId,
 } from '../services/queueController';
 import { findLyricsInCache } from '../services/persistSanitize';
 import { parseAnySyncedLyrics, getLyricsCacheKeys, type LyricLine } from '../services/lyricsService';
@@ -196,22 +197,38 @@ export function useActivePlayer(): ActivePlayerState {
   const localSkipNext = useCallback(async () => {
     try {
       const queue = await TrackPlayer.getQueue();
-      const currentIdx = await TrackPlayer.getActiveTrackIndex();
-      const resolvedIdx = typeof currentIdx === 'number' && currentIdx >= 0 ? currentIdx : 0;
-      let next: Track | null = null;
-      if (resolvedIdx < queue.length - 1) {
-        next = queue[resolvedIdx + 1];
-      } else if (localRepeatMode === RepeatMode.Queue && queue.length > 0) {
-        next = queue[0];
+      const activeTrack = await TrackPlayer.getActiveTrack().catch(() => null);
+      const activeKey = trackKey(activeTrack || localActiveTrack);
+      let resolvedIdx = -1;
+      if (activeKey) {
+        resolvedIdx = queue.findIndex((t) => trackKey(t) === activeKey);
       }
-      if (next) {
-        const meta = useStore.getState().metadataMap[next.id];
+      if (resolvedIdx < 0) {
+        const currentIdx = await TrackPlayer.getActiveTrackIndex().catch(() => null);
+        resolvedIdx = typeof currentIdx === 'number' && currentIdx >= 0 ? currentIdx : 0;
+      }
+
+      let nextIndex = -1;
+      if (resolvedIdx < queue.length - 1) {
+        nextIndex = resolvedIdx + 1;
+      } else if (localRepeatMode === RepeatMode.Queue && queue.length > 0) {
+        nextIndex = 0;
+      }
+
+      if (nextIndex >= 0 && nextIndex < queue.length) {
+        const next = queue[nextIndex];
+        const allAssets = useStore.getState().allAssets;
+        const canonicalId = resolveTrackId(next, allAssets);
+        const meta =
+          (canonicalId && useStore.getState().metadataMap[canonicalId]) ||
+          useStore.getState().metadataMap[next.id];
         const art =
           meta?.artwork ||
+          (canonicalId && useStore.getState().artworkMap[canonicalId]) ||
           useStore.getState().artworkMap[next.id] ||
           (typeof next.artwork === 'string' ? next.artwork : null);
         const summary: RemoteTrackSummary = {
-          id: next.id,
+          id: canonicalId || next.id,
           title: meta?.title || next.title || 'Unknown Title',
           artist: meta?.artist || next.artist || 'Unknown Artist',
           duration: next.duration || 0,
@@ -221,24 +238,41 @@ export function useActivePlayer(): ActivePlayerState {
         if (useStore.getState().preferences.dynamicColorFromArtwork && art) {
           useThemeStore.getState().updateThemeFromArtwork(art);
         }
+        await TrackPlayer.skip(nextIndex);
+        await TrackPlayer.play();
+      } else {
+        await TrackPlayer.skipToNext();
       }
-      await TrackPlayer.skipToNext();
     } catch (err) {
       console.warn('[useActivePlayer] localSkipNext error:', err);
       await handlePlaybackError(err);
     }
-  }, [localRepeatMode]);
+  }, [localActiveTrack, localRepeatMode]);
 
   const localSkipPrevious = useCallback(async () => {
     try {
+      const { position } = await TrackPlayer.getProgress().catch(() => ({ position: 0 }));
+      if (position > 3) {
+        await TrackPlayer.seekTo(0);
+        return;
+      }
+
       const playedHistory = useStore.getState().playedHistory;
       let prev: any = null;
       if (playedHistory.length > 0) {
         prev = playedHistory[playedHistory.length - 1];
       } else {
         const queue = await TrackPlayer.getQueue();
-        const currentIdx = await TrackPlayer.getActiveTrackIndex();
-        const resolvedIdx = typeof currentIdx === 'number' && currentIdx >= 0 ? currentIdx : 0;
+        const activeTrack = await TrackPlayer.getActiveTrack().catch(() => null);
+        const activeKey = trackKey(activeTrack || localActiveTrack);
+        let resolvedIdx = -1;
+        if (activeKey) {
+          resolvedIdx = queue.findIndex((t) => trackKey(t) === activeKey);
+        }
+        if (resolvedIdx < 0) {
+          const currentIdx = await TrackPlayer.getActiveTrackIndex().catch(() => null);
+          resolvedIdx = typeof currentIdx === 'number' && currentIdx >= 0 ? currentIdx : 0;
+        }
         if (resolvedIdx > 0) {
           prev = queue[resolvedIdx - 1];
         } else if (localRepeatMode === RepeatMode.Queue && queue.length > 0) {
@@ -246,13 +280,18 @@ export function useActivePlayer(): ActivePlayerState {
         }
       }
       if (prev) {
-        const meta = useStore.getState().metadataMap[prev.id];
+        const allAssets = useStore.getState().allAssets;
+        const canonicalId = resolveTrackId(prev, allAssets);
+        const meta =
+          (canonicalId && useStore.getState().metadataMap[canonicalId]) ||
+          useStore.getState().metadataMap[prev.id];
         const art =
           meta?.artwork ||
+          (canonicalId && useStore.getState().artworkMap[canonicalId]) ||
           useStore.getState().artworkMap[prev.id] ||
           (typeof prev.artwork === 'string' ? prev.artwork : null);
         const summary: RemoteTrackSummary = {
-          id: prev.id,
+          id: canonicalId || prev.id,
           title: meta?.title || prev.title || 'Unknown Title',
           artist: meta?.artist || prev.artist || 'Unknown Artist',
           duration: prev.duration || 0,
@@ -268,7 +307,7 @@ export function useActivePlayer(): ActivePlayerState {
       console.warn('[useActivePlayer] localSkipPrevious error:', err);
       await handlePlaybackError(err);
     }
-  }, [localRepeatMode]);
+  }, [localActiveTrack, localRepeatMode]);
 
   const localSeekTo = useCallback(async (position: number) => {
     await TrackPlayer.seekTo(position);
