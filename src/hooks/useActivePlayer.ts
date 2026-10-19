@@ -67,18 +67,26 @@ export function useActivePlayer(): ActivePlayerState {
   const localRepeatMode = useStore((s) => s.repeatMode);
   const setStoreRepeatMode = useStore((s) => s.setRepeatMode);
 
-  // Clear optimistic track when real active track reconciles
+  // Clear optimistic track ONLY when real active track reconciles to the optimistic track
   useEffect(() => {
-    if (localActiveTrack?.id) {
+    if (
+      localActiveTrack?.id &&
+      optimisticTrack?.id &&
+      (localActiveTrack.id === optimisticTrack.id || localActiveTrack.url === optimisticTrack.id)
+    ) {
       useOptimisticPlayerStore.getState().clearOptimisticTrack();
     }
-  }, [localActiveTrack?.id]);
+  }, [localActiveTrack?.id, localActiveTrack?.url, optimisticTrack?.id]);
 
   useEffect(() => {
-    if (remoteState.activeTrack?.id) {
+    if (
+      remoteState.activeTrack?.id &&
+      optimisticTrack?.id &&
+      remoteState.activeTrack.id === optimisticTrack.id
+    ) {
       useOptimisticPlayerStore.getState().clearOptimisticTrack();
     }
-  }, [remoteState.activeTrack?.id]);
+  }, [remoteState.activeTrack?.id, optimisticTrack?.id]);
 
   // ==========================================
   // REMOTE CONTROLS & STATE

@@ -308,6 +308,20 @@ export async function deleteDownloadedFile(downloadId: string): Promise<void> {
       // ignore
     }
   }
+
+  // Kütüphaneden de kaldır
+  const currentLib = useStore.getState().library;
+  const filteredLib = currentLib.filter(
+    (a) =>
+      a.id !== task?.mediaLibraryAssetId &&
+      a.id !== `local_${downloadId}` &&
+      (!task?.localFileUri || a.uri !== task.localFileUri)
+  );
+  if (filteredLib.length !== currentLib.length) {
+    useStore.getState().setLibrary(filteredLib);
+    saveCachedLibrary(filteredLib).catch(() => {});
+  }
+
   useDownloadStore.getState().removeTask(downloadId);
 }
 

@@ -9,8 +9,10 @@ import {
   clearSessionFailedTracks,
   recordAttemptedTrack,
 } from './services/queueController';
+import { useStore } from './store/useStore';
 import { useThemeStore } from './store/useThemeStore';
 import { useRemoteConnectStore } from './store/useRemoteConnectStore';
+import { useOptimisticPlayerStore } from './store/useOptimisticPlayerStore';
 import { remoteSyncManager } from './services/remote/remoteSyncManager';
 
 let MusicWidgetModule: any = null;
@@ -157,6 +159,25 @@ export default async function playbackService() {
         clearSessionFailedTracks();
         recordAttemptedTrack(event.track, event.index);
         const trackId = String(event.track.id ?? event.track.url ?? '');
+
+        // UI'ın anında (0ms) yeni şarkıya geçmesi için iyimser modeli güncelle
+        const meta = useStore.getState().metadataMap[trackId];
+        const art =
+          meta?.artwork ||
+          useStore.getState().artworkMap[trackId] ||
+          (typeof event.track.artwork === 'string' ? event.track.artwork : null);
+        const summary = {
+          id: trackId,
+          title: meta?.title || event.track.title || 'Unknown Title',
+          artist: meta?.artist || event.track.artist || 'Unknown Artist',
+          duration: event.track.duration || 0,
+          hasArtwork: !!art,
+        };
+        useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+        if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
+          useThemeStore.getState().updateThemeFromArtwork(art);
+        }
+
         await saveLastPlayback(
           {
             trackId,

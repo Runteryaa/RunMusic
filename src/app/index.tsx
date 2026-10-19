@@ -20,6 +20,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../store/useStore';
+import { useDownloadStore } from '../store/useDownloadStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
@@ -313,6 +314,68 @@ export default function LibraryScreen() {
         // Her 100 dosyada bir JS thread'ini rahatlat
         if (i % 100 === 0 && i > 0) {
           await new Promise((r) => setTimeout(r, 10));
+        }
+      }
+
+      // Kütüphaneye eklenmiş yerel indirmeleri (useDownloadStore) tara ve kütüphaneye kalıcı olarak dahil et
+      const downloadTasks = useDownloadStore.getState().tasks;
+      for (const task of downloadTasks) {
+        if (
+          task.status === 'completed' &&
+          task.localFileUri &&
+          (task.mediaLibraryAssetId || task.storageTarget === 'public')
+        ) {
+          try {
+            const fileInfo = await FileSystem.getInfoAsync(task.localFileUri);
+            if (fileInfo.exists) {
+              const taskAssetId = task.mediaLibraryAssetId || `local_${task.id}`;
+              const alreadyExists = validAudio.some(
+                (a) => a.id === taskAssetId || a.id === task.mediaLibraryAssetId || a.uri === task.localFileUri
+              );
+              if (!alreadyExists) {
+                const downloadedAsset: MediaLibrary.Asset = {
+                  id: taskAssetId,
+                  filename: task.fileName || `${task.title || 'audio'}.mp3`,
+                  uri: task.localFileUri,
+                  mediaType: 'audio' as any,
+                  width: 0,
+                  height: 0,
+                  creationTime: task.createdAt || Date.now(),
+                  modificationTime: task.completedAt || Date.now(),
+                  duration: (task as any).duration || 0,
+                };
+                validAudio.unshift(downloadedAsset);
+
+                if (task.title || task.artist || task.artwork) {
+                  useStore.getState().setTrackMetadata(taskAssetId, {
+                    title: task.title,
+                    artist: task.artist,
+                    artwork: task.artwork,
+                  });
+                  if (task.artwork) {
+                    useStore.getState().setArtwork(taskAssetId, task.artwork);
+                  }
+                }
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      // Mevcut kütüphanede olup sistemde taranamayan (local_) diğer yerel dosyaları da koru
+      const existingLib = useStore.getState().library;
+      for (const item of existingLib) {
+        if (item.id.startsWith('local_') && !validAudio.some((a) => a.id === item.id || a.uri === item.uri)) {
+          try {
+            const info = await FileSystem.getInfoAsync(item.uri);
+            if (info.exists) {
+              validAudio.unshift(item);
+            }
+          } catch {
+            // ignore
+          }
         }
       }
 

@@ -84,7 +84,8 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
     (track: { id?: string; title?: string; artist?: string; url?: string; artwork?: any } | null) => {
       if (!track) return { title: '', artist: '', artwork: undefined };
 
-      if (player.isRemote && track.id === player.activeTrack?.id) {
+      const isCurrentActive = track.id === player.activeTrack?.id;
+      if (player.isRemote && isCurrentActive) {
         return {
           title: track.title || t('common.unknown_track'),
           artist: track.artist || t('common.unknown_artist'),
@@ -104,6 +105,9 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
         (meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
           ? meta.artist.trim()
           : '') ||
+        (isCurrentActive && player.activeTrack?.artist && player.activeTrack.artist !== 'Unknown Artist' && player.activeTrack.artist !== 'Local Audio'
+          ? player.activeTrack.artist
+          : '') ||
         (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
           ? keywords.expectedArtist
           : track.artist && track.artist !== 'Local Audio' && track.artist !== 'Bilinmeyen Sanatçı'
@@ -112,6 +116,7 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
 
       let rawTitle =
         (meta?.title?.trim() ? meta.title.trim() : '') ||
+        (isCurrentActive && player.activeTrack?.title && player.activeTrack.title !== 'Unknown Title' ? player.activeTrack.title : '') ||
         keywords.expectedTrack ||
         track.title ||
         '';
@@ -123,6 +128,7 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
         ) || unknownTrack;
 
       let artworkUri =
+        (isCurrentActive ? player.artworkUri : undefined) ||
         meta?.artwork ||
         (track.id ? artworkMap[track.id] : undefined) ||
         (track.url ? artworkMap[track.url] : undefined) ||
@@ -130,7 +136,14 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
 
       return { title, artist: rawArtist, artwork: artworkUri };
     },
-    [player.isRemote, player.activeTrack?.id, player.artworkUri, metadataMap, artworkMap, t]
+    [
+      player.isRemote,
+      player.activeTrack,
+      player.artworkUri,
+      metadataMap,
+      artworkMap,
+      t,
+    ]
   );
 
   const activeMeta = useMemo(() => getTrackMeta(player.activeTrack), [player.activeTrack, getTrackMeta]);

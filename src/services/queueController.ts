@@ -1,5 +1,7 @@
 import TrackPlayer, { State, Track, RepeatMode } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
+import { useThemeStore } from '../store/useThemeStore';
+import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { saveQueueSnapshot } from './playbackStorage';
 import { getPlayCountsMap } from './statsDatabase';
 import {
@@ -169,6 +171,23 @@ export async function playHistoryTrack(historyIndex: number, track?: Track | Que
     const targetKey = trackKey(targetTrack);
     const targetIndex = queue.findIndex((t) => trackKey(t) === targetKey);
 
+    const meta = useStore.getState().metadataMap[targetTrack.id];
+    const art =
+      meta?.artwork ||
+      useStore.getState().artworkMap[targetTrack.id] ||
+      (typeof targetTrack.artwork === 'string' ? targetTrack.artwork : null);
+    const summary = {
+      id: targetTrack.id,
+      title: meta?.title || targetTrack.title || 'Unknown Title',
+      artist: meta?.artist || targetTrack.artist || 'Unknown Artist',
+      duration: (targetTrack as any).duration || 0,
+      hasArtwork: !!art,
+    };
+    useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+    if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
+      useThemeStore.getState().updateThemeFromArtwork(art);
+    }
+
     if (targetIndex >= 0) {
       await TrackPlayer.skip(targetIndex);
     } else {
@@ -250,6 +269,25 @@ export async function startPlaybackFromLibrary(params: {
   const startIndex = Math.max(0, orderIds.indexOf(startId));
   const startTrack = ordered[startIndex];
   recordAttemptedTrack(startTrack, startIndex);
+
+  if (startTrack) {
+    const meta = metadataMap[startTrack.id];
+    const art =
+      meta?.artwork ||
+      useStore.getState().artworkMap[startTrack.id] ||
+      (typeof startTrack.artwork === 'string' ? startTrack.artwork : null);
+    const summary = {
+      id: startTrack.id,
+      title: meta?.title || startTrack.title || 'Unknown Title',
+      artist: meta?.artist || startTrack.artist || 'Unknown Artist',
+      duration: startTrack.duration || 0,
+      hasArtwork: !!art,
+    };
+    useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+    if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
+      useThemeStore.getState().updateThemeFromArtwork(art);
+    }
+  }
 
   await TrackPlayer.setQueue(ordered as Track[]);
   if (startIndex > 0) {

@@ -4,6 +4,7 @@ import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useExtensionStore } from '../store/useExtensionStore';
 import { useDownloadStore } from '../store/useDownloadStore';
+import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { startDownload, cancelDownload } from './downloadManager';
 import { skipToPreviousTrack } from './queueController';
 import { setupTrackPlayerIfNeeded } from './playerBootstrap';
@@ -280,6 +281,19 @@ export async function handleBridgeMessage(
             contextIds: [trackId],
             upNextIds: [],
           });
+
+          // Arayüzün 0ms anında güncellenmesi için iyimser (optimistic) modeli tetikle
+          const summary = {
+            id: trackId,
+            title: nativeTrack.title || 'Unknown Title',
+            artist: nativeTrack.artist || extension.manifest.name,
+            duration: nativeTrack.duration || 0,
+            hasArtwork: !!nativeTrack.artwork,
+          };
+          useOptimisticPlayerStore.getState().setOptimisticTrack(summary, (nativeTrack.artwork as string) || null);
+          if (nativeTrack.artwork && useStore.getState().preferences.dynamicColorFromArtwork) {
+            useThemeStore.getState().updateThemeFromArtwork(nativeTrack.artwork as string);
+          }
 
           reply(true, { success: true, trackId });
         } else if (action === 'addToQueue') {

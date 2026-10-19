@@ -862,38 +862,46 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     );
   }, [player.isRemote, library, localActiveTrack]);
 
-  const resolvedTrackId = player.isRemote
-    ? player.activeTrack?.id || ''
-    : currentAsset?.id || localActiveTrack?.id || localActiveTrack?.url || '';
+  const resolvedTrackId =
+    player.activeTrack?.id || currentAsset?.id || localActiveTrack?.id || localActiveTrack?.url || '';
 
   const activeMeta = player.isRemote
     ? undefined
     : (resolvedTrackId ? metadataMap[resolvedTrackId] : undefined) ||
+      (player.activeTrack?.id ? metadataMap[player.activeTrack.id] : undefined) ||
       (localActiveTrack?.id ? metadataMap[localActiveTrack.id] : undefined) ||
       (localActiveTrack?.url ? metadataMap[localActiveTrack.url] : undefined);
 
   const unknownArtist = t('common.unknown_artist');
   const unknownTrack = t('common.unknown_track');
+
+  const sourceTitle = player.activeTrack?.title || localActiveTrack?.title || '';
+  const sourceArtist = player.activeTrack?.artist || localActiveTrack?.artist || '';
+
   const activeKeywords = player.isRemote
     ? { expectedArtist: undefined, expectedTrack: undefined }
-    : getSearchKeywords(localActiveTrack?.title || '', localActiveTrack?.artist || '');
+    : getSearchKeywords(sourceTitle, sourceArtist);
 
   const rawArtist = player.isRemote
     ? player.activeTrack?.artist || (player.remoteDeviceName ? `Bağlandı • ${player.remoteDeviceName}` : unknownArtist)
     : (activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
         ? activeMeta.artist.trim()
         : '') ||
+      (player.activeTrack?.artist && player.activeTrack.artist !== 'Local Audio' && player.activeTrack.artist !== 'Bilinmeyen Sanatçı' && player.activeTrack.artist !== 'Unknown Artist'
+        ? cleanYouTubeTitle(player.activeTrack.artist)
+        : '') ||
       (activeKeywords.expectedArtist && activeKeywords.expectedArtist !== 'Local Audio' && activeKeywords.expectedArtist !== 'Bilinmeyen Sanatçı'
         ? activeKeywords.expectedArtist
-        : (localActiveTrack?.artist && localActiveTrack.artist !== 'Local Audio' && localActiveTrack.artist !== 'Bilinmeyen Sanatçı'
-            ? cleanYouTubeTitle(localActiveTrack.artist)
+        : (sourceArtist && sourceArtist !== 'Local Audio' && sourceArtist !== 'Bilinmeyen Sanatçı'
+            ? cleanYouTubeTitle(sourceArtist)
             : unknownArtist));
 
   const rawTitle = player.isRemote
     ? player.activeTrack?.title || 'Müzik Bekleniyor'
     : (activeMeta?.title?.trim() ? activeMeta.title.trim() : '') ||
+      (player.activeTrack?.title && player.activeTrack.title !== 'Unknown Title' ? player.activeTrack.title : '') ||
       activeKeywords.expectedTrack ||
-      localActiveTrack?.title ||
+      sourceTitle ||
       '';
 
   const displayArtist = rawArtist;
@@ -902,12 +910,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     : cleanDisplayTitle(rawTitle, displayArtist !== unknownArtist && displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : undefined) ||
       unknownTrack;
 
-  const currentArtworkUri = player.isRemote
-    ? player.artworkUri || undefined
-    : activeMeta?.artwork ||
-      (resolvedTrackId ? artworkMap[resolvedTrackId] : undefined) ||
-      (localActiveTrack?.id ? artworkMap[localActiveTrack.id] : undefined) ||
-      (typeof localActiveTrack?.artwork === 'string' ? localActiveTrack.artwork : undefined);
+  const currentArtworkUri =
+    player.artworkUri ||
+    activeMeta?.artwork ||
+    (resolvedTrackId ? artworkMap[resolvedTrackId] : undefined) ||
+    (player.activeTrack?.id ? artworkMap[player.activeTrack.id] : undefined) ||
+    (localActiveTrack?.id ? artworkMap[localActiveTrack.id] : undefined) ||
+    (typeof localActiveTrack?.artwork === 'string' ? localActiveTrack.artwork : undefined);
 
   // Önceki ve sonraki şarkıyı belirleme (Kapak geçiş önizlemesi için)
   const prevTrack = useMemo(() => {
