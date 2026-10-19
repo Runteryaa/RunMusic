@@ -8,7 +8,9 @@ import {
   handlePlaybackError,
   clearSessionFailedTracks,
   recordAttemptedTrack,
+  resolveTrackId,
 } from './services/queueController';
+import { cleanYouTubeTitle, cleanDisplayTitle } from './services/lyricsService';
 import { useStore } from './store/useStore';
 import { useThemeStore } from './store/useThemeStore';
 import { useRemoteConnectStore } from './store/useRemoteConnectStore';
@@ -158,24 +160,62 @@ export default async function playbackService() {
       if (event.track && typeof event.index === 'number') {
         clearSessionFailedTracks();
         recordAttemptedTrack(event.track, event.index);
-        const trackId = String(event.track.id ?? event.track.url ?? '');
+        const rawId = String(event.track.id ?? '').trim();
+        const rawUrl = String(event.track.url ?? '').trim();
+        const allAssets = useStore.getState().allAssets;
+        const canonicalId = resolveTrackId(event.track, allAssets);
+        const metadataMap = useStore.getState().metadataMap;
+        const artworkMap = useStore.getState().artworkMap;
 
-        // UI'ın anında (0ms) yeni şarkıya geçmesi için iyimser modeli güncelle
-        const meta = useStore.getState().metadataMap[trackId];
+        const meta =
+          (canonicalId && metadataMap[canonicalId]) ||
+          (rawId && metadataMap[rawId]) ||
+          (rawUrl && metadataMap[rawUrl]) ||
+          undefined;
+
         const art =
           meta?.artwork ||
-          useStore.getState().artworkMap[trackId] ||
+          (canonicalId && artworkMap[canonicalId]) ||
+          (rawId && artworkMap[rawId]) ||
+          (rawUrl && artworkMap[rawUrl]) ||
           (typeof event.track.artwork === 'string' ? event.track.artwork : null);
+
+        const rawArtist = meta?.artist || event.track.artist || '';
+        const cleanArt =
+          rawArtist && rawArtist !== 'Local Audio' && rawArtist !== 'Bilinmeyen Sanatçı'
+            ? cleanYouTubeTitle(rawArtist)
+            : (rawArtist || 'Bilinmeyen Sanatçı');
+
+        const rawTitle = meta?.title || event.track.title || '';
+        const cleanTit =
+          cleanDisplayTitle(rawTitle, cleanArt !== 'Bilinmeyen Sanatçı' ? cleanArt : undefined) ||
+          rawTitle ||
+          'Unknown Title';
+
+        const trackId = canonicalId || rawId || rawUrl;
         const summary = {
           id: trackId,
-          title: meta?.title || event.track.title || 'Unknown Title',
-          artist: meta?.artist || event.track.artist || 'Unknown Artist',
+          title: cleanTit,
+          artist: cleanArt,
           duration: event.track.duration || 0,
           hasArtwork: !!art,
         };
         useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
         if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
           useThemeStore.getState().updateThemeFromArtwork(art);
+        }
+
+        // Native bildirim ve kilit ekranını temizlenmiş meta verilerle senkronize et
+        if (
+          cleanTit !== event.track.title ||
+          cleanArt !== event.track.artist ||
+          (art && art !== event.track.artwork)
+        ) {
+          TrackPlayer.updateMetadataForTrack(event.index, {
+            title: cleanTit,
+            artist: cleanArt,
+            artwork: art || undefined,
+          }).catch(() => {});
         }
 
         await saveLastPlayback(

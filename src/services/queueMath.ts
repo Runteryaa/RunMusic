@@ -418,7 +418,11 @@ export function buildQueueRows<T extends QueueTrackLike>(
   }
 
   if (sections.current) {
-    rows.push({ kind: 'current', key: 'current', entry: sections.current });
+    rows.push({
+      kind: 'current',
+      key: `current-${trackKey(sections.current.track)}-${sections.current.index}`,
+      entry: sections.current,
+    });
   }
 
   if (upNextCount > 0) {

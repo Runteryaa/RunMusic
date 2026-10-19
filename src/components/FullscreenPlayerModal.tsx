@@ -75,9 +75,12 @@ import {
   promoteContextTrackToUpNext,
   removeQueueItem,
   playHistoryTrack,
+  resolveTrackId,
+  trackKey,
   type QueueEntry,
   type QueueRow,
   type QueueSections,
+  type QueueTrackLike,
 } from '../services/queueController';
 import { QueueUpNextList, type UpNextItem } from './QueueUpNextList';
 import { Swipeable } from 'react-native-gesture-handler';
@@ -306,6 +309,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const isShuffle = player.isRemote ? player.isShuffle : storeIsShuffle;
   const isSmartShuffle = player.isRemote ? false : storeIsSmartShuffle;
   const library = useStore((s) => s.library);
+  const allAssets = useStore((s) => s.allAssets);
   const repeatMode = player.isRemote ? player.repeatMode : storeRepeatMode;
   const upNextIds = useStore((s) => s.upNextIds);
   const contextIds = useStore((s) => s.contextIds);
@@ -561,20 +565,71 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const effectiveQueueSections = player.isRemote ? derivedRemoteQueueSections : queueSections;
 
+  const resolveTrackDisplay = useCallback(
+    (track: Track | QueueTrackLike) => {
+      const rawId = String(track.id ?? track.url ?? '').trim();
+      const rawUrl = String(track.url ?? '').trim();
+
+      const baseAssets = allAssets.length > 0 ? allAssets : library;
+      const asset = baseAssets.find(
+        (a) => a.id === rawId || a.uri === rawId || (rawUrl && (a.uri === rawUrl || a.id === rawUrl))
+      );
+      const canonicalId = asset ? asset.id : rawId;
+
+      const meta =
+        (canonicalId && metadataMap[canonicalId]) ||
+        (track.id && metadataMap[track.id]) ||
+        (rawUrl && metadataMap[rawUrl]) ||
+        undefined;
+
+      const artwork =
+        meta?.artwork ||
+        (canonicalId ? artworkMap[canonicalId] : undefined) ||
+        (track.id ? artworkMap[track.id] : undefined) ||
+        (rawUrl ? artworkMap[rawUrl] : undefined) ||
+        (typeof track.artwork === 'string' ? track.artwork : undefined);
+
+      const rawArtist = meta?.artist || track.artist || '';
+      const displayArtist =
+        rawArtist && rawArtist !== 'Local Audio' && rawArtist !== 'Bilinmeyen Sanatçı'
+          ? cleanYouTubeTitle(rawArtist)
+          : (rawArtist || t('common.unknown_artist'));
+
+      const rawTitle = meta?.title || track.title || '';
+      const displayTitle =
+        cleanDisplayTitle(rawTitle, displayArtist !== t('common.unknown_artist') ? displayArtist : undefined) ||
+        rawTitle ||
+        t('common.unknown_track');
+
+      return {
+        canonicalId,
+        title: displayTitle,
+        artist: displayArtist,
+        artwork,
+        trackId: canonicalId || track.id || null,
+        trackUri: track.url || null,
+      };
+    },
+    [allAssets, library, metadataMap, artworkMap, t]
+  );
+
   /** Manuel "Sırada" listesi (görsel model). */
   const upNextItems: UpNextItem[] = useMemo(() => {
     if (!effectiveQueueSections || !effectiveQueueSections.upNext) return [];
     return effectiveQueueSections.upNext
       .filter((entry) => entry && entry.track)
-      .map((entry, i) => ({
-        key: `${entry.track.id ?? entry.track.url}-${i}`,
-        title: cleanDisplayTitle(entry.track.title ?? '', entry.track.artist) || t('common.unknown_track'),
-        artist: entry.track.artist ?? undefined,
-        artwork: typeof entry.track.artwork === 'string' ? entry.track.artwork : undefined,
-        trackId: entry.track.id ?? null,
-        trackUri: entry.track.url ?? null,
-      }));
-  }, [effectiveQueueSections, t]);
+      .map((entry, i) => {
+        const info = resolveTrackDisplay(entry.track);
+        return {
+          key: `${info.canonicalId || entry.track.id || entry.track.url}-${entry.index}-${i}`,
+          title: info.title,
+          artist: info.artist,
+          artwork: info.artwork,
+          trackId: info.trackId,
+          trackUri: info.trackUri,
+        };
+      });
+  }, [effectiveQueueSections, resolveTrackDisplay]);
 
   const handleMoveUpNext = useCallback(
     async (from: number, to: number) => {
@@ -603,7 +658,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       }
       const target = queueSections?.upNext[sectionIndex];
       if (!target) return;
-      await removeQueueItem(target.index);
+      await removeQueueItem(target.index, target.track?.id);
       await refreshQueueSections();
       await refreshQueue();
     },
@@ -611,18 +666,18 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   );
 
   const handleRemoveFromContext = useCallback(
-    async (queueIndex: number) => {
+    async (queueIndex: number, trackId?: string) => {
       if (player.isRemote) {
         const target = effectiveQueueSections?.context.find((e) => e.index === queueIndex);
-        const trackId = target?.track?.id;
+        const tId = trackId || target?.track?.id;
         remoteSyncManager.sendClientCommand({
           type: 'COMMAND_QUEUE_REMOVE',
           trackIndex: queueIndex,
-          trackId: trackId || undefined,
+          trackId: tId || undefined,
         });
         return;
       }
-      await removeQueueItem(queueIndex);
+      await removeQueueItem(queueIndex, trackId);
       await refreshQueueSections();
       await refreshQueue();
     },
@@ -630,11 +685,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   );
 
   const handlePromoteToUpNext = useCallback(
-    async (queueIndex: number) => {
+    async (queueIndex: number, trackId?: string) => {
       if (player.isRemote) {
         return;
       }
-      await promoteContextTrackToUpNext(queueIndex);
+      await promoteContextTrackToUpNext(queueIndex, trackId);
       await refreshQueueSections();
       await refreshQueue();
     },
@@ -653,11 +708,30 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
   const handleQueueItemPress = useCallback(
     async (queueIndex: number, trackId?: string, title?: string, artist?: string) => {
       if (trackId || title) {
-        const art = trackId ? (metadataMap[trackId]?.artwork || artworkMap[trackId] || null) : null;
+        const canonicalId = trackId ? resolveTrackId({ id: trackId }, allAssets) : '';
+        const meta =
+          (canonicalId && metadataMap[canonicalId]) ||
+          (trackId && metadataMap[trackId]) ||
+          undefined;
+        const art =
+          meta?.artwork ||
+          (canonicalId && artworkMap[canonicalId]) ||
+          (trackId && artworkMap[trackId]) ||
+          null;
+
+        const cleanArt =
+          artist && artist !== 'Local Audio' && artist !== 'Bilinmeyen Sanatçı'
+            ? cleanYouTubeTitle(artist)
+            : (artist || 'Unknown Artist');
+        const cleanTit =
+          cleanDisplayTitle(title, cleanArt !== 'Unknown Artist' ? cleanArt : undefined) ||
+          title ||
+          'Unknown Title';
+
         const summary: RemoteTrackSummary = {
-          id: trackId || `queue_${queueIndex}`,
-          title: title || 'Unknown Title',
-          artist: artist || 'Unknown Artist',
+          id: canonicalId || trackId || `queue_${queueIndex}`,
+          title: cleanTit,
+          artist: cleanArt,
           duration: 0,
           hasArtwork: !!art,
         };
@@ -677,13 +751,25 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         return;
       }
       try {
-        await TrackPlayer.skip(queueIndex);
-        await TrackPlayer.play();
+        const freshQueue = await TrackPlayer.getQueue();
+        let targetIndex = -1;
+        if (trackId) {
+          targetIndex = freshQueue.findIndex(
+            (t) => trackKey(t) === trackId || t.id === trackId || t.url === trackId
+          );
+        }
+        if (targetIndex < 0 && queueIndex >= 0 && queueIndex < freshQueue.length) {
+          targetIndex = queueIndex;
+        }
+        if (targetIndex >= 0) {
+          await TrackPlayer.skip(targetIndex);
+          await TrackPlayer.play();
+        }
       } catch (e) {
         console.warn('Queue skip failed', e);
       }
     },
-    [player.isRemote, metadataMap, artworkMap]
+    [player.isRemote, metadataMap, artworkMap, allAssets]
   );
 
   const queueSectionLabels = useMemo(
@@ -772,6 +858,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       entry.track.id?.startsWith('ext_') ||
       (typeof entry.track.url === 'string' && entry.track.url.startsWith('http'));
 
+    const info = resolveTrackDisplay(entry.track);
+
     return (
       <TouchableOpacity
         style={[styles.queueItem, isCurrent && { backgroundColor: theme.surface }]}
@@ -781,9 +869,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             if (player.isRemote) {
               handleQueueItemPress(
                 entry.index,
-                entry.track.id,
-                entry.track.title,
-                entry.track.artist
+                info.trackId || entry.track.id,
+                info.title,
+                info.artist
               );
             } else {
               playHistoryTrack(historyIndex, entry.track);
@@ -791,9 +879,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           } else {
             handleQueueItemPress(
               entry.index,
-              entry.track.id,
-              entry.track.title,
-              entry.track.artist
+              info.trackId || entry.track.id,
+              info.title,
+              info.artist
             );
           }
         }}>
@@ -804,7 +892,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           <Text
             style={[styles.queueTrackTitle, isCurrent && { color: theme.primary }]}
             numberOfLines={1}>
-            {cleanDisplayTitle(entry.track.title, entry.track.artist)}
+            {info.title}
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
             {isExtensionTrack && (
@@ -814,7 +902,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               </View>
             )}
             <Text style={styles.queueTrackArtist} numberOfLines={1}>
-              {entry.track.artist}
+              {info.artist}
             </Text>
           </View>
         </View>
@@ -827,7 +915,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             activeOpacity={0.7}
             onPress={(e) => {
               e.stopPropagation();
-              handlePromoteToUpNext(entry.index);
+              handlePromoteToUpNext(entry.index, info.trackId || entry.track.id);
             }}>
             <Ionicons name="arrow-up-circle-outline" size={22} color="rgba(255,255,255,0.45)" />
           </TouchableOpacity>
@@ -845,31 +933,33 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         // Geçmiş salt görüntülenir; dokununca o parçaya geri döner.
         return renderQueueTrackRow(item.entry, false, true, item.historyIndex);
 
-      case 'current':
+      case 'current': {
+        const info = resolveTrackDisplay(item.entry.track);
         return (
           <>
             <Text style={styles.queueSectionTitle}>{t('queue.now_playing_section')}</Text>
             <View style={[styles.queueItem, { backgroundColor: theme.surface }]}>
               <TrackArtwork
-                uri={typeof item.entry.track.artwork === 'string' ? item.entry.track.artwork : undefined}
-                trackId={item.entry.track.id ?? null}
-                trackUri={item.entry.track.url ?? null}
+                uri={info.artwork}
+                trackId={info.trackId}
+                trackUri={info.trackUri}
                 size={40}
                 borderRadius={6}
                 iconSize={18}
               />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={[styles.queueTrackTitle, { color: theme.primary }]} numberOfLines={1}>
-                  {cleanDisplayTitle(item.entry.track.title, item.entry.track.artist)}
+                  {info.title}
                 </Text>
                 <Text style={styles.queueTrackArtist} numberOfLines={1}>
-                  {item.entry.track.artist}
+                  {info.artist}
                 </Text>
               </View>
               <Ionicons name="volume-high" size={20} color={theme.primary} />
             </View>
           </>
         );
+      }
 
       case 'upnext':
         return (
@@ -895,11 +985,12 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               onItemPress={(_, idx) => {
                 const target = effectiveQueueSections?.upNext[idx];
                 if (target) {
+                  const info = resolveTrackDisplay(target.track);
                   handleQueueItemPress(
                     target.index,
-                    target.track.id,
-                    target.track.title,
-                    target.track.artist
+                    info.trackId || target.track.id,
+                    info.title,
+                    info.artist
                   );
                 }
               }}
@@ -907,7 +998,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
           </View>
         );
 
-      case 'context':
+      case 'context': {
+        const info = resolveTrackDisplay(item.entry.track);
         return (
           <Swipeable
             overshootRight={false}
@@ -916,7 +1008,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <TouchableOpacity
                 style={[styles.queuePromoteAction, { backgroundColor: theme.primary }]}
                 activeOpacity={0.8}
-                onPress={() => handlePromoteToUpNext(item.entry.index)}>
+                onPress={() => handlePromoteToUpNext(item.entry.index, info.trackId || item.entry.track.id)}>
                 <Ionicons name="arrow-up-circle-outline" size={22} color="#ffffff" />
                 <Text style={styles.queuePromoteText}>{t('queue.promote_to_up_next') || 'Öne Al'}</Text>
               </TouchableOpacity>
@@ -925,13 +1017,14 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               <TouchableOpacity
                 style={[styles.queueRemoveAction, { backgroundColor: '#ef4444' }]}
                 activeOpacity={0.8}
-                onPress={() => handleRemoveFromContext(item.entry.index)}>
+                onPress={() => handleRemoveFromContext(item.entry.index, info.trackId || item.entry.track.id)}>
                 <Ionicons name="trash-outline" size={20} color="#ffffff" />
               </TouchableOpacity>
             )}>
             {renderQueueTrackRow(item.entry, false, false, undefined, true)}
           </Swipeable>
         );
+      }
 
       default:
         return null;
@@ -2565,7 +2658,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               ref={queueListRef}
               data={queueRows}
               initialScrollIndex={currentRowIndex >= 0 ? currentRowIndex : undefined}
-              extraData={`${isShuffle}-${isSmartShuffle}-${repeatMode}-${queueRevision}-${remoteState.queue?.length}-${player.activeTrack?.id}`}
+              extraData={`${isShuffle}-${isSmartShuffle}-${repeatMode}-${queueRevision}-${remoteState.queue?.length}-${player.activeTrack?.id}-${activeTrack?.id ?? localActiveTrack?.id ?? ''}-${Object.keys(metadataMap).length}-${Object.keys(artworkMap).length}`}
               keyExtractor={(row) => row.key}
               renderItem={renderQueueRow}
               contentContainerStyle={styles.queueScrollContent}

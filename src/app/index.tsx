@@ -662,6 +662,20 @@ export default function LibraryScreen() {
       // önceki liste düzeninde kalır ve "shuffle seçili ama sıra karışmıyor"
       // durumu ortaya çıkar.
       if (existingIndex >= 0 && !isShuffle) {
+        const info = getTrackDisplayInfo(selectedAsset);
+        const art = targetArtwork || null;
+        const summary = {
+          id: selectedAsset.id,
+          title: info.title || 'Unknown Title',
+          artist: info.artist || 'Unknown Artist',
+          duration: selectedAsset.duration || 0,
+          hasArtwork: !!art,
+        };
+        useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+        if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
+          useThemeStore.getState().updateThemeFromArtwork(art);
+        }
+
         try {
           await TrackPlayer.skip(existingIndex);
           await TrackPlayer.play();

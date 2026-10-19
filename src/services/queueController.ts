@@ -171,13 +171,18 @@ export async function playHistoryTrack(historyIndex: number, track?: Track | Que
     const targetKey = trackKey(targetTrack);
     const targetIndex = queue.findIndex((t) => trackKey(t) === targetKey);
 
-    const meta = useStore.getState().metadataMap[targetTrack.id];
+    const allAssets = useStore.getState().allAssets;
+    const canonicalId = resolveTrackId(targetTrack, allAssets);
+    const meta =
+      (canonicalId && useStore.getState().metadataMap[canonicalId]) ||
+      useStore.getState().metadataMap[targetTrack.id];
     const art =
       meta?.artwork ||
+      (canonicalId && useStore.getState().artworkMap[canonicalId]) ||
       useStore.getState().artworkMap[targetTrack.id] ||
       (typeof targetTrack.artwork === 'string' ? targetTrack.artwork : null);
     const summary = {
-      id: targetTrack.id,
+      id: canonicalId || targetTrack.id,
       title: meta?.title || targetTrack.title || 'Unknown Title',
       artist: meta?.artist || targetTrack.artist || 'Unknown Artist',
       duration: (targetTrack as any).duration || 0,
@@ -333,14 +338,32 @@ export async function startPlaybackFromLibrary(params: {
         .slice(startIndex + 1)
         .filter((t) => !upNextKeys.has(trackKey(t))) as Track[];
       finalQueue = [...before, ...preservedUpNextTracks, ...after];
-      finalStartIndex = Math.max(0, before.length - 1);
+      finalStartIndex = finalQueue.findIndex((t) => trackKey(t) === startId);
+      if (finalStartIndex < 0) {
+        finalStartIndex = Math.max(0, before.length - 1);
+      }
     }
   } else {
     finalQueue = ordered as Track[];
     finalStartIndex = startIndex;
   }
 
-  await TrackPlayer.setQueue(finalQueue);
+  const enrichedQueue = finalQueue.map((t) => {
+    const k = trackKey(t);
+    const meta = metadataMap[k];
+    const art =
+      meta?.artwork ||
+      useStore.getState().artworkMap[k] ||
+      (typeof t.artwork === 'string' ? t.artwork : undefined);
+    return {
+      ...t,
+      title: meta?.title || t.title,
+      artist: meta?.artist || t.artist,
+      artwork: art,
+    };
+  });
+
+  await TrackPlayer.setQueue(enrichedQueue);
   if (finalStartIndex > 0) {
     await TrackPlayer.skip(finalStartIndex);
   }
@@ -453,11 +476,18 @@ export async function addTracksToQueue(
  * Düşük öncelikli bağlam (kütüphane) listesindeki bir parçayı
  * yüksek öncelikli "Sırada" (Up Next) bölümünün sonuna taşır.
  */
-export async function promoteContextTrackToUpNext(queueIndex: number): Promise<void> {
+export async function promoteContextTrackToUpNext(queueIndex: number, trackId?: string): Promise<void> {
   const { queue, activeIndex } = await readQueueState();
-  if (queueIndex <= activeIndex || queueIndex >= queue.length) return;
+  let targetIndex = queueIndex;
+  if (trackId) {
+    const resolved = queue.findIndex(
+      (t) => trackKey(t) === trackId || t.id === trackId || t.url === trackId
+    );
+    if (resolved >= 0) targetIndex = resolved;
+  }
+  if (targetIndex <= activeIndex || targetIndex >= queue.length) return;
 
-  const targetTrack = queue[queueIndex];
+  const targetTrack = queue[targetIndex];
   if (!targetTrack) return;
 
   const currentUpNext = useStore.getState().upNextIds;
@@ -467,10 +497,10 @@ export async function promoteContextTrackToUpNext(queueIndex: number): Promise<v
   if (currentUpNext.includes(key)) return;
 
   const last = sections.upNext[sections.upNext.length - 1];
-  const targetIndex = last ? last.index + 1 : activeIndex + 1;
+  const targetDesiredIndex = last ? last.index + 1 : activeIndex + 1;
 
-  if (queueIndex !== targetIndex) {
-    await TrackPlayer.move(queueIndex, targetIndex);
+  if (targetIndex !== targetDesiredIndex) {
+    await TrackPlayer.move(targetIndex, targetDesiredIndex);
   }
 
   const remaining = currentUpNext.filter((id) => id !== key);
@@ -482,11 +512,18 @@ export async function promoteContextTrackToUpNext(queueIndex: number): Promise<v
  * Sıradaki bir öğeyi kuyruktan çıkarır ve `upNextIds`'i yeniden eşitler.
  * Yalnızca mevcut parçanın İLERİSİNDEKİ öğeler kaldırılabilir.
  */
-export async function removeQueueItem(index: number): Promise<void> {
+export async function removeQueueItem(index: number, trackId?: string): Promise<void> {
   const { queue, activeIndex } = await readQueueState();
-  if (index <= activeIndex || index >= queue.length) return;
+  let targetIndex = index;
+  if (trackId) {
+    const resolved = queue.findIndex(
+      (t) => trackKey(t) === trackId || t.id === trackId || t.url === trackId
+    );
+    if (resolved >= 0) targetIndex = resolved;
+  }
+  if (targetIndex <= activeIndex || targetIndex >= queue.length) return;
 
-  await TrackPlayer.remove(index);
+  await TrackPlayer.remove(targetIndex);
   await resyncUpNextFromQueue();
   await persistQueue();
 }

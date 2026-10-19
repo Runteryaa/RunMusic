@@ -32,10 +32,20 @@ export function TrackArtwork({
   const [hasError, setHasError] = useState(false);
   const theme = useThemeStore((state) => state.theme);
   const artworkMap = useStore((state) => state.artworkMap);
+  const metadataMap = useStore((state) => state.metadataMap);
+  const allAssets = useStore((state) => state.allAssets);
   const setArtwork = useStore((state) => state.setArtwork);
 
-  // If direct uri provided and not errored, use it; otherwise check store by trackId
-  const effectiveUri = uri || (trackId ? artworkMap[trackId] : undefined);
+  const canonicalId = trackId
+    ? allAssets.find((a) => a.id === trackId || a.uri === trackId)?.id || trackId
+    : null;
+
+  // If direct uri provided and not errored, use it; otherwise check store by canonicalId/trackId/trackUri
+  const effectiveUri =
+    uri ||
+    (canonicalId ? (metadataMap[canonicalId]?.artwork || artworkMap[canonicalId]) : undefined) ||
+    (trackId ? (metadataMap[trackId]?.artwork || artworkMap[trackId]) : undefined) ||
+    (trackUri ? (metadataMap[trackUri]?.artwork || artworkMap[trackUri]) : undefined);
 
   useEffect(() => {
     setHasError(false);
