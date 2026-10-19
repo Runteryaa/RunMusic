@@ -32,6 +32,9 @@ import { useThemeStore } from '../store/useThemeStore';
 import { useSleepTimerStore } from '../store/useSleepTimerStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
+import { useDownloadStore } from '../store/useDownloadStore';
+import { useExtensionStore } from '../store/useExtensionStore';
+import { startDownload } from '../services/downloadManager';
 import { useActivePlayer } from '../hooks/useActivePlayer';
 import { useActiveProgress } from '../hooks/useActiveProgress';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
@@ -959,6 +962,91 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       (typeof nextTrack.artwork === 'string' ? nextTrack.artwork : undefined)
     );
   }, [nextTrack, metadataMap, artworkMap]);
+
+  // Şu an oynatılan parçayı hafızadan/akıştan indirme mantığı
+  const targetDownloadUrl = useMemo(() => {
+    return (
+      (localActiveTrack as any)?.downloadUrl ||
+      (localActiveTrack as any)?.url ||
+      (activeTrack as any)?.downloadUrl ||
+      (activeTrack as any)?.url ||
+      ''
+    );
+  }, [localActiveTrack, activeTrack]);
+
+  const isRemoteStream = useMemo(() => {
+    return (
+      typeof targetDownloadUrl === 'string' &&
+      (targetDownloadUrl.startsWith('http://') || targetDownloadUrl.startsWith('https://'))
+    );
+  }, [targetDownloadUrl]);
+
+  const downloadTasks = useDownloadStore((s) => s.tasks);
+  const currentDownloadTask = useMemo(() => {
+    if (!targetDownloadUrl) return undefined;
+    return downloadTasks.find(
+      (t) =>
+        t.downloadUrl === targetDownloadUrl ||
+        (localActiveTrack?.url && t.downloadUrl === localActiveTrack.url) ||
+        (localActiveTrack?.id && t.id.includes(localActiveTrack.id)) ||
+        (t.title === displayTitle && t.artist === displayArtist)
+    );
+  }, [downloadTasks, targetDownloadUrl, localActiveTrack, displayTitle, displayArtist]);
+
+  const isCurrentTrackDownloading = currentDownloadTask?.status === 'downloading';
+  const isCurrentTrackDownloaded = currentDownloadTask?.status === 'completed';
+
+  const handleDownloadCurrentTrack = useCallback(async () => {
+    if (!targetDownloadUrl || !isRemoteStream) {
+      Alert.alert('Bilgi', 'Bu parça zaten cihazınızın yerel depolamasında kayıtlıdır.');
+      return;
+    }
+
+    if (isCurrentTrackDownloaded) {
+      Alert.alert(
+        'Zaten İndirildi',
+        `"${displayTitle}" zaten özel depolama alanınızda kayıtlıdır.`,
+        [
+          { text: 'Tamam' },
+          {
+            text: 'İndirilenleri Aç',
+            onPress: () => useExtensionStore.getState().openDownloadsModal(),
+          },
+        ]
+      );
+      return;
+    }
+
+    if (isCurrentTrackDownloading) {
+      Alert.alert('İndiriliyor', `"${displayTitle}" şu anda arka planda indiriliyor.`);
+      return;
+    }
+
+    try {
+      const finalTitle = displayTitle || localActiveTrack?.title || 'Unknown Title';
+      const finalArtist = displayArtist || localActiveTrack?.artist || 'Unknown Artist';
+      const artwork =
+        currentArtworkUri ||
+        (typeof localActiveTrack?.artwork === 'string' ? localActiveTrack.artwork : undefined);
+
+      await startDownload({
+        title: finalTitle,
+        artist: finalArtist,
+        artwork: artwork,
+        downloadUrl: targetDownloadUrl,
+        suggestedFileName: `${finalArtist} - ${finalTitle}.mp3`,
+        storageTarget: 'private',
+      });
+
+      Alert.alert(
+        'İndirme Başlatıldı',
+        `"${finalTitle}" indirilmeye başlandı. İndirme Yöneticisi'nden takip edebilirsiniz.`
+      );
+    } catch (err: any) {
+      console.warn('[FullscreenPlayerModal] İndirme hatası:', err);
+      Alert.alert('İndirme Hatası', err?.message || 'İndirme başlatılamadı.');
+    }
+  }, [targetDownloadUrl, isRemoteStream, isCurrentTrackDownloaded, isCurrentTrackDownloading, displayTitle, displayArtist, localActiveTrack, currentArtworkUri]);
 
   // Metadata senkronizasyonu.
   //
@@ -1908,6 +1996,32 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             </Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {/* Hafızadaki Oynatılan Parçayı İndirme Butonu */}
+            {isRemoteStream && (
+              <TouchableOpacity
+                style={styles.headerIconBtn}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                onPress={handleDownloadCurrentTrack}>
+                <Ionicons
+                  name={
+                    isCurrentTrackDownloaded
+                      ? 'checkmark-circle'
+                      : isCurrentTrackDownloading
+                      ? 'cloud-download'
+                      : 'arrow-down-circle-outline'
+                  }
+                  size={24}
+                  color={
+                    isCurrentTrackDownloaded
+                      ? '#10b981'
+                      : isCurrentTrackDownloading
+                      ? theme.primary
+                      : 'rgba(255, 255, 255, 0.85)'
+                  }
+                />
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
               style={styles.headerIconBtn}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
@@ -3538,6 +3652,28 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 </>
               ) : (
                 <>
+                  {isRemoteStream && (
+                    <TouchableOpacity
+                      style={styles.optionsModalRow}
+                      onPress={() => {
+                        setIsOptionsModalOpen(false);
+                        handleDownloadCurrentTrack();
+                      }}>
+                      <Ionicons
+                        name={isCurrentTrackDownloaded ? 'checkmark-circle-outline' : 'download-outline'}
+                        size={24}
+                        color={isCurrentTrackDownloaded ? '#10b981' : theme.primary}
+                        style={{ marginRight: 16 }}
+                      />
+                      <Text style={[styles.optionsModalText, { color: isCurrentTrackDownloaded ? '#10b981' : theme.primary }]}>
+                        {isCurrentTrackDownloaded
+                          ? 'Parça İndirildi (Özel Depolama)'
+                          : isCurrentTrackDownloading
+                          ? 'İndiriliyor...'
+                          : 'Şu An Çalan Parçayı İndir'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
                     style={styles.optionsModalRow}
                     onPress={() => {

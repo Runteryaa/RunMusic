@@ -782,6 +782,7 @@
             artist: streamData.author || activeVideo.author,
             artwork: streamData.thumbnail || activeVideo.thumbnail,
             streamUrl: streamUrl,
+            downloadUrl: streamData.mp4 || streamData.mp3,
             duration: activeVideo.durationSec || 0
           });
           showToast(`▶ Oynatılıyor: ${streamData.title || activeVideo.title}`);
@@ -850,6 +851,7 @@
             artist: streamData.author || activeVideo.author,
             artwork: streamData.thumbnail || activeVideo.thumbnail,
             streamUrl: streamUrl,
+            downloadUrl: streamData.mp4 || streamData.mp3,
             duration: activeVideo.durationSec || 0
           }]);
           showToast(`➕ Kuyruğa eklendi: ${streamData.title || activeVideo.title}`);

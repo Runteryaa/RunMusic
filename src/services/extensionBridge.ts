@@ -257,7 +257,8 @@ export async function handleBridgeMessage(
             artist: trackItem.artist || extension.manifest.name,
             artwork: trackItem.artwork || extension.manifest.icon,
             duration: trackItem.duration || 0,
-          };
+            ...(trackItem.downloadUrl ? { downloadUrl: trackItem.downloadUrl } : {}),
+          } as any;
 
           // TrackPlayer'a yükle ve çal
           await TrackPlayer.reset();
@@ -278,7 +279,8 @@ export async function handleBridgeMessage(
               artist: t.artist || extension.manifest.name,
               artwork: t.artwork || extension.manifest.icon,
               duration: t.duration || 0,
-            }));
+              ...(t.downloadUrl ? { downloadUrl: t.downloadUrl } : {}),
+            } as any));
 
           if (tracksToAdd.length > 0) {
             await TrackPlayer.add(tracksToAdd);
