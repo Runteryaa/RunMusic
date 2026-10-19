@@ -9,7 +9,7 @@
     "url": "https://github.com/Runteryaa/RunMusic"
   },
   "icon": "https://raw.githubusercontent.com/Runteryaa/RunMusic/main/assets/icon.png",
-  "entryUrl": "https://runteryaa.github.io/RunMusic/sample-extension/index.html",
+  "entryUrl": "./index.html",
   "categories": ["audio-source", "charts-discovery"],
   "permissions": [
     "player.control",
