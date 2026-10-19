@@ -144,6 +144,14 @@ function MainAppLayout() {
             }}
           />
           <Tabs.Screen
+            name="extensions"
+            options={{
+              title: t('tabs.extensions'),
+              headerShown: false,
+              tabBarIcon: ({ color }) => <Ionicons name="extension-puzzle-outline" size={24} color={color} />,
+            }}
+          />
+          <Tabs.Screen
             name="settings"
             options={{
               title: t('tabs.settings'),

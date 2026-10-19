@@ -62,6 +62,7 @@ export const translations = {
     },
     tabs: {
       library: 'Kütüphane',
+      extensions: 'Eklentiler',
       settings: 'Ayarlar',
     },
     settings: {
@@ -341,6 +342,7 @@ export const translations = {
     },
     tabs: {
       library: 'Library',
+      extensions: 'Extensions',
       settings: 'Settings',
     },
     settings: {

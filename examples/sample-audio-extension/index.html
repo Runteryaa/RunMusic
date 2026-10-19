@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Açık Müzik & Ses Kaynağı</title>
+  <style>
+    :root {
+      --primary: #3b82f6;
+      --bg: #121212;
+      --card-bg: #1e1e1e;
+      --text: #ffffff;
+      --text-muted: #a1a1aa;
+      --border: #27272a;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      padding-bottom: 90px;
+    }
+
+    header {
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    p.subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 18px;
+    }
+
+    .search-bar {
+      display: flex;
+      align-items: center;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 14px;
+      margin-top: 14px;
+    }
+
+    .search-bar input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    .search-bar input::placeholder {
+      color: #71717a;
+    }
+
+    .tracks-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .track-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border-color 0.2s;
+    }
+
+    .track-info-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .track-artwork {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      background: #27272a;
+      object-fit: cover;
+    }
+
+    .track-details {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .track-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .track-artist {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .track-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    button {
+      flex: 1;
+      padding: 9px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: opacity 0.15s;
+    }
+
+    button:active {
+      opacity: 0.75;
+    }
+
+    .btn-play {
+      background: var(--primary);
+      color: #ffffff;
+    }
+
+    .btn-download {
+      background: #27272a;
+      color: #ffffff;
+      border: 1px solid #3f3f46;
+    }
+
+    .btn-queue {
+      background: #18181b;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      max-width: 40px;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #27272a;
+      color: #ffffff;
+      padding: 10px 18px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+      z-index: 999;
+    }
+
+    .toast.show {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Açık Müzik & Ses Kaynağı</h1>
+    <p class="subtitle">Creative Commons ve telifsiz parçaları arayın, RunMusic ile stream çalın veya kütüphanenize indirin.</p>
+    
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="Parça veya sanatçı ara..." oninput="handleSearch()">
+    </div>
+  </header>
+
+  <div class="tracks-container" id="tracksList">
+    <!-- Tracks rendered dynamically -->
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const SAMPLE_TRACKS = [
+      {
+        id: "cc_1",
+        title: "SoundHelix Song 1",
+        artist: "T. Schürger (CC-BY)",
+        artwork: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=150&auto=format&fit=crop&q=80",
+        streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+        duration: 372
+      },
+      {
+        id: "cc_2",
+        title: "SoundHelix Song 2",
+        artist: "T. Schürger (CC-BY)",
+        artwork: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=150&auto=format&fit=crop&q=80",
+        streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
+        duration: 423
+      },
+      {
+        id: "cc_3",
+        title: "SoundHelix Song 3",
+        artist: "T. Schürger (CC-BY)",
+        artwork: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=150&auto=format&fit=crop&q=80",
+        streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
+        duration: 345
+      },
+      {
+        id: "cc_4",
+        title: "SoundHelix Song 4",
+        artist: "T. Schürger (CC-BY)",
+        artwork: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=150&auto=format&fit=crop&q=80",
+        streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
+        duration: 302
+      }
+    ];
+
+    let currentTracks = [...SAMPLE_TRACKS];
+
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 2500);
+    }
+
+    function renderTracks() {
+      const container = document.getElementById('tracksList');
+      if (currentTracks.length === 0) {
+        container.innerHTML = '<p style="color:#71717a; text-align:center; padding:30px;">Sonuç bulunamadı.</p>';
+        return;
+      }
+
+      container.innerHTML = currentTracks.map((t) => `
+        <div class="track-card">
+          <div class="track-info-row">
+            <img class="track-artwork" src="${t.artwork}" alt="${t.title}" />
+            <div class="track-details">
+              <div class="track-title">${t.title}</div>
+              <div class="track-artist">${t.artist}</div>
+            </div>
+          </div>
+          <div class="track-actions">
+            <button class="btn-play" onclick="playTrack('${t.id}')">
+              ▶ Çal (Stream)
+            </button>
+            <button class="btn-download" onclick="downloadTrack('${t.id}')">
+              ⬇ İndir
+            </button>
+            <button class="btn-queue" title="Kuyruğa Ekle" onclick="queueTrack('${t.id}')">
+              +
+            </button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function handleSearch() {
+      const q = document.getElementById('searchInput').value.toLowerCase().trim();
+      if (!q) {
+        currentTracks = [...SAMPLE_TRACKS];
+      } else {
+        currentTracks = SAMPLE_TRACKS.filter(t =>
+          t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)
+        );
+      }
+      renderTracks();
+    }
+
+    async function playTrack(id) {
+      const track = SAMPLE_TRACKS.find(t => t.id === id);
+      if (!track) return;
+
+      if (window.RunMusic && window.RunMusic.player) {
+        try {
+          await window.RunMusic.player.play(track);
+          showToast(`Çalınıyor: ${track.title}`);
+        } catch (e) {
+          showToast(`Oynatma hatası: ${e.message}`);
+        }
+      } else {
+        showToast(`RunMusic SDK hazır değil. Parça: ${track.title}`);
+      }
+    }
+
+    async function queueTrack(id) {
+      const track = SAMPLE_TRACKS.find(t => t.id === id);
+      if (!track) return;
+
+      if (window.RunMusic && window.RunMusic.player) {
+        try {
+          await window.RunMusic.player.addToQueue([track]);
+          showToast(`Kuyruğa eklendi: ${track.title}`);
+        } catch (e) {
+          showToast(`Hata: ${e.message}`);
+        }
+      }
+    }
+
+    async function downloadTrack(id) {
+      const track = SAMPLE_TRACKS.find(t => t.id === id);
+      if (!track) return;
+
+      if (window.RunMusic && window.RunMusic.downloader) {
+        try {
+          const res = await window.RunMusic.downloader.download({
+            title: track.title,
+            artist: track.artist,
+            artwork: track.artwork,
+            downloadUrl: track.streamUrl,
+            suggestedFileName: `${track.artist} - ${track.title}.mp3`,
+            storageTarget: "public"
+          });
+          showToast(`İndirme başlatıldı! (ID: ${res.downloadId})`);
+        } catch (e) {
+          showToast(`İndirme başlatılamadı: ${e.message}`);
+        }
+      } else {
+        showToast(`İndirme SDK'sı bulunamadı.`);
+      }
+    }
+
+    // RunMusic tema senkronizasyonu
+    async function syncTheme() {
+      if (window.RunMusic && window.RunMusic.theme) {
+        try {
+          const theme = await window.RunMusic.theme.getTheme();
+          if (theme && theme.primary) {
+            document.documentElement.style.setProperty('--primary', theme.primary);
+          }
+        } catch (e) {
+          console.warn('Tema okunamadı', e);
+        }
+      }
+    }
+
+    window.addEventListener('RunMusicReady', () => {
+      syncTheme();
+    });
+
+    // İlk render
+    renderTracks();
+    if (window.RunMusic) {
+      syncTheme();
+    }
+  </script>
+</body>
+</html>

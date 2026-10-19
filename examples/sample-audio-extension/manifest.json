@@ -1,0 +1,20 @@
+{
+  "$schema": "https://runmusic.app/schemas/v1/extension.json",
+  "id": "org.runmusic.sample-audio",
+  "name": "Açık Müzik & Ses Kaynağı",
+  "version": "1.0.0",
+  "description": "Creative Commons ve telifsiz müzikleri keşfedin, anında dinleyin veya kütüphanenize indirin.",
+  "author": {
+    "name": "RunMusic Community",
+    "url": "https://github.com/Runteryaa/RunMusic"
+  },
+  "icon": "https://raw.githubusercontent.com/Runteryaa/RunMusic/main/assets/icon.png",
+  "entryUrl": "https://runteryaa.github.io/RunMusic/sample-extension/index.html",
+  "categories": ["audio-source", "charts-discovery"],
+  "permissions": [
+    "player.control",
+    "downloader.save",
+    "storage.scoped",
+    "theme.read"
+  ]
+}
