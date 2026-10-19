@@ -6,11 +6,11 @@ import {
   FlatList,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   Image,
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import TrackPlayer, { Track } from 'react-native-track-player';
 import { useDownloadStore } from '../store/useDownloadStore';
@@ -235,7 +235,7 @@ export const DownloadsModal: React.FC = () => {
       animationType="slide"
       onRequestClose={close}
     >
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerTitleRow}>
@@ -246,14 +246,6 @@ export const DownloadsModal: React.FC = () => {
           <TouchableOpacity onPress={close} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Ionicons name="close" size={24} color="#ffffff" />
           </TouchableOpacity>
-        </View>
-
-        {/* Özel Depolama Bilgilendirme Banner'ı */}
-        <View style={styles.infoBanner}>
-          <Ionicons name="folder-outline" size={18} color="#10b981" style={{ marginRight: 8, marginTop: 1 }} />
-          <Text style={styles.infoBannerText}>
-            İndirilen tüm şarkılar uygulamanın özel depolama alanında güvenle saklanır. İstediğiniz parçayı &quot;Kütüphaneye Ekle&quot; butonuyla cihazınızın genel müzik kütüphanesine aktarabilirsiniz.
-          </Text>
         </View>
 
         {/* Liste Başlığı & Temizleme Butonu */}
@@ -309,21 +301,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     color: '#ffffff',
-  },
-  infoBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#18181b',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#27272a',
-  },
-  infoBannerText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#a1a1aa',
-    lineHeight: 17,
   },
   subHeader: {
     flexDirection: 'row',
