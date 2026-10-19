@@ -12,10 +12,12 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import TrackPlayer from 'react-native-track-player';
+import TrackPlayer, { Track } from 'react-native-track-player';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useExtensionStore } from '../store/useExtensionStore';
 import { useThemeStore } from '../store/useThemeStore';
+import { useStore } from '../store/useStore';
+import { setupTrackPlayerIfNeeded } from '../services/playerBootstrap';
 import {
   cancelDownload,
   addDownloadToLibrary,
@@ -44,15 +46,28 @@ export const DownloadsModal: React.FC = () => {
   const handlePlayTrack = async (item: DownloadTask) => {
     if (!item.localFileUri) return;
     try {
-      await TrackPlayer.reset();
-      await TrackPlayer.add({
+      await setupTrackPlayerIfNeeded();
+      const track: Track = {
         id: item.id,
         url: item.localFileUri,
         title: item.title,
         artist: item.artist,
         artwork: item.artwork,
-      });
+      };
+      await TrackPlayer.setQueue([track]);
       await TrackPlayer.play();
+      if (item.artwork) {
+        useStore.getState().setArtwork(item.id, item.artwork);
+      }
+      useStore.getState().setTrackMetadata(item.id, {
+        title: item.title,
+        artist: item.artist,
+        artwork: item.artwork,
+      });
+      useStore.setState({
+        contextIds: [item.id],
+        upNextIds: [],
+      });
     } catch (err: any) {
       console.warn('[DownloadsModal] Oynatma hatası:', err);
       Alert.alert('Oynatma Hatası', err?.message || 'Parça çalınamadı.');

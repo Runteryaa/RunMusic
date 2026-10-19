@@ -1,7 +1,8 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import * as MediaLibrary from 'expo-media-library';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useStore } from '../store/useStore';
+import { saveCachedLibrary } from './libraryStorage';
 import type { DownloadTask } from '../types/download';
 
 const activeDownloads = new Map<string, FileSystem.DownloadResumable>();
@@ -133,19 +134,31 @@ async function executeDownload(task: DownloadTask): Promise<void> {
       try {
         const isVideo = task.fileName.toLowerCase().endsWith('.mp4');
         const permissionsToRequest: ('audio' | 'video')[] = isVideo ? ['audio', 'video'] : ['audio'];
-        let permission = await MediaLibrary.getPermissionsAsync(false, permissionsToRequest);
-        if (!permission.granted && permission.canAskAgain) {
-          permission = await MediaLibrary.requestPermissionsAsync(false, permissionsToRequest);
+        let permission = await MediaLibrary.getPermissionsAsync(false, permissionsToRequest as any);
+        if (!permission.granted && permission.status !== 'granted' && permission.canAskAgain) {
+          permission = await MediaLibrary.requestPermissionsAsync(false, permissionsToRequest as any);
         }
 
-        if (permission.granted) {
+        if (permission.granted || permission.status === 'granted') {
           const createdAsset = await MediaLibrary.createAssetAsync(result.uri);
-          mediaAssetId = createdAsset.id;
+          if (createdAsset?.id) {
+            mediaAssetId = createdAsset.id;
 
-          // RunMusic ana kütüphanesine yeni varlığı anında ekle
-          const currentLib = useStore.getState().library;
-          if (!currentLib.some((a) => a.id === createdAsset.id || a.uri === createdAsset.uri)) {
-            useStore.getState().setLibrary([createdAsset, ...currentLib]);
+            // RunMusic ana kütüphanesine yeni varlığı anında ekle ve önbelleğe kaydet
+            const currentLib = useStore.getState().library;
+            if (!currentLib.some((a) => a.id === createdAsset.id || a.uri === createdAsset.uri)) {
+              const updatedLib = [createdAsset, ...currentLib];
+              useStore.getState().setLibrary(updatedLib);
+              saveCachedLibrary(updatedLib).catch(() => {});
+            }
+
+            if (task.title || task.artist || task.artwork) {
+              useStore.getState().setTrackMetadata(createdAsset.id, {
+                title: task.title,
+                artist: task.artist,
+                artwork: task.artwork,
+              });
+            }
           }
         }
       } catch (mediaLibErr) {
@@ -228,20 +241,34 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
   }
 
   let permission = await MediaLibrary.getPermissionsAsync(false, ['audio']);
-  if (!permission.granted && permission.canAskAgain) {
+  if (!permission.granted && permission.status !== 'granted' && permission.canAskAgain) {
     permission = await MediaLibrary.requestPermissionsAsync(false, ['audio']);
   }
 
-  if (!permission.granted) {
+  if (!permission.granted && permission.status !== 'granted') {
     throw new Error('Cihaz medya kütüphanesi erişim izni verilmedi.');
   }
 
   const createdAsset = await MediaLibrary.createAssetAsync(targetFileUri);
+  if (!createdAsset || !createdAsset.id) {
+    throw new Error('Medya varlığı oluşturulamadı.');
+  }
 
-  // RunMusic ana kütüphanesine varlığı anında ekle
+  // RunMusic ana kütüphanesine varlığı anında ekle ve önbelleğe kaydet
   const currentLib = useStore.getState().library;
   if (!currentLib.some((a) => a.id === createdAsset.id || a.uri === createdAsset.uri)) {
-    useStore.getState().setLibrary([createdAsset, ...currentLib]);
+    const updatedLib = [createdAsset, ...currentLib];
+    useStore.getState().setLibrary(updatedLib);
+    saveCachedLibrary(updatedLib).catch(() => {});
+  }
+
+  // Şarkı bilgilerini metadataMap'e yaz ki kütüphanede sanatçı ve başlık anında görünsün
+  if (task.title || task.artist || task.artwork) {
+    useStore.getState().setTrackMetadata(createdAsset.id, {
+      title: task.title,
+      artist: task.artist,
+      artwork: task.artwork,
+    });
   }
 
   // Görevi kütüphaneye eklendi olarak işaretle

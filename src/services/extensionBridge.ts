@@ -6,6 +6,7 @@ import { useExtensionStore } from '../store/useExtensionStore';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { startDownload, cancelDownload } from './downloadManager';
 import { skipToPreviousTrack } from './queueController';
+import { setupTrackPlayerIfNeeded } from './playerBootstrap';
 import type { InstalledExtension, ExtensionBridgeRequest } from '../types/extension';
 
 /**
@@ -249,6 +250,8 @@ export async function handleBridgeMessage(
             return;
           }
 
+          await setupTrackPlayerIfNeeded();
+
           const trackId = trackItem.id || 'ext_' + extension.manifest.id + '_' + Date.now();
           const nativeTrack: Track = {
             id: trackId,
@@ -260,13 +263,24 @@ export async function handleBridgeMessage(
             ...(trackItem.downloadUrl ? { downloadUrl: trackItem.downloadUrl } : {}),
           } as any;
 
-          // TrackPlayer'a yükle ve çal
-          await TrackPlayer.reset();
-          await TrackPlayer.add([nativeTrack]);
+          // Kuyruğu ayarla ve çal (reset yerine setQueue kullanılarak notification servisi korunur)
+          await TrackPlayer.setQueue([nativeTrack]);
           await TrackPlayer.play();
 
           // Store meta verilerini eşitle
-          useStore.getState().setArtwork(trackId, nativeTrack.artwork as string);
+          if (nativeTrack.artwork) {
+            useStore.getState().setArtwork(trackId, nativeTrack.artwork as string);
+          }
+          useStore.getState().setTrackMetadata(trackId, {
+            title: nativeTrack.title,
+            artist: nativeTrack.artist,
+            artwork: typeof nativeTrack.artwork === 'string' ? nativeTrack.artwork : undefined,
+          });
+          useStore.setState({
+            contextIds: [trackId],
+            upNextIds: [],
+          });
+
           reply(true, { success: true, trackId });
         } else if (action === 'addToQueue') {
           const rawTracks = Array.isArray(payload) ? payload : [payload];
@@ -283,7 +297,33 @@ export async function handleBridgeMessage(
             } as any));
 
           if (tracksToAdd.length > 0) {
-            await TrackPlayer.add(tracksToAdd);
+            await setupTrackPlayerIfNeeded();
+            const currentQueue = await TrackPlayer.getQueue();
+            if (currentQueue.length === 0) {
+              await TrackPlayer.setQueue(tracksToAdd);
+              await TrackPlayer.play();
+              useStore.setState({
+                contextIds: tracksToAdd.map((t) => t.id),
+                upNextIds: [],
+              });
+            } else {
+              await TrackPlayer.add(tracksToAdd);
+              useStore.getState().setUpNextIds([
+                ...useStore.getState().upNextIds,
+                ...tracksToAdd.map((t) => t.id),
+              ]);
+            }
+
+            for (const t of tracksToAdd) {
+              if (t.artwork) {
+                useStore.getState().setArtwork(t.id, t.artwork as string);
+              }
+              useStore.getState().setTrackMetadata(t.id, {
+                title: t.title,
+                artist: t.artist,
+                artwork: typeof t.artwork === 'string' ? t.artwork : undefined,
+              });
+            }
             reply(true, { addedCount: tracksToAdd.length });
           } else {
             reply(false, null, 'Eklenecek geçerli parça bulunamadı.');

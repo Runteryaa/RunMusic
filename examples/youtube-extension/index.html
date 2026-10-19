@@ -733,20 +733,50 @@
       activeVideo = null;
     }
 
-    // Downloader API'sinden MP3 Stream URL'sini çek
+    // Downloader API'sinden Stream URL'sini çek (Short link ve watch formatı fallback destekli)
     async function fetchStreamData(url, videoId) {
-      const cacheKey = videoId || extractYouTubeVideoId(url) || url;
+      const vid = videoId || extractYouTubeVideoId(url);
+      const cacheKey = vid || url;
       if (streamCache.has(cacheKey)) {
         return streamCache.get(cacheKey);
       }
 
-      const reqUrl = `${DOWNLOADER_API_BASE}${encodeURIComponent(url)}`;
-      const res = await fetch(reqUrl);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
+      // API short link 'https://youtu.be/<id>' formatını daha kararlı ve eksiksiz çözümlüyor
+      const targetUrls = [];
+      if (vid) {
+        targetUrls.push(`https://youtu.be/${vid}`);
+      }
+      if (url && !targetUrls.includes(url)) {
+        targetUrls.push(url);
+      }
+      if (vid) {
+        const watchUrl = `https://www.youtube.com/watch?v=${vid}`;
+        if (!targetUrls.includes(watchUrl)) {
+          targetUrls.push(watchUrl);
+        }
+      }
+
+      let lastError = null;
+      let json = null;
+
+      for (const targetUrl of targetUrls) {
+        try {
+          const reqUrl = `${DOWNLOADER_API_BASE}${encodeURIComponent(targetUrl)}`;
+          const res = await fetch(reqUrl);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && (data.mp3 || data.mp4)) {
+              json = data;
+              break;
+            }
+          }
+        } catch (e) {
+          lastError = e;
+        }
+      }
 
       if (!json || (!json.mp3 && !json.mp4)) {
-        throw new Error('Ses akışı alınamadı.');
+        throw new Error(lastError ? (lastError.message || 'Ses akışı alınamadı.') : 'Ses akışı alınamadı.');
       }
 
       const result = {
@@ -754,7 +784,7 @@
         author: json.author,
         thumbnail: json.thumbnail,
         mp3: json.mp3 || json.mp4,
-        mp4: json.mp4
+        mp4: json.mp4 || json.mp3
       };
 
       streamCache.set(cacheKey, result);
