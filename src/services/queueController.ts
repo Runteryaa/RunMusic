@@ -377,8 +377,18 @@ export async function playQueueTrack(
 }
 
 /** Kullanıcı kütüphaneden bir parçaya dokunduğunda kuyruğu kurar ve çalar. */
-export const CONTEXT_BUFFER_TARGET = 20;
-export const CONTEXT_REPLENISH_THRESHOLD = 10;
+export const CONTEXT_BUFFER_TARGET_DEFAULT = 20;
+export const CONTEXT_REPLENISH_THRESHOLD_DEFAULT = 10;
+
+export function getContextBufferTarget(): number {
+  const pref = useStore.getState().preferences?.queueBufferTarget;
+  return typeof pref === 'number' && pref >= 5 ? pref : CONTEXT_BUFFER_TARGET_DEFAULT;
+}
+
+export function getContextReplenishThreshold(): number {
+  const pref = useStore.getState().preferences?.queueReplenishThreshold;
+  return typeof pref === 'number' && pref >= 1 ? pref : CONTEXT_REPLENISH_THRESHOLD_DEFAULT;
+}
 
 let activeContextOrder: string[] = [];
 
@@ -396,7 +406,7 @@ export function setActiveContextOrder(order: string[]): void {
 export function getUpcomingContextWindow(
   orderIds: string[],
   startId: string,
-  limit: number = CONTEXT_BUFFER_TARGET,
+  limit: number = getContextBufferTarget(),
   isRepeatQueue: boolean = false
 ): string[] {
   const startIdx = orderIds.indexOf(startId);
@@ -432,7 +442,8 @@ export async function replenishUpcomingQueueIfNeeded(): Promise<void> {
       return k && !upNextSet.has(k);
     });
 
-    if (upcomingContext.length >= CONTEXT_REPLENISH_THRESHOLD) {
+    const threshold = getContextReplenishThreshold();
+    if (upcomingContext.length >= threshold) {
       return;
     }
 
@@ -458,7 +469,7 @@ export async function replenishUpcomingQueueIfNeeded(): Promise<void> {
       nextIdx = found >= 0 ? found + 1 : 0;
     }
 
-    const needed = CONTEXT_BUFFER_TARGET - upcomingContext.length;
+    const needed = Math.max(1, getContextBufferTarget() - upcomingContext.length);
     const repeatMode = useStore.getState().repeatMode;
     const isRepeatQueue = repeatMode === RepeatMode.Queue;
 
@@ -608,7 +619,7 @@ export async function startPlaybackFromLibrary(params: {
   const upcomingContextIds = getUpcomingContextWindow(
     orderIds,
     startId,
-    CONTEXT_BUFFER_TARGET,
+    getContextBufferTarget(),
     isRepeatQueue
   );
   const upNextKeys = new Set(preservedUpNextTracks.map((t) => trackKey(t)));

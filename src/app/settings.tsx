@@ -689,6 +689,34 @@ export default function SettingsScreen() {
           value={preferences.clearQueueOnTrackSelect}
           onChange={(v) => updatePreferences({ clearQueueOnTrackSelect: v })}
         />
+        <NumberRow
+          theme={theme}
+          label={t('settings.queue_buffer_target')}
+          hint={t('settings.queue_buffer_target_hint')}
+          placeholder="20"
+          value={preferences.queueBufferTarget ?? 20}
+          onChange={(v) => {
+            const target = v !== null ? Math.max(5, Math.min(200, v)) : 20;
+            const currentThreshold = preferences.queueReplenishThreshold ?? 10;
+            const threshold = Math.min(currentThreshold, Math.max(1, target - 1));
+            updatePreferences({
+              queueBufferTarget: target,
+              queueReplenishThreshold: threshold,
+            });
+          }}
+        />
+        <NumberRow
+          theme={theme}
+          label={t('settings.queue_replenish_threshold')}
+          hint={t('settings.queue_replenish_threshold_hint')}
+          placeholder="10"
+          value={preferences.queueReplenishThreshold ?? 10}
+          onChange={(v) => {
+            const currentTarget = preferences.queueBufferTarget ?? 20;
+            const threshold = v !== null ? Math.max(1, Math.min(currentTarget - 1, v)) : 10;
+            updatePreferences({ queueReplenishThreshold: threshold });
+          }}
+        />
         <ToggleRow
           theme={theme}
           label={t('settings.keep_playing')}

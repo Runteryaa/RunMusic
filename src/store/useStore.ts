@@ -70,6 +70,10 @@ export interface AppPreferences {
   isDevModeActive: boolean;
   /** Kütüphaneden doğrudan yeni bir şarkı seçildiğinde önceden sıraya eklenmiş şarkıları temizler (varsayılan: false). */
   clearQueueOnTrackSelect: boolean;
+  /** Kayan kuyruk tampon hedefi (varsayılan: 20). */
+  queueBufferTarget: number;
+  /** Kütüphaneden yeni parça tamamlama eşiği (varsayılan: 10). */
+  queueReplenishThreshold: number;
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
@@ -88,6 +92,8 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   hasDismissedDynamicColorBanner: false,
   isDevModeActive: false,
   clearQueueOnTrackSelect: false,
+  queueBufferTarget: 20,
+  queueReplenishThreshold: 10,
 };
 
 export interface TrackMetadata {
@@ -198,7 +204,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 10;
+const PERSIST_VERSION = 11;
 
 export const useStore = create<AppState>()(
   persist(
@@ -481,6 +487,14 @@ export const useStore = create<AppState>()(
             hasDismissedDynamicColorBanner: Boolean(incomingPrefs.hasDismissedDynamicColorBanner),
             isDevModeActive: isDevMode,
             clearQueueOnTrackSelect: Boolean(incomingPrefs.clearQueueOnTrackSelect ?? false),
+            queueBufferTarget:
+              typeof incomingPrefs.queueBufferTarget === 'number' && incomingPrefs.queueBufferTarget > 0
+                ? incomingPrefs.queueBufferTarget
+                : DEFAULT_PREFERENCES.queueBufferTarget,
+            queueReplenishThreshold:
+              typeof incomingPrefs.queueReplenishThreshold === 'number' && incomingPrefs.queueReplenishThreshold > 0
+                ? incomingPrefs.queueReplenishThreshold
+                : DEFAULT_PREFERENCES.queueReplenishThreshold,
           },
           isSmartShuffle: Boolean(incoming.isSmartShuffle),
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),

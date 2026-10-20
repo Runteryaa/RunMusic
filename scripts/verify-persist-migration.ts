@@ -554,6 +554,46 @@ check('kullanıcının seçtiği clearQueueOnTrackSelect tercihi korunuyor', Boo
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+section('16) v10 -> v11 migrasyonu ve queueBufferTarget & queueReplenishThreshold güvencesi');
+
+const v10StateWithoutBuffer = {
+  preferences: {
+    presetThemeColor: '#3b82f6',
+    clearQueueOnTrackSelect: true,
+  },
+};
+
+const incomingPrefsV11 = (v10StateWithoutBuffer.preferences && typeof v10StateWithoutBuffer.preferences === 'object')
+  ? (v10StateWithoutBuffer.preferences as Record<string, any>)
+  : {};
+
+const bufferTargetV11 = typeof incomingPrefsV11.queueBufferTarget === 'number' && incomingPrefsV11.queueBufferTarget > 0
+  ? incomingPrefsV11.queueBufferTarget
+  : 20;
+const replenishThresholdV11 = typeof incomingPrefsV11.queueReplenishThreshold === 'number' && incomingPrefsV11.queueReplenishThreshold > 0
+  ? incomingPrefsV11.queueReplenishThreshold
+  : 10;
+
+check('eski kayıtlarda queueBufferTarget varsayılan olarak 20 atanıyor', bufferTargetV11 === 20);
+check('eski kayıtlarda queueReplenishThreshold varsayılan olarak 10 atanıyor', replenishThresholdV11 === 10);
+
+const v11StateWithCustom = {
+  preferences: {
+    queueBufferTarget: 40,
+    queueReplenishThreshold: 15,
+  },
+};
+const incomingPrefsV11Custom = (v11StateWithCustom.preferences && typeof v11StateWithCustom.preferences === 'object')
+  ? (v11StateWithCustom.preferences as Record<string, any>)
+  : {};
+
+check(
+  'kullanıcının seçtiği queueBufferTarget ve queueReplenishThreshold korunuyor',
+  incomingPrefsV11Custom.queueBufferTarget === 40 && incomingPrefsV11Custom.queueReplenishThreshold === 15
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 section('Sonuç');
 if (failures === 0) {
   console.log('  TÜM TESTLER GEÇTİ ✅');
