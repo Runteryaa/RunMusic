@@ -15,6 +15,7 @@ import {
   replenishUpcomingQueueIfNeeded,
 } from './services/queueController';
 import { cleanYouTubeTitle, cleanDisplayTitle } from './services/lyricsService';
+import { t } from './services/i18n';
 import { useStore } from './store/useStore';
 import { useThemeStore } from './store/useThemeStore';
 import { useRemoteConnectStore } from './store/useRemoteConnectStore';
@@ -202,17 +203,18 @@ export default async function playbackService() {
           (rawUrl && artworkMap[rawUrl]) ||
           (typeof event.track.artwork === 'string' ? event.track.artwork : null);
 
+        const unknownArtist = t('common.unknown_artist');
         const rawArtist = meta?.artist || event.track.artist || '';
         const cleanArt =
-          rawArtist && rawArtist !== 'Local Audio' && rawArtist !== 'Bilinmeyen Sanatçı'
+          rawArtist && rawArtist !== 'Local Audio' && rawArtist !== 'Bilinmeyen Sanatçı' && rawArtist !== 'Unknown Artist'
             ? cleanYouTubeTitle(rawArtist)
-            : (rawArtist || 'Bilinmeyen Sanatçı');
+            : unknownArtist;
 
         const rawTitle = meta?.title || event.track.title || '';
         const cleanTit =
-          cleanDisplayTitle(rawTitle, cleanArt !== 'Bilinmeyen Sanatçı' ? cleanArt : undefined) ||
+          cleanDisplayTitle(rawTitle, cleanArt !== unknownArtist ? cleanArt : undefined) ||
           rawTitle ||
-          'Unknown Title';
+          t('common.unknown_track');
 
         const trackId = canonicalId || rawId || rawUrl;
         const realDuration = event.track.duration && event.track.duration > 0 ? event.track.duration : (meta?.duration || 0);
@@ -276,7 +278,7 @@ export default async function playbackService() {
           const theme = useThemeStore.getState().theme;
           MusicWidgetModule.updateWidget(
             event.track.title || 'RunMusic',
-            event.track.artist || 'Müzik Çalar',
+            event.track.artist || 'RunMusic',
             typeof event.track.artwork === 'string' ? event.track.artwork : null,
             isPlaying,
             theme.primary || '#212121'
@@ -309,7 +311,7 @@ export default async function playbackService() {
         const theme = useThemeStore.getState().theme;
         MusicWidgetModule.updateWidget(
           active?.title || 'RunMusic',
-          active?.artist || 'Müzik Çalar',
+          active?.artist || 'RunMusic',
           typeof active?.artwork === 'string' ? active?.artwork : null,
           isPlaying,
           theme.primary || '#212121'

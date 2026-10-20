@@ -1,4 +1,5 @@
 import { PermissionsAndroid, Platform } from 'react-native';
+import { t } from '../i18n';
 
 /**
  * Requests required runtime permissions for BLE (Central & Peripheral).
@@ -34,11 +35,10 @@ export async function requestBlePermissions(): Promise<boolean> {
       const locationGranted = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         {
-          title: 'Bluetooth Konum İzni',
-          message:
-            "RunMusic'in yakındaki Bluetooth cihazlarını arayabilmesi için konum erişimi gereklidir.",
-          buttonPositive: 'İzin Ver',
-          buttonNegative: 'İptal',
+          title: t('remote.ble_permission_title'),
+          message: t('remote.ble_permission_msg'),
+          buttonPositive: t('remote.grant_permission'),
+          buttonNegative: t('common.cancel'),
         }
       );
       return locationGranted === PermissionsAndroid.RESULTS.GRANTED;

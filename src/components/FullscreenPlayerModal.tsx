@@ -703,7 +703,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     remoteState.upNext,
     upNextIds,
     queue,
-    effectiveQueueSections?.upNext,
+    effectiveQueueSections,
     allAssets,
     library,
     metadataMap,
@@ -1143,7 +1143,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     : getSearchKeywords(sourceTitle, sourceArtist);
 
   const rawArtist = player.isRemote
-    ? player.activeTrack?.artist || (player.remoteDeviceName ? `Bağlandı • ${player.remoteDeviceName}` : unknownArtist)
+    ? player.activeTrack?.artist || (player.remoteDeviceName ? `${t('remote.status_connected')} • ${player.remoteDeviceName}` : unknownArtist)
     : (activeMeta?.artist?.trim() && activeMeta.artist !== 'Local Audio' && activeMeta.artist !== 'Bilinmeyen Sanatçı'
         ? activeMeta.artist.trim()
         : '') ||
@@ -1157,7 +1157,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             : unknownArtist));
 
   const rawTitle = player.isRemote
-    ? player.activeTrack?.title || 'Müzik Bekleniyor'
+    ? player.activeTrack?.title || t('remote.waiting_for_music')
     : (activeMeta?.title?.trim() ? activeMeta.title.trim() : '') ||
       (player.activeTrack?.title && player.activeTrack.title !== 'Unknown Title' ? player.activeTrack.title : '') ||
       activeKeywords.expectedTrack ||
@@ -2979,7 +2979,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       styles.lyricsActionBtnText,
                       { color: isRemoteServiceEnabled ? theme.primary : '#ef4444' },
                     ]}>
-                    {isRemoteServiceEnabled ? 'Açık' : 'Kapalı'}
+                    {isRemoteServiceEnabled ? t('common.enabled') : t('common.disabled')}
                   </Text>
                 </TouchableOpacity>
 
@@ -3064,7 +3064,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       styles.connectSegmentText,
                       activeTransportTab === 'internet' && { color: '#ffffff', fontWeight: '700' },
                     ]}>
-                    İnternet
+                    {t('remote.internet')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -3096,10 +3096,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 </View>
                 <View style={{ flex: 1, marginLeft: 10 }}>
                   <Text style={[styles.connectDeviceName, !player.isRemote && { color: theme.primary, fontWeight: '700' }]}>
-                    Bu Telefon
+                    {t('remote.this_device')}
                   </Text>
                   <Text style={styles.connectDeviceSubtext}>
-                    {!player.isRemote ? 'Şu anda çalıyor' : 'Yerel çalmaya geri dön'}
+                    {!player.isRemote ? t('remote.currently_playing') : t('remote.switch_to_local')}
                   </Text>
                 </View>
                 {!player.isRemote ? (
@@ -3112,7 +3112,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                 <View style={{ marginBottom: 10 }}>
                   <View style={styles.connectSectionHeader}>
                     <Text style={[styles.connectSectionLabel, { color: theme.primary, fontWeight: '700' }]}>
-                      BAĞLI CİHAZLAR ({connectedClients.length})
+                      {`${t('remote.connected_devices_title')} (${connectedClients.length})`}
                     </Text>
                   </View>
                   {connectedClients.map((client) => (
@@ -3138,11 +3138,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           {client.deviceName}
                         </Text>
                         <Text style={[styles.connectDeviceSubtext, { color: theme.primary }]}>
-                          {client.transport === 'ble'
-                            ? 'Bluetooth Kumandası • Bağlı'
-                            : client.transport === 'internet'
-                            ? 'İnternet Kumandası • Bağlı'
-                            : 'Wi-Fi Kumandası • Bağlı'}
+                          {`${client.transport === 'ble' ? t('remote.ble_remote') : client.transport === 'internet' ? t('remote.internet_remote') : t('remote.wifi_remote')} • ${t('remote.status_connected')}`}
                         </Text>
                       </View>
                       <TouchableOpacity
@@ -3168,7 +3164,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                     <View style={[styles.connectRoomCard, { backgroundColor: theme.surface }]}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                         <Text style={[styles.connectSectionLabel, { color: theme.textAccent, marginBottom: 0 }]}>
-                          BAĞLI UZAKTAN KUMANDA
+                          {t('remote.connected_remote')}
                         </Text>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                           <View
@@ -3196,21 +3192,21 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                               fontWeight: '600',
                             }}>
                             {remoteConnectionStatus === 'connected'
-                              ? 'Bağlandı'
+                              ? t('remote.status_connected')
                               : remoteConnectionStatus === 'connecting'
-                              ? 'Bağlanıyor...'
-                              : 'Bağlantı Hatası'}
+                              ? t('remote.status_connecting')
+                              : t('remote.status_error')}
                           </Text>
                         </View>
                       </View>
 
                       <Text style={[styles.connectRoomCodeBadge, { color: theme.primary, fontSize: 24, marginVertical: 8 }]}>
-                        {connectedDeviceName || 'Uzak Cihaz'}
+                        {connectedDeviceName || t('remote.remote_device')}
                       </Text>
 
                       {remoteConnectionStatus === 'error' && (
                         <Text style={{ color: '#ef4444', fontSize: 13, marginBottom: 12, textAlign: 'center', fontWeight: '500' }}>
-                          {errorMessage || 'Oda bulunamadı veya Host şu an çevrimdışı.'}
+                          {errorMessage || t('remote.room_not_found')}
                         </Text>
                       )}
 
@@ -3226,7 +3222,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                               }
                             }}>
                             <Ionicons name="refresh-outline" size={16} color={theme.primary} />
-                            <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>Tekrar Dene</Text>
+                            <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>{t('common.retry')}</Text>
                           </TouchableOpacity>
                         )}
 
@@ -3237,7 +3233,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                             remoteSyncManager.disconnectClient();
                           }}>
                           <Ionicons name="close-circle-outline" size={16} color="#ef4444" />
-                          <Text style={{ color: '#ef4444', fontWeight: '700', fontSize: 12 }}>Bağlantıyı Kes</Text>
+                          <Text style={{ color: '#ef4444', fontWeight: '700', fontSize: 12 }}>{t('remote.disconnect')}</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -3247,7 +3243,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       <View style={[styles.connectRoomCard, { backgroundColor: theme.surface }]}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                           <Text style={[styles.connectSectionLabel, { color: theme.textAccent, marginBottom: 0 }]}>
-                            BU TELEFONUN ODA KODU
+                            {t('remote.my_room_code')}
                           </Text>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                             <View
@@ -3275,16 +3271,16 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                                 fontWeight: '600',
                               }}>
                               {internetHostStatus === 'connected'
-                                ? 'Canlı'
+                                ? t('remote.status_live')
                                 : internetHostStatus === 'connecting'
-                                ? 'Bağlanıyor...'
-                                : 'Çevrimdışı'}
+                                ? t('remote.status_connecting')
+                                : t('remote.status_offline')}
                             </Text>
                           </View>
                         </View>
 
                         <Text style={[styles.connectRoomCodeBadge, { color: theme.primary }]}>
-                          {internetRoomCode ? internetRoomCode.replace(/^RUN-/, '') : 'Oda Başlatılıyor...'}
+                          {internetRoomCode ? internetRoomCode.replace(/^RUN-/, '') : t('remote.starting_room')}
                         </Text>
 
                         {internetHostStatus !== 'connected' && (
@@ -3296,13 +3292,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                                 remoteSyncManager.startInternetHostRoom().catch(() => {});
                               }}>
                               <Ionicons name="link-outline" size={16} color={theme.primary} />
-                              <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>Yeniden Bağlan</Text>
+                              <Text style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>{t('remote.reconnect')}</Text>
                             </TouchableOpacity>
                           </View>
                         )}
 
                         <Text style={[styles.connectEmptySubtext, { marginTop: 8, textAlign: 'center' }]}>
-                          Farklı bir Wi-Fi veya hücresel veri (4G/5G) ağındaki cihazınızdan bu kodu girerek anında bağlanabilirsiniz.
+                          {t('remote.room_hint')}
                         </Text>
                       </View>
                     )
@@ -3311,7 +3307,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   {/* Client Section: Bir Odaya Bağlan */}
                   <View style={[styles.connectRoomCard, { backgroundColor: theme.surface }]}>
                     <Text style={[styles.connectSectionLabel, { color: theme.textAccent, marginBottom: 6 }]}>
-                      BİR ODAYA BAĞLAN
+                      {t('remote.join_room_title')}
                     </Text>
 
                     <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
@@ -3355,8 +3351,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                         <Ionicons name="arrow-forward" size={16} color="#ffffff" />
                         <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 13 }}>
                           {remoteMode === 'client' && remoteConnectionStatus === 'connecting'
-                            ? 'Bağlanıyor...'
-                            : 'Bağlan'}
+                            ? t('remote.status_connecting')
+                            : t('remote.connect')}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -3368,8 +3364,8 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                   <View style={styles.connectSectionHeader}>
                     <Text style={[styles.connectSectionLabel, { color: theme.textAccent }]}>
                       {activeTransportTab === 'ble'
-                        ? 'YAKINDAKİ BLUETOOTH CİHAZLARI'
-                        : 'AYNI Wİ-Fİ AĞINDAKİ CİHAZLAR'}
+                        ? t('remote.nearby_ble_devices')
+                        : t('remote.same_wifi_devices')}
                     </Text>
                   </View>
 
@@ -3388,13 +3384,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                         <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 6 }} />
                         <Text style={styles.connectEmptyTitle}>
                           {activeTransportTab === 'ble'
-                            ? 'Bluetooth cihazları aranıyor...'
-                            : 'Cihazlar aranıyor...'}
+                            ? t('remote.searching_ble')
+                            : t('remote.searching_devices')}
                         </Text>
                         <Text style={styles.connectEmptySubtext}>
                           {activeTransportTab === 'ble'
-                            ? 'Diğer cihazda Bluetooth Kumandası açık ve görünür olmalıdır.'
-                            : 'Diğer cihazda Wi-Fi Kumandası açık olmalı ve aynı ağda bulunmalıdır.'}
+                            ? t('remote.ble_hint')
+                            : t('remote.wifi_hint')}
                         </Text>
                       </View>
                     }
@@ -3448,11 +3444,11 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                             </Text>
                             <Text style={styles.connectDeviceSubtext}>
                               {isThisConnected
-                                ? 'Bağlandı'
+                                ? t('remote.status_connected')
                                 : isConnecting
-                                  ? 'Bağlanıyor...'
+                                  ? t('remote.status_connecting')
                                   : item.transport === 'ble' || activeTransportTab === 'ble'
-                                    ? 'Bluetooth Düşük Enerji (BLE)'
+                                    ? t('remote.ble_subtext')
                                     : `${item.hostIp}:${item.port}`}
                             </Text>
                           </View>
@@ -3475,7 +3471,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                         <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
                           <TextInput
                             style={[styles.connectInput, { flex: 2 }]}
-                            placeholder="IP (örn. 192.168.1.50)"
+                            placeholder={t('remote.ip_placeholder')}
                             placeholderTextColor="#71717a"
                             keyboardType="numbers-and-punctuation"
                             value={manualIp}
@@ -3484,7 +3480,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           />
                           <TextInput
                             style={[styles.connectInput, { flex: 1 }]}
-                            placeholder="Port"
+                            placeholder={t('remote.port_placeholder')}
                             placeholderTextColor="#71717a"
                             keyboardType="numeric"
                             value={manualPort}
@@ -3495,13 +3491,13 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                           <TouchableOpacity
                             style={styles.connectCancelBtn}
                             onPress={() => setShowManualIp(false)}>
-                            <Text style={styles.connectCancelText}>İptal</Text>
+                            <Text style={styles.connectCancelText}>{t('common.cancel')}</Text>
                           </TouchableOpacity>
                           <TouchableOpacity
                             style={[styles.connectSubmitBtn, { backgroundColor: theme.primary }]}
                             onPress={handleManualConnect}
                             disabled={!manualIp.trim()}>
-                            <Text style={styles.connectSubmitText}>Bağlan</Text>
+                            <Text style={styles.connectSubmitText}>{t('remote.connect')}</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -3511,7 +3507,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                         onPress={() => setShowManualIp(true)}>
                         <Ionicons name="add-circle-outline" size={16} color={theme.primary} style={{ marginRight: 6 }} />
                         <Text style={[styles.connectManualToggleText, { color: theme.primary }]}>
-                          Manuel IP ile Bağlan
+                          {t('remote.manual_ip')}
                         </Text>
                       </TouchableOpacity>
                     )
@@ -3907,7 +3903,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       toggleConnectMode();
                     }}>
                     <Ionicons name="swap-horizontal-outline" size={24} color="#ffffff" style={{ marginRight: 16 }} />
-                    <Text style={styles.optionsModalText}>Cihazı Değiştir / Tara</Text>
+                    <Text style={styles.optionsModalText}>{t('player.options_change_device')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.optionsModalRow}
@@ -3916,7 +3912,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       player.disconnect();
                     }}>
                     <Ionicons name="close-circle-outline" size={24} color="#ef4444" style={{ marginRight: 16 }} />
-                    <Text style={[styles.optionsModalText, { color: '#ef4444' }]}>Bağlantıyı Kes</Text>
+                    <Text style={[styles.optionsModalText, { color: '#ef4444' }]}>{t('remote.disconnect')}</Text>
                   </TouchableOpacity>
                 </>
               ) : (
@@ -3936,10 +3932,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
                       />
                       <Text style={[styles.optionsModalText, { color: isCurrentTrackDownloaded ? '#10b981' : theme.primary }]}>
                         {isCurrentTrackDownloaded
-                          ? 'Parça İndirildi (Özel Depolama)'
+                          ? t('player.track_downloaded_custom')
                           : isCurrentTrackDownloading
-                          ? 'İndiriliyor...'
-                          : 'Şu An Çalan Parçayı İndir'}
+                          ? t('player.track_downloading')
+                          : t('player.download_current_track')}
                       </Text>
                     </TouchableOpacity>
                   )}

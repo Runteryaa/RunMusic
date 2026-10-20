@@ -1,6 +1,7 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { t } from '../services/i18n';
 
 interface Props {
   children: ReactNode;
@@ -41,13 +42,13 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <View style={styles.container}>
           <Ionicons name="alert-circle-outline" size={48} color="#ef4444" style={styles.icon} />
-          <Text style={styles.title}>Bir şeyler ters gitti</Text>
+          <Text style={styles.title}>{t('common.something_went_wrong')}</Text>
           <Text style={styles.subtitle}>
-            {this.state.error?.message || 'Beklenmeyen bir arayüz hatası oluştu.'}
+            {this.state.error?.message || t('common.unexpected_ui_error')}
           </Text>
           <TouchableOpacity style={styles.button} activeOpacity={0.8} onPress={this.handleRetry}>
             <Ionicons name="refresh-outline" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-            <Text style={styles.buttonText}>Yeniden Dene</Text>
+            <Text style={styles.buttonText}>{t('common.retry')}</Text>
           </TouchableOpacity>
         </View>
       );

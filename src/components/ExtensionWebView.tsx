@@ -9,6 +9,7 @@ import {
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeStore } from '../store/useThemeStore';
+import { useTranslation } from '../services/i18n';
 import { generateInjectedJavaScript, handleBridgeMessage } from '../services/extensionBridge';
 import type { InstalledExtension } from '../types/extension';
 
@@ -17,6 +18,7 @@ interface ExtensionWebViewProps {
 }
 
 export const ExtensionWebView: React.FC<ExtensionWebViewProps> = ({ extension }) => {
+  const { t } = useTranslation();
   const theme = useThemeStore((s) => s.theme);
   const webViewRef = useRef<WebView>(null);
   const isLoadedRef = useRef(false);
@@ -122,7 +124,7 @@ export const ExtensionWebView: React.FC<ExtensionWebViewProps> = ({ extension })
           const { nativeEvent } = syntheticEvent;
           setIsLoading(false);
           setHasError(true);
-          setErrorMessage(nativeEvent.description || 'Sayfa yüklenemedi.');
+          setErrorMessage(nativeEvent.description || t('extensions.page_load_failed'));
         }}
         javaScriptEnabled={true}
         domStorageEnabled={true}
@@ -136,7 +138,7 @@ export const ExtensionWebView: React.FC<ExtensionWebViewProps> = ({ extension })
       {isLoading && !hasError && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color={theme.primary} />
-          <Text style={styles.loadingText}>{extension.manifest.name} yükleniyor...</Text>
+          <Text style={styles.loadingText}>{t('extensions.loading_named', { name: extension.manifest.name })}</Text>
         </View>
       )}
 
@@ -144,16 +146,16 @@ export const ExtensionWebView: React.FC<ExtensionWebViewProps> = ({ extension })
       {hasError && (
         <View style={styles.errorOverlay}>
           <Ionicons name="cloud-offline-outline" size={54} color="#71717a" />
-          <Text style={styles.errorTitle}>Bağlantı Hatası</Text>
+          <Text style={styles.errorTitle}>{t('extensions.connection_error')}</Text>
           <Text style={styles.errorSubtitle}>
-            {errorMessage || 'Eklenti web adresi açılamadı. Lütfen internet bağlantınızı kontrol edin.'}
+            {errorMessage || t('extensions.connection_error_desc')}
           </Text>
           <TouchableOpacity
             style={[styles.retryBtn, { backgroundColor: theme.primary }]}
             onPress={handleReload}
           >
             <Ionicons name="refresh" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-            <Text style={styles.retryBtnText}>Yeniden Dene</Text>
+            <Text style={styles.retryBtnText}>{t('common.retry')}</Text>
           </TouchableOpacity>
         </View>
       )}

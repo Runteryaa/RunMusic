@@ -25,7 +25,7 @@ export function useWidgetUpdater() {
   useEffect(() => {
     if (MusicWidgetModule && MusicWidgetModule.updateWidget) {
       const title = activeTrack?.title || 'RunMusic';
-      const artist = activeTrack?.artist || 'Müzik Çalar';
+      const artist = activeTrack?.artist || 'RunMusic';
       const bgColor = theme.primary || '#212121';
 
       try {

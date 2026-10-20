@@ -49,13 +49,13 @@ export function generateInjectedJavaScript(extensionId: string, currentTheme?: a
             window.ReactNativeWebView.postMessage(msg);
           } else {
             _callbacks.delete(id);
-            reject(new Error('ReactNativeWebView köprüsü bulunamadı.'));
+            reject(new Error('ReactNativeWebView bridge not found.'));
           }
 
-          // 15 saniye zaman aşımı
+          // 15 seconds timeout
           setTimeout(() => {
             if (_callbacks.has(id)) {
-              _callbacks.get(id).reject(new Error('İstek zaman aşımına uğradı.'));
+              _callbacks.get(id).reject(new Error('Request timed out.'));
               _callbacks.delete(id);
             }
           }, 15000);
@@ -183,7 +183,7 @@ export function generateInjectedJavaScript(extensionId: string, currentTheme?: a
             if (success) {
               resolve(data);
             } else {
-              reject(new Error(error || 'Köprü isteği başarısız oldu.'));
+              reject(new Error(error || 'Bridge request failed.'));
             }
           }
         },
@@ -368,7 +368,7 @@ export async function handleBridgeMessage(
             }
             reply(true, { addedCount: tracksToAdd.length });
           } else {
-            reply(false, null, 'Eklenecek geçerli parça bulunamadı.');
+            reply(false, null, 'No valid tracks to add.');
           }
         } else if (action === 'pause') {
           await TrackPlayer.pause();
@@ -387,7 +387,7 @@ export async function handleBridgeMessage(
           await TrackPlayer.seekTo(pos);
           reply(true);
         } else {
-          reply(false, null, `Bilinmeyen oynatıcı eylemi: ${action}`);
+          reply(false, null, `Unknown player action: ${action}`);
         }
         break;
       }
@@ -395,7 +395,7 @@ export async function handleBridgeMessage(
       case 'downloader': {
         if (action === 'download') {
           if (!payload?.downloadUrl) {
-            reply(false, null, 'downloadUrl zorunludur.');
+            reply(false, null, 'downloadUrl is required.');
             return;
           }
           let parsedDuration: number | undefined;
@@ -505,11 +505,11 @@ export async function handleBridgeMessage(
       }
 
       default:
-        reply(false, null, `Desteklenmeyen kapsam: ${scope}`);
+        reply(false, null, `Unsupported scope: ${scope}`);
         break;
     }
   } catch (err: any) {
-    console.warn('[extensionBridge] İstek işleme hatası:', err);
-    reply(false, null, err?.message || 'Köprü hatası');
+    console.warn('[extensionBridge] Request error:', err);
+    reply(false, null, err?.message || 'Bridge error');
   }
 }

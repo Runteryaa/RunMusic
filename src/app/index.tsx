@@ -1153,7 +1153,7 @@ export default function LibraryScreen() {
               <View style={[styles.remoteBanner, { borderColor: theme.border, backgroundColor: theme.surface }]}>
                 <Ionicons name="wifi" size={16} color={theme.primary} style={{ marginRight: 8 }} />
                 <Text style={styles.remoteBannerText} numberOfLines={1}>
-                  {connectedDeviceName ? `${connectedDeviceName} Kütüphanesi` : 'Uzak Kütüphane'}
+                  {connectedDeviceName ? t('remote.device_library', { name: connectedDeviceName }) : t('remote.remote_library')}
                 </Text>
                 <TouchableOpacity
                   style={[styles.remoteRefreshBtn, { borderColor: theme.border }]}
@@ -1205,14 +1205,14 @@ export default function LibraryScreen() {
               <View style={styles.centerBox}>
                 <ActivityIndicator size="large" color={theme.primary} />
                 <Text style={[styles.statusText, { color: theme.primary }]}>
-                  {t('remote.fetching_library') || 'Kütüphane alınıyor...'}
+                  {t('remote.fetching_library')}
                 </Text>
               </View>
             ) : (
               <View style={styles.centerBox}>
                 <Ionicons name="wifi-outline" size={48} color="#3f3f46" />
                 <Text style={styles.emptyText}>
-                  {searchQuery ? t('library.no_matching_tracks') : 'Uzak kütüphanede şarkı bulunamadı'}
+                  {searchQuery ? t('library.no_matching_tracks') : t('remote.no_remote_tracks')}
                 </Text>
                 {!searchQuery && (
                   <TouchableOpacity

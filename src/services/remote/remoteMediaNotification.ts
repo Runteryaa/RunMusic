@@ -317,7 +317,7 @@ class RemoteMediaNotificationService {
         const theme = useThemeStore.getState().theme;
         MusicWidgetModule.updateWidget(
           title || 'RunMusic',
-          artist || 'Müzik Çalar',
+          artist || 'RunMusic',
           artworkUri || null,
           isPlaying,
           theme.primary || '#212121'

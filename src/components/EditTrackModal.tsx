@@ -218,7 +218,7 @@ export function EditTrackModal({
 
       if (isCurrentActive && typeof activeIndex === 'number') {
         const newTitle = updated.title || activeTrack.title || 'RunMusic';
-        const newArtist = updated.artist || activeTrack.artist || 'Müzik Çalar';
+        const newArtist = updated.artist || activeTrack.artist || 'RunMusic';
         const newArtwork = updated.artwork || activeTrack.artwork || undefined;
 
         // TrackPlayer bildirim ve medya oturumunu güncelle

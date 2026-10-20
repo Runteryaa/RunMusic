@@ -17,7 +17,7 @@ import { getArtworkAsync } from '../../modules/audio-artwork/src';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
 import { initSleepTimerService } from '../store/useSleepTimerStore';
 import { initStatsDB } from '../services/statsDatabase';
-import { useTranslation } from '../services/i18n';
+import { useTranslation, t } from '../services/i18n';
 import { initAdService } from '../services/adService';
 import * as Font from 'expo-font';
 import { getCachedLibrary } from '../services/libraryStorage';
@@ -243,13 +243,13 @@ export async function handleAppDeepLink(url: string | null): Promise<void> {
       try {
         const ext = await useExtensionStore.getState().installExtension(cleanUrl);
         Alert.alert(
-          'Eklenti Yüklendi',
-          `"${ext.manifest.name}" başarıyla kuruldu.`
+          t('extensions.install_success'),
+          t('extensions.install_success_msg', { name: ext.manifest.name })
         );
       } catch (err: any) {
         Alert.alert(
-          'Eklenti Kurulamadı',
-          err?.message || 'Eklenti manifest dosyası yüklenemedi.'
+          t('extensions.install_error'),
+          err?.message || t('extensions.manifest_load_error')
         );
       }
       return;

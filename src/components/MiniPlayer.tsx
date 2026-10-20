@@ -325,10 +325,10 @@ export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}
             </View>
             <View style={styles.textDetailsBox}>
               <Text style={styles.titleText} numberOfLines={1}>
-                {player.remoteDeviceName || 'Uzak Cihaz'}
+                {player.remoteDeviceName || t('remote.remote_device')}
               </Text>
               <Text style={styles.artistText} numberOfLines={1}>
-                Bağlandı • Müzik Bekleniyor
+                {`${t('remote.status_connected')} • ${t('remote.waiting_for_music')}`}
               </Text>
             </View>
             <TouchableOpacity

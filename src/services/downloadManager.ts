@@ -3,6 +3,7 @@ import * as MediaLibrary from 'expo-media-library/legacy';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useStore } from '../store/useStore';
 import { saveCachedLibrary } from './libraryStorage';
+import { t } from './i18n';
 import type { DownloadTask } from '../types/download';
 
 const activeDownloads = new Map<string, FileSystem.DownloadResumable>();
@@ -129,7 +130,7 @@ async function executeDownload(task: DownloadTask): Promise<void> {
     activeDownloads.delete(task.id);
 
     if (!result || !result.uri) {
-      throw new Error('İndirme tamamlanamadı veya dosya oluşturulamadı.');
+      throw new Error(t('downloads.download_failed'));
     }
 
     // Kullanıcı deneyimi: mp4 uzantılı indirmeleri doğrudan .mp3 uzantısına taşı
@@ -184,7 +185,7 @@ async function executeDownload(task: DownloadTask): Promise<void> {
     }
   } catch (error: any) {
     activeDownloads.delete(task.id);
-    const errMsg = error?.message || 'İndirme sırasında bir hata oluştu.';
+    const errMsg = error?.message || t('downloads.generic_error');
     useDownloadStore.getState().updateTask(task.id, {
       status: 'failed',
       error: errMsg,
@@ -223,12 +224,12 @@ export async function cancelDownload(downloadId: string): Promise<void> {
 export async function addDownloadToLibrary(downloadId: string): Promise<boolean> {
   const task = useDownloadStore.getState().tasks.find((t) => t.id === downloadId);
   if (!task || !task.localFileUri) {
-    throw new Error('Dosya bulunamadı.');
+    throw new Error(t('downloads.file_not_found'));
   }
 
   const fileInfo = await FileSystem.getInfoAsync(task.localFileUri);
   if (!fileInfo.exists) {
-    throw new Error('İndirilen yerel dosya bulunamadı.');
+    throw new Error(t('downloads.local_file_not_found'));
   }
 
   let targetFileUri = task.localFileUri;

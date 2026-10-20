@@ -8,6 +8,7 @@ import mobileAds, {
 } from 'react-native-google-mobile-ads';
 import TrackPlayer, { State } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
+import { t } from './i18n';
 
 /**
  * AdMob Ad Unit IDs
@@ -294,7 +295,7 @@ export async function showRewardedAd(options: ShowRewardedOptions): Promise<bool
       timeout = setTimeout(async () => {
         cleanup();
         ad.removeAllListeners();
-        onError?.(new Error('Reklam yükleme zaman aşımına uğradı.'));
+        onError?.(new Error(t('settings.ad_timeout')));
         resolve(false);
       }, 15000);
 
@@ -329,7 +330,7 @@ export async function showRewardedAd(options: ShowRewardedOptions): Promise<bool
 
       ad.addAdEventListener(AdEventType.ERROR, (error) => {
         cleanup();
-        onError?.(new Error(error.message || 'Reklam yüklenemedi.'));
+        onError?.(new Error(error.message || t('settings.ad_load_failed')));
         resolve(false);
       });
 

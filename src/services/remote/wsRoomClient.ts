@@ -1,6 +1,7 @@
 import { AppState, type AppStateStatus } from 'react-native';
 import { useRemoteConnectStore } from '../../store/useRemoteConnectStore';
 import type { RemoteMessage } from './remoteTypes';
+import { t } from '../i18n';
 
 export const DEFAULT_RELAY_URL = 'wss://connectorelay.onrender.com/runmusic';
 
@@ -200,7 +201,7 @@ class WSRoomClient {
       currentWs.onerror = (err: any) => {
         if (this.ws !== currentWs) return;
         console.warn('[WSRoomClient] Socket error:', err?.message || err);
-        const errMsg = err?.message || 'İnternet bağlantı sunucusuna ulaşılamadı.';
+        const errMsg = err?.message || t('remote.relay_unreachable');
         if (this.role === 'host') {
           useRemoteConnectStore.getState().setInternetHostStatus('connecting');
           this.hostCallbacks?.onError?.(errMsg);

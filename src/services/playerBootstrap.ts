@@ -269,7 +269,7 @@ export async function restoreQueueIfNeeded(): Promise<boolean> {
           const theme = useThemeStore.getState().theme;
           MusicWidgetModule.updateWidget(
             activeTrack.title || 'RunMusic',
-            activeTrack.artist || 'Müzik Çalar',
+            activeTrack.artist || 'RunMusic',
             activeTrack.artwork || null,
             false,
             theme.primary || '#212121'
@@ -295,7 +295,7 @@ export async function restoreQueueIfNeeded(): Promise<boolean> {
           const theme = useThemeStore.getState().theme;
           MusicWidgetModule.updateWidget(
             lastPlayback.track.title || 'RunMusic',
-            lastPlayback.track.artist || 'Müzik Çalar',
+            lastPlayback.track.artist || 'RunMusic',
             lastPlayback.track.artwork || null,
             false,
             theme.primary || '#212121'

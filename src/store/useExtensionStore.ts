@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { ExtensionManifest, InstalledExtension } from '../types/extension';
+import { t } from '../services/i18n';
 
 export interface ExtensionUpdateResult {
   extension: InstalledExtension;
@@ -118,30 +119,30 @@ export const useExtensionStore = create<ExtensionStoreState>()(
             if (fallbackRes.ok) {
               manifest = await fallbackRes.json();
             } else {
-              throw new Error(`Manifest yüklenemedi: ${fetchErr?.message || 'Bilinmeyen hata'}`);
+              throw new Error(fetchErr?.message ? `${t('extensions.manifest_load_error')}: ${fetchErr.message}` : t('extensions.manifest_load_error'));
             }
           } else {
-            throw new Error(`Manifest yüklenemedi: ${fetchErr?.message || 'Bilinmeyen hata'}`);
+            throw new Error(fetchErr?.message ? `${t('extensions.manifest_load_error')}: ${fetchErr.message}` : t('extensions.manifest_load_error'));
           }
         } finally {
           clearTimeout(timeoutId);
         }
 
         if (!manifest || typeof manifest !== 'object') {
-          throw new Error('Geçersiz manifest formatı: JSON bir nesne olmalıdır.');
+          throw new Error(t('extensions.invalid_manifest_format'));
         }
 
         if (!manifest.id || typeof manifest.id !== 'string') {
-          throw new Error('Geçersiz manifest: "id" alanı zorunludur.');
+          throw new Error(t('extensions.manifest_id_required'));
         }
 
         if (!manifest.name || typeof manifest.name !== 'string') {
-          throw new Error('Geçersiz manifest: "name" alanı zorunludur.');
+          throw new Error(t('extensions.manifest_name_required'));
         }
 
         const rawPage = manifest.page || manifest.entryUrl;
         if (!rawPage || typeof rawPage !== 'string') {
-          throw new Error('Geçersiz manifest: "page" alanı zorunludur.');
+          throw new Error(t('extensions.manifest_page_required'));
         }
 
         // Web sayfası URL'sini göreceli ise mutlak hale getir
@@ -233,7 +234,7 @@ export const useExtensionStore = create<ExtensionStoreState>()(
           const manifest: ExtensionManifest = await res.json();
 
           if (!manifest || typeof manifest !== 'object') {
-            throw new Error('Geçersiz manifest verisi alındı.');
+            throw new Error(t('extensions.invalid_manifest_data'));
           }
 
           const isMatchingId =
@@ -244,7 +245,7 @@ export const useExtensionStore = create<ExtensionStoreState>()(
             Boolean(ext.manifestUrl && ext.manifestUrl.includes('youtube'));
 
           if (!isMatchingId) {
-            throw new Error(`Güncellenen manifest ID (${manifest.id}) mevcut ID (${ext.manifest.id}) ile eşleşmiyor.`);
+            throw new Error(t('extensions.manifest_id_mismatch', { manifestId: manifest.id, existingId: ext.manifest.id }));
           }
 
           const rawPage = manifest.page || manifest.entryUrl;

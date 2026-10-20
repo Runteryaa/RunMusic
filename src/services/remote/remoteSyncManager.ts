@@ -30,6 +30,7 @@ import {
   getSearchKeywords,
   type LyricLine,
 } from '../lyricsService';
+import { t } from '../i18n';
 import { remoteMediaNotification } from './remoteMediaNotification';
 import { blePeripheralService } from './blePeripheralService';
 import { bleCentralService } from './bleCentralService';
@@ -170,7 +171,7 @@ class RemoteSyncManager {
         useRemoteConnectStore.getState().addConnectedClient({
           id: 'ble_client',
           deviceId: 'ble_central',
-          deviceName: 'Bluetooth Kumandası',
+          deviceName: t('remote.ble_remote'),
           transport: 'ble',
           connectedAt: Date.now(),
         });
@@ -963,7 +964,7 @@ class RemoteSyncManager {
         useRemoteConnectStore.getState().addConnectedClient({
           id: client.clientId,
           deviceId: client.deviceId,
-          deviceName: client.deviceName || 'İnternet Kumandası',
+          deviceName: client.deviceName || t('remote.internet_remote'),
           transport: 'internet',
           connectedAt: Date.now(),
         });
@@ -1040,7 +1041,7 @@ class RemoteSyncManager {
       },
       onHostTemporarilyOffline: () => {
         if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'internet') return;
-        useRemoteConnectStore.getState().setConnectionStatus('connecting', 'Host yeniden bağlanıyor...');
+        useRemoteConnectStore.getState().setConnectionStatus('connecting', t('remote.host_reconnecting'));
       },
       onHostReconnected: () => {
         if (this.clientConnectionSeq !== currentSeq || this.activeClientTransport !== 'internet') return;
