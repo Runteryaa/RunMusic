@@ -136,7 +136,8 @@ function UpNextRow({
       <Swipeable
         renderRightActions={renderRightActions}
         friction={1}
-        rightThreshold={45}
+        rightThreshold={130}
+        overshootRight={false}
         activeOffsetX={[-20, 20]}
         failOffsetY={[-15, 15]}
         onSwipeableOpen={(direction, swipeable) => {

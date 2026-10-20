@@ -258,12 +258,45 @@ async function readQueueState(): Promise<{ queue: Track[]; activeIndex: number; 
 
 export async function getQueueSections(): Promise<QueueSections<Track>> {
   const { queue, activeIndex, activeTrack } = await readQueueState();
+  const upNextIds = useStore.getState().upNextIds;
   const playedHistory = useStore.getState().playedHistory;
   const activeKey = activeTrack ? trackKey(activeTrack) : undefined;
+
+  // Kuyrukta henüz yer almayan optimistik upNext parçalarını store üzerinden tamamla
+  const queueKeys = new Set(queue.map(trackKey));
+  const missingTracks: Track[] = [];
+
+  if (upNextIds.length > 0) {
+    const allAssets = useStore.getState().allAssets;
+    const metadataMap = useStore.getState().metadataMap;
+    const artworkMap = useStore.getState().artworkMap;
+
+    for (const id of upNextIds) {
+      if (!queueKeys.has(id)) {
+        const asset = allAssets.find((a) => a.id === id || a.uri === id);
+        if (asset) {
+          const meta = metadataMap[asset.id];
+          const t: Track = {
+            id: asset.id,
+            url: asset.uri,
+            title: meta?.title || asset.filename,
+            artist: meta?.artist || "Unknown Artist",
+            artwork: meta?.artwork || artworkMap[asset.id] || undefined,
+            duration: asset.duration,
+          } as Track;
+          missingTracks.push(t);
+          queueKeys.add(id);
+        }
+      }
+    }
+  }
+
+  const effectiveQueue = missingTracks.length > 0 ? [...queue, ...missingTracks] : queue;
+
   return deriveQueueSections(
-    queue,
+    effectiveQueue,
     activeIndex,
-    useStore.getState().upNextIds,
+    upNextIds,
     playedHistory as any,
     activeKey
   );
@@ -508,15 +541,56 @@ export async function startPlaybackFromLibrary(params: {
 }
 
 
+let persistTimeout: ReturnType<typeof setTimeout> | null = null;
+/** Diske yazmayı debounce eder; peş peşe yapılan ekleme ve taşımaların arayüzü dondurmasını önler. */
+export function schedulePersistQueue(): void {
+  if (persistTimeout) clearTimeout(persistTimeout);
+  persistTimeout = setTimeout(() => {
+    persistQueue().catch(() => {});
+  }, 350);
+}
+
+let pendingSyncIds: string[] | null = null;
+let pendingExtraTracks: Track[] = [];
+let isSyncing = false;
+
+/**
+ * Arka planda native TrackPlayer kuyruğunu asenkron olarak günceller.
+ * UI'ı ASLA bloklamaz; peş peşe gelen çağrıları birleştirerek (coalesce)
+ * gereksiz ara güncellemeleri atlar ve minimum köprü yükü oluşturur.
+ */
+function enqueueNativeSync(newUpNextIds: string[], extraTracks: Track[] = []): void {
+  pendingSyncIds = newUpNextIds;
+  if (extraTracks.length > 0) {
+    pendingExtraTracks.push(...extraTracks);
+  }
+
+  if (isSyncing) return;
+  isSyncing = true;
+
+  (async () => {
+    while (pendingSyncIds !== null) {
+      const currentIds = pendingSyncIds;
+      const currentExtras = pendingExtraTracks;
+      pendingSyncIds = null;
+      pendingExtraTracks = [];
+
+      try {
+        await executeNativeUpcomingSync(currentIds, currentExtras);
+      } catch (e) {
+        console.warn('[queueController] executeNativeUpcomingSync error:', e);
+      }
+    }
+    isSyncing = false;
+    schedulePersistQueue();
+  })();
+}
+
 /**
  * Yerel oynatıcıdaki yaklaşan (upcoming) parçaları çalan parçayı durdurmadan
  * kesintisiz (gapless) olarak senkronize eder.
- *
- * 1. Öncelikli sıra (upNextIds) parçaları hemen çalan parçanın ardına dizilir.
- * 2. Kütüphane bağlamındaki (context) parçalar mükerrer olmayacak şekilde ardına eklenir.
- * 3. Çalan parça HİÇ DURMAZ, `removeUpcomingTracks` + `add` ile güncellenir.
  */
-export async function syncUpcomingQueue(
+async function executeNativeUpcomingSync(
   newUpNextIds: string[],
   extraTracks: Track[] = []
 ): Promise<void> {
@@ -525,9 +599,6 @@ export async function syncUpcomingQueue(
     if (extraTracks.length > 0) {
       await TrackPlayer.add(extraTracks);
     }
-    useStore.getState().setUpNextIds(newUpNextIds);
-    await persistQueue();
-    useStore.getState().bumpQueueRevision();
     return;
   }
 
@@ -542,7 +613,6 @@ export async function syncUpcomingQueue(
     if (k && !pool.has(k)) pool.set(k, t);
   }
 
-  // Store'daki allAssets'tan da gerekirse tamamla
   const allAssets = useStore.getState().allAssets;
   const metadataMap = useStore.getState().metadataMap;
   const artworkMap = useStore.getState().artworkMap;
@@ -597,16 +667,22 @@ export async function syncUpcomingQueue(
       await TrackPlayer.add(upcoming);
     }
   } catch (err) {
-    console.warn('[queueController] syncUpcomingQueue error:', err);
+    console.warn('[queueController] executeNativeUpcomingSync error:', err);
   } finally {
     setTimeout(() => {
       setIsMutatingQueue(false);
     }, 400);
   }
+}
 
-  useStore.getState().setUpNextIds(validUpNextIds);
-  await persistQueue();
+/** Dışarıya açık kuyruk senkronizasyonu (anında optimistik güncelleme + arka plan native sync). */
+export function syncUpcomingQueue(
+  newUpNextIds: string[],
+  extraTracks: Track[] = []
+): void {
+  useStore.getState().setUpNextIds(newUpNextIds);
   useStore.getState().bumpQueueRevision();
+  enqueueNativeSync(newUpNextIds, extraTracks);
 }
 
 async function insertManual(track: QueueTrack, position: 'next' | 'end'): Promise<void> {
@@ -617,7 +693,12 @@ async function insertManual(track: QueueTrack, position: 'next' | 'end'): Promis
   const remaining = currentUpNext.filter((id) => id !== key);
   const newUpNextIds = position === 'next' ? [key, ...remaining] : [...remaining, key];
 
-  await syncUpcomingQueue(newUpNextIds, [track as Track]);
+  // 1. ANINDA (0ms) İyimser Güncelleme: UI hiç beklemeden yenilenir!
+  useStore.getState().setUpNextIds(newUpNextIds);
+  useStore.getState().bumpQueueRevision();
+
+  // 2. Arka planda native TrackPlayer ve kalıcı depolama senkronizasyonu
+  enqueueNativeSync(newUpNextIds, [track as Track]);
 }
 
 /** Şarkıyı hemen mevcut parçadan sonra çalar ("Play next"). */
@@ -645,7 +726,12 @@ export async function addTracksToQueue(
   const newUpNextIds =
     position === 'next' ? [...newKeys, ...remaining] : [...remaining, ...newKeys];
 
-  await syncUpcomingQueue(newUpNextIds, tracks as Track[]);
+  // 1. ANINDA (0ms) İyimser Güncelleme
+  useStore.getState().setUpNextIds(newUpNextIds);
+  useStore.getState().bumpQueueRevision();
+
+  // 2. Arka plan native sync
+  enqueueNativeSync(newUpNextIds, tracks as Track[]);
 }
 
 /**
@@ -653,7 +739,13 @@ export async function addTracksToQueue(
  * yüksek öncelikli "Sırada" (Up Next) bölümünün sonuna taşır.
  */
 export async function promoteContextTrackToUpNext(queueIndex: number, trackId?: string): Promise<void> {
-  const { queue, activeIndex } = await readQueueState();
+  const currentUpNext = useStore.getState().upNextIds;
+  const key = trackId;
+
+  if (key && currentUpNext.includes(key)) return;
+
+  let targetTrack: Track | undefined;
+  const queue = await TrackPlayer.getQueue().catch(() => []);
   let targetIndex = queueIndex;
   if (trackId) {
     const resolved = queue.findIndex(
@@ -661,17 +753,21 @@ export async function promoteContextTrackToUpNext(queueIndex: number, trackId?: 
     );
     if (resolved >= 0) targetIndex = resolved;
   }
-  if (targetIndex <= activeIndex || targetIndex >= queue.length) return;
+  if (targetIndex >= 0 && targetIndex < queue.length) {
+    targetTrack = queue[targetIndex];
+  }
 
-  const targetTrack = queue[targetIndex];
-  if (!targetTrack) return;
+  const effectiveKey = key || (targetTrack ? trackKey(targetTrack) : '');
+  if (!effectiveKey || currentUpNext.includes(effectiveKey)) return;
 
-  const key = trackKey(targetTrack);
-  const currentUpNext = useStore.getState().upNextIds;
-  if (currentUpNext.includes(key)) return;
+  const newUpNextIds = [...currentUpNext, effectiveKey];
 
-  const newUpNextIds = [...currentUpNext, key];
-  await syncUpcomingQueue(newUpNextIds, [targetTrack]);
+  // 1. ANINDA (0ms) İyimser Güncelleme
+  useStore.getState().setUpNextIds(newUpNextIds);
+  useStore.getState().bumpQueueRevision();
+
+  // 2. Arka plan native sync
+  enqueueNativeSync(newUpNextIds, targetTrack ? [targetTrack] : []);
 }
 
 /**
@@ -679,36 +775,22 @@ export async function promoteContextTrackToUpNext(queueIndex: number, trackId?: 
  * Yalnızca mevcut parçanın İLERİSİNDEKİ öğeler kaldırılabilir.
  */
 export async function removeQueueItem(index: number, trackId?: string): Promise<void> {
-  const { queue, activeIndex } = await readQueueState();
-  let targetIndex = index;
-  if (trackId) {
-    const resolved = queue.findIndex(
-      (t) => trackKey(t) === trackId || t.id === trackId || t.url === trackId
-    );
-    if (resolved >= 0) targetIndex = resolved;
-  }
-  if (targetIndex <= activeIndex || targetIndex >= queue.length) return;
-
-  const targetTrack = queue[targetIndex];
-  const key = targetTrack ? trackKey(targetTrack) : trackId;
   const currentUpNext = useStore.getState().upNextIds;
-  const isUpNext = key && currentUpNext.includes(key);
+  const key = trackId;
 
-  if (isUpNext && key) {
+  if (key && currentUpNext.includes(key)) {
     const newUpNextIds = currentUpNext.filter((id) => id !== key);
-    await syncUpcomingQueue(newUpNextIds);
+    // 1. ANINDA (0ms) İyimser Güncelleme
+    useStore.getState().setUpNextIds(newUpNextIds);
+    useStore.getState().bumpQueueRevision();
+    enqueueNativeSync(newUpNextIds);
   } else {
-    setIsMutatingQueue(true);
-    try {
-      await TrackPlayer.remove(targetIndex);
-      await persistQueue();
+    // Kütüphane bağlamından silme
+    const { activeIndex } = await readQueueState();
+    if (index > activeIndex) {
+      TrackPlayer.remove(index).catch(() => {});
+      schedulePersistQueue();
       useStore.getState().bumpQueueRevision();
-    } catch (err) {
-      console.warn('[queueController] removeQueueItem error:', err);
-    } finally {
-      setTimeout(() => {
-        setIsMutatingQueue(false);
-      }, 400);
     }
   }
 }
@@ -717,8 +799,10 @@ export async function removeQueueItem(index: number, trackId?: string): Promise<
  * Manuel "Sırada" öğelerinin TAMAMINI kuyruktan çıkarır.
  */
 export async function clearUpNextQueue(): Promise<void> {
-  await syncUpcomingQueue([]);
+  // 1. ANINDA (0ms) İyimser Güncelleme
   useStore.getState().clearUpNext();
+  useStore.getState().bumpQueueRevision();
+  enqueueNativeSync([]);
 }
 
 /** "Sırada" bölümü içinde yeniden sıralama (indeksler bölüme görelidir). */
@@ -730,7 +814,12 @@ export async function moveUpNext(from: number, to: number): Promise<void> {
   const [movedId] = currentUpNextIds.splice(from, 1);
   currentUpNextIds.splice(to, 0, movedId);
 
-  await syncUpcomingQueue(currentUpNextIds);
+  // 1. ANINDA (0ms) İyimser Güncelleme: UI anında parmak bırakıldığı anda yeni sıraya geçer!
+  useStore.getState().setUpNextIds(currentUpNextIds);
+  useStore.getState().bumpQueueRevision();
+
+  // 2. Arka plan native sync
+  enqueueNativeSync(currentUpNextIds);
 }
 
 /**

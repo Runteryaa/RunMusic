@@ -722,7 +722,7 @@ export default function LibraryScreen() {
     }
   };
 
-  const handleAddToQueue = async (asset: MediaLibrary.Asset) => {
+  const handleAddToQueue = (asset: MediaLibrary.Asset) => {
     try {
       const meta = metadataMap[asset.id];
       const title = meta?.title || asset.filename;
@@ -739,14 +739,14 @@ export default function LibraryScreen() {
       }
 
       const track = buildQueueTrack(asset);
-      await addToQueue(track);
       showToast(`"${track.title}" ${t('library.added_to_queue')}`);
+      addToQueue(track);
     } catch (e) {
       console.warn('Failed to add track to queue', e);
     }
   };
 
-  const handlePlayNext = async (asset: MediaLibrary.Asset) => {
+  const handlePlayNext = (asset: MediaLibrary.Asset) => {
     try {
       const meta = metadataMap[asset.id];
       const title = meta?.title || asset.filename;
@@ -763,8 +763,8 @@ export default function LibraryScreen() {
       }
 
       const track = buildQueueTrack(asset);
-      await playNext(track);
       showToast(`"${track.title}" ${t('library.play_next_added')}`);
+      playNext(track);
     } catch (e) {
       console.warn('Failed to play next', e);
     }
@@ -840,7 +840,8 @@ export default function LibraryScreen() {
         <Swipeable
           renderLeftActions={renderLeftActions}
           friction={1}
-          leftThreshold={60}
+          leftThreshold={130}
+          overshootLeft={false}
           activeOffsetX={[-20, 20]}
           failOffsetY={[-15, 15]}
           onSwipeableOpen={(direction, swipeable) => {
@@ -932,7 +933,8 @@ export default function LibraryScreen() {
         <Swipeable
           renderLeftActions={renderLeftActions}
           friction={1}
-          leftThreshold={60}
+          leftThreshold={130}
+          overshootLeft={false}
           activeOffsetX={[-20, 20]}
           failOffsetY={[-15, 15]}
           onSwipeableOpen={(direction, swipeable) => {

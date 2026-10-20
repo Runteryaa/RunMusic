@@ -633,39 +633,97 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     [allAssets, library, metadataMap, artworkMap, t]
   );
 
-  /** Manuel "Sırada" listesi (görsel model). */
+  /** Manuel "Sırada" listesi (anında 0ms optimistik görsel model). */
   const upNextItems: UpNextItem[] = useMemo(() => {
-    if (!effectiveQueueSections || !effectiveQueueSections.upNext) return [];
-    return effectiveQueueSections.upNext
-      .filter((entry) => entry && entry.track)
-      .map((entry, i) => {
-        const info = resolveTrackDisplay(entry.track);
-        return {
-          key: `${info.canonicalId || entry.track.id || entry.track.url}-${entry.index}-${i}`,
-          title: info.title,
-          artist: info.artist,
-          artwork: info.artwork,
-          trackId: info.trackId,
-          trackUri: info.trackUri,
-        };
-      });
-  }, [effectiveQueueSections, resolveTrackDisplay]);
+    const targetIds = player.isRemote
+      ? (Array.isArray(remoteState.upNext) ? remoteState.upNext : []).map(String)
+      : upNextIds;
+
+    if (!targetIds || targetIds.length === 0) return [];
+
+    // Mevcut kuyruktaki ve bölümlerdeki parçaları hızlı erişim için haritala
+    const trackMap = new Map<string, Track>();
+    if (queue && queue.length > 0) {
+      for (const t of queue) {
+        const k = trackKey(t);
+        if (k && !trackMap.has(k)) trackMap.set(k, t);
+        if (t.id && !trackMap.has(t.id)) trackMap.set(t.id, t);
+        if (t.url && !trackMap.has(t.url)) trackMap.set(t.url, t);
+      }
+    }
+    if (effectiveQueueSections?.upNext) {
+      for (const entry of effectiveQueueSections.upNext) {
+        if (entry.track) {
+          const k = trackKey(entry.track);
+          if (k && !trackMap.has(k)) trackMap.set(k, entry.track);
+          if (entry.track.id && !trackMap.has(entry.track.id)) trackMap.set(entry.track.id, entry.track);
+          if (entry.track.url && !trackMap.has(entry.track.url)) trackMap.set(entry.track.url, entry.track);
+        }
+      }
+    }
+
+    const baseAssets = allAssets.length > 0 ? allAssets : library;
+
+    return targetIds.map((id, i) => {
+      let t = trackMap.get(id);
+      if (!t) {
+        const asset = baseAssets.find((a) => a.id === id || a.uri === id);
+        if (asset) {
+          const meta = metadataMap[asset.id];
+          t = {
+            id: asset.id,
+            url: asset.uri,
+            title: meta?.title || asset.filename,
+            artist: meta?.artist || 'Unknown Artist',
+            artwork: meta?.artwork || artworkMap[asset.id] || undefined,
+            duration: asset.duration,
+          } as Track;
+        } else {
+          t = {
+            id,
+            url: id,
+            title: 'Track',
+            artist: 'Unknown Artist',
+          } as Track;
+        }
+      }
+
+      const info = resolveTrackDisplay(t);
+      return {
+        key: `${info.canonicalId || id}-${i}`,
+        title: info.title,
+        artist: info.artist,
+        artwork: info.artwork,
+        trackId: info.trackId || id,
+        trackUri: info.trackUri,
+      };
+    });
+  }, [
+    player.isRemote,
+    remoteState.upNext,
+    upNextIds,
+    queue,
+    effectiveQueueSections?.upNext,
+    allAssets,
+    library,
+    metadataMap,
+    artworkMap,
+    resolveTrackDisplay,
+  ]);
 
   const handleMoveUpNext = useCallback(
-    async (from: number, to: number) => {
+    (from: number, to: number) => {
       if (player.isRemote) {
         remoteSyncManager.sendClientCommand({ type: 'COMMAND_QUEUE_MOVE', fromIndex: from, toIndex: to });
         return;
       }
-      await moveUpNext(from, to);
-      await refreshQueueSections();
-      await refreshQueue();
+      moveUpNext(from, to);
     },
-    [player.isRemote, refreshQueueSections, refreshQueue]
+    [player.isRemote]
   );
 
   const handleRemoveUpNext = useCallback(
-    async (sectionIndex: number) => {
+    (sectionIndex: number) => {
       if (player.isRemote) {
         const target = effectiveQueueSections?.upNext[sectionIndex];
         const trackId = target?.track?.id;
@@ -676,17 +734,19 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         });
         return;
       }
-      const target = queueSections?.upNext[sectionIndex];
-      if (!target) return;
-      await removeQueueItem(target.index, target.track?.id);
-      await refreshQueueSections();
-      await refreshQueue();
+      const targetId = upNextIds[sectionIndex];
+      const target = queueSections?.upNext?.find(
+        (e) => (targetId && (trackKey(e.track) === targetId || e.track.id === targetId))
+      );
+      const trackId = targetId || target?.track?.id;
+      const index = target ? target.index : -1;
+      removeQueueItem(index, trackId);
     },
-    [player.isRemote, effectiveQueueSections, queueSections, refreshQueueSections, refreshQueue]
+    [player.isRemote, effectiveQueueSections, upNextIds, queueSections]
   );
 
   const handleRemoveFromContext = useCallback(
-    async (queueIndex: number, trackId?: string) => {
+    (queueIndex: number, trackId?: string) => {
       if (player.isRemote) {
         const target = effectiveQueueSections?.context.find((e) => e.index === queueIndex);
         const tId = trackId || target?.track?.id;
@@ -697,33 +757,27 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         });
         return;
       }
-      await removeQueueItem(queueIndex, trackId);
-      await refreshQueueSections();
-      await refreshQueue();
+      removeQueueItem(queueIndex, trackId);
     },
-    [player.isRemote, effectiveQueueSections, refreshQueueSections, refreshQueue]
+    [player.isRemote, effectiveQueueSections]
   );
 
   const handlePromoteToUpNext = useCallback(
-    async (queueIndex: number, trackId?: string) => {
+    (queueIndex: number, trackId?: string) => {
       if (player.isRemote) {
         return;
       }
-      await promoteContextTrackToUpNext(queueIndex, trackId);
-      await refreshQueueSections();
-      await refreshQueue();
+      promoteContextTrackToUpNext(queueIndex, trackId);
     },
-    [player.isRemote, refreshQueueSections, refreshQueue]
+    [player.isRemote]
   );
 
-  const handleClearUpNext = useCallback(async () => {
+  const handleClearUpNext = useCallback(() => {
     if (player.isRemote) {
       return;
     }
-    await clearUpNextQueue();
-    await refreshQueueSections();
-    await refreshQueue();
-  }, [player.isRemote, refreshQueueSections, refreshQueue]);
+    clearUpNextQueue();
+  }, [player.isRemote]);
 
   const handleQueueItemPress = useCallback(
     async (queueIndex: number, trackId?: string, title?: string, artist?: string) => {
@@ -991,17 +1045,21 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
               accentColor={theme.primary}
               onMove={handleMoveUpNext}
               onRemove={handleRemoveUpNext}
-              onItemPress={(_, idx) => {
-                const target = effectiveQueueSections?.upNext[idx];
-                if (target) {
-                  const info = resolveTrackDisplay(target.track);
-                  handleQueueItemPress(
-                    target.index,
-                    info.trackId || target.track.id,
-                    info.title,
-                    info.artist
-                  );
-                }
+              onItemPress={(item, idx) => {
+                const target =
+                  effectiveQueueSections?.upNext?.find(
+                    (e) =>
+                      item.trackId &&
+                      (e.track.id === item.trackId || trackKey(e.track) === item.trackId)
+                  ) || effectiveQueueSections?.upNext[idx];
+                const trackId = item.trackId || target?.track?.id;
+                const index = target ? target.index : -1;
+                handleQueueItemPress(
+                  index,
+                  trackId,
+                  item.title,
+                  item.artist
+                );
               }}
             />
           </View>
@@ -1012,8 +1070,10 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         return (
           <Swipeable
             friction={1}
-            leftThreshold={45}
-            rightThreshold={45}
+            leftThreshold={130}
+            rightThreshold={130}
+            overshootLeft={false}
+            overshootRight={false}
             activeOffsetX={[-20, 20]}
             failOffsetY={[-15, 15]}
             onSwipeableOpen={(direction, swipeable) => {
