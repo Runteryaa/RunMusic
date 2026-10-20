@@ -51,7 +51,7 @@ export async function startDownload(params: StartDownloadParams): Promise<{ down
   const finalFileName = `${baseName}${ext}`;
 
   // Hedef depolama: parametre verilmemişse varsayılan depolama hedefini kullan
-  const defaultTarget = store.defaultStorageTarget || 'private';
+  const defaultTarget = store.defaultStorageTarget || 'public';
   const target: 'public' | 'private' = params.storageTarget
     ? (params.storageTarget === 'public' ? 'public' : 'private')
     : (defaultTarget === 'public' ? 'public' : 'private');
@@ -251,20 +251,23 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
   }
 
   let createdAsset: MediaLibrary.Asset | null = null;
-  try {
-    let permission = await MediaLibrary.getPermissionsAsync(false, ['audio']);
-    if (!permission.granted && permission.status !== 'granted' && permission.canAskAgain) {
-      permission = await MediaLibrary.requestPermissionsAsync(false, ['audio']);
-    }
-
-    if (permission.granted || permission.status === 'granted') {
-      const result = await MediaLibrary.createAssetAsync(targetFileUri);
-      if (result && result.id) {
-        createdAsset = result;
+  // Eğer daha önce MediaLibrary varlığı oluşturulmadıysa oluştur
+  if (!task.mediaLibraryAssetId) {
+    try {
+      let permission = await MediaLibrary.getPermissionsAsync(false, ['audio']);
+      if (!permission.granted && permission.status !== 'granted' && permission.canAskAgain) {
+        permission = await MediaLibrary.requestPermissionsAsync(false, ['audio']);
       }
+
+      if (permission.granted || permission.status === 'granted') {
+        const result = await MediaLibrary.createAssetAsync(targetFileUri);
+        if (result && result.id) {
+          createdAsset = result;
+        }
+      }
+    } catch (mediaLibErr) {
+      console.warn('[downloadManager] MediaLibrary sistem kaydı başarısız, yerel kütüphaneye ekleniyor:', mediaLibErr);
     }
-  } catch (mediaLibErr) {
-    console.warn('[downloadManager] MediaLibrary sistem kaydı başarısız, yerel kütüphaneye ekleniyor:', mediaLibErr);
   }
 
   // Cihaz MediaStore varlığı oluşturulamasa dahi parçayı doğrudan RunMusic kütüphanesine ekle
@@ -274,7 +277,7 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
     modificationTime: createdAsset.modificationTime || task.completedAt || Date.now(),
     duration: createdAsset.duration || task.duration || 0,
   } : {
-    id: `local_${downloadId}`,
+    id: task.mediaLibraryAssetId || `local_${downloadId}`,
     filename: targetFileName,
     uri: targetFileUri,
     mediaType: 'audio' as any,
@@ -329,66 +332,79 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
 
 /**
  * Tamamlanan tüm indirmeleri RunMusic ana kütüphanesi (useStore.library) ile senkronize eder.
- * Dosyaların diskte var olduğunu doğrular ve kütüphanede eksik olanları en başa ekler.
+ * Dosyaların diskte var olduğunu PARALEL olarak doğrular ve kütüphanede eksik olanları en başa ekler.
  */
 export async function syncCompletedDownloadsWithLibrary(): Promise<MediaLibrary.Asset[]> {
   const downloadTasks = useDownloadStore.getState().tasks;
   const currentLib = useStore.getState().library;
-  const newAssetsToAdd: MediaLibrary.Asset[] = [];
+  const currentLibIds = new Set(currentLib.map((a) => a.id));
+  const currentLibUris = new Set(currentLib.map((a) => a.uri));
 
-  for (const task of downloadTasks) {
-    if (task.status !== 'completed' || !task.localFileUri) continue;
+  // Yalnızca tamamlanmış ve yerel dosya yolu olan görevler
+  const completedTasks = downloadTasks.filter((t) => t.status === 'completed' && t.localFileUri);
+  if (completedTasks.length === 0) return currentLib;
 
-    // Sadece kütüphaneye eklenmiş parçaları (storageTarget === 'public' veya mediaLibraryAssetId olan)
-    if (!task.mediaLibraryAssetId && task.storageTarget !== 'public') continue;
-
-    try {
-      const fileInfo = await FileSystem.getInfoAsync(task.localFileUri);
-      if (!fileInfo.exists) continue;
-
-      const assetId = task.mediaLibraryAssetId || `local_${task.id}`;
-      const alreadyInLib = currentLib.some(
-        (a) =>
-          a.id === assetId ||
-          a.uri === task.localFileUri ||
-          (task.mediaLibraryAssetId && a.id === task.mediaLibraryAssetId)
-      );
-
-      const asset: MediaLibrary.Asset = {
-        id: assetId,
-        filename: task.fileName || `${task.title || 'audio'}.mp3`,
-        uri: task.localFileUri,
-        mediaType: 'audio' as any,
-        width: 0,
-        height: 0,
-        creationTime: task.createdAt || Date.now(),
-        modificationTime: task.completedAt || Date.now(),
-        duration: task.duration || 0,
-      };
-
-      if (!alreadyInLib) {
-        newAssetsToAdd.push(asset);
+  // Dosya varlık denetimini sıralı değil PARALEL olarak çalıştır (gecikmeyi sıfırlar)
+  const checkedResults = await Promise.all(
+    completedTasks.map(async (task) => {
+      try {
+        const fileInfo = await FileSystem.getInfoAsync(task.localFileUri!);
+        return fileInfo.exists ? task : null;
+      } catch {
+        return null;
       }
+    })
+  );
 
-      // Metadata ve Artwork kayıtlarını garanti et
-      if (task.title || task.artist || task.artwork) {
-        const metaPayload = {
-          title: task.title,
-          artist: task.artist,
-          artwork: task.artwork,
-        };
-        const ids = [assetId, task.localFileUri, task.id, `local_${task.id}`];
-        if (task.mediaLibraryAssetId) ids.push(task.mediaLibraryAssetId);
-        for (const id of ids) {
-          useStore.getState().setTrackMetadata(id, metaPayload);
-          if (task.artwork) {
-            useStore.getState().setArtwork(id, task.artwork);
-          }
+  const validTasks = checkedResults.filter((t): t is DownloadTask => t !== null);
+  const newAssetsToAdd: MediaLibrary.Asset[] = [];
+  const metaBatch: Record<string, any> = {};
+
+  for (const task of validTasks) {
+    const assetId = task.mediaLibraryAssetId || `local_${task.id}`;
+    const alreadyInLib =
+      currentLibIds.has(assetId) ||
+      currentLibUris.has(task.localFileUri!) ||
+      (task.mediaLibraryAssetId ? currentLibIds.has(task.mediaLibraryAssetId) : false);
+
+    const asset: MediaLibrary.Asset = {
+      id: assetId,
+      filename: task.fileName || `${task.title || 'audio'}.mp3`,
+      uri: task.localFileUri!,
+      mediaType: 'audio' as any,
+      width: 0,
+      height: 0,
+      creationTime: task.createdAt || Date.now(),
+      modificationTime: task.completedAt || Date.now(),
+      duration: task.duration || 0,
+    };
+
+    if (!alreadyInLib) {
+      newAssetsToAdd.push(asset);
+      currentLibIds.add(assetId);
+      currentLibUris.add(task.localFileUri!);
+    }
+
+    // Metadata ve Artwork kayıtlarını toplu güncellemek üzere biriktir
+    if (task.title || task.artist || task.artwork) {
+      const metaPayload = {
+        title: task.title,
+        artist: task.artist,
+        artwork: task.artwork,
+      };
+      const ids = [assetId, task.localFileUri!, task.id, `local_${task.id}`];
+      if (task.mediaLibraryAssetId) ids.push(task.mediaLibraryAssetId);
+      for (const id of ids) {
+        metaBatch[id] = metaPayload;
+        if (task.artwork) {
+          useStore.getState().setArtwork(id, task.artwork);
         }
       }
-    } catch {
-      // ignore
     }
+  }
+
+  if (Object.keys(metaBatch).length > 0) {
+    useStore.getState().setBatchTrackMetadata(metaBatch);
   }
 
   if (newAssetsToAdd.length > 0) {

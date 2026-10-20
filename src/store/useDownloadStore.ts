@@ -19,7 +19,7 @@ export const useDownloadStore = create<DownloadStoreState>()(
   persist(
     (set) => ({
       tasks: [],
-      defaultStorageTarget: 'private',
+      defaultStorageTarget: 'public',
 
       addTask: (task) =>
         set((state) => ({

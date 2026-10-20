@@ -258,6 +258,9 @@ export default function LibraryScreen() {
         return;
       }
 
+      // İndirmeleri önceden hızlıca senkronize et (böylece indirilmiş şarkılar 0ms anında hazır olur)
+      syncCompletedDownloadsWithLibrary().catch(() => {});
+
       setStatusMessage(t('library.scanning'));
       let hasNextPage = true;
       let after: string | undefined = undefined;
@@ -275,24 +278,22 @@ export default function LibraryScreen() {
         }
         hasNextPage = result.hasNextPage;
         after = result.endCursor;
-
-        // Olay döngüsüne nefes payı ver (kullanıcı tab değiştirebilsin, playerı açabilsin)
-        if (hasNextPage) {
-          await new Promise((r) => setTimeout(r, 16));
-        }
       }
 
       // Filter local array
       const validAudio: MediaLibrary.Asset[] = [];
       const downloadTasks = useDownloadStore.getState().tasks;
+      const downloadedAssetIds = new Set(downloadTasks.map((t) => t.mediaLibraryAssetId).filter(Boolean));
+      const downloadedUris = new Set(downloadTasks.map((t) => t.localFileUri).filter(Boolean));
+      const hasSizeFilter =
+        (settings.minSizeMB != null && settings.minSizeMB > 0) ||
+        (settings.maxSizeMB != null && settings.maxSizeMB > 0);
 
       for (let i = 0; i < allAudio.length; i++) {
         const asset = allAudio[i];
 
         // İndirilen parçaların süre veya boyut filtreleri yüzünden kaybolmasını engelle
-        const isDownloaded = downloadTasks.some(
-          (t) => t.mediaLibraryAssetId === asset.id || (t.localFileUri && t.localFileUri === asset.uri)
-        );
+        const isDownloaded = downloadedAssetIds.has(asset.id) || downloadedUris.has(asset.uri);
 
         if (!isDownloaded) {
           if (settings.minLengthSec != null && settings.minLengthSec > 0) {
@@ -302,10 +303,7 @@ export default function LibraryScreen() {
             if (asset.duration != null && asset.duration > settings.maxLengthSec) continue;
           }
 
-          if (
-            (settings.minSizeMB != null && settings.minSizeMB > 0) ||
-            (settings.maxSizeMB != null && settings.maxSizeMB > 0)
-          ) {
+          if (hasSizeFilter) {
             try {
               const fileInfo = await FileSystem.getInfoAsync(asset.uri);
               if (fileInfo.exists && !fileInfo.isDirectory && typeof fileInfo.size === 'number') {
@@ -322,88 +320,103 @@ export default function LibraryScreen() {
         }
 
         validAudio.push(asset);
-
-        // Her 100 dosyada bir JS thread'ini rahatlat
-        if (i % 100 === 0 && i > 0) {
-          await new Promise((r) => setTimeout(r, 10));
-        }
       }
 
-      // Kütüphaneye eklenmiş yerel indirmeleri (useDownloadStore) tara ve kütüphaneye kalıcı olarak dahil et
-      for (const task of downloadTasks) {
-        if (
-          task.status === 'completed' &&
-          task.localFileUri &&
-          (task.mediaLibraryAssetId || task.storageTarget === 'public')
-        ) {
-          try {
-            const fileInfo = await FileSystem.getInfoAsync(task.localFileUri);
-            if (fileInfo.exists) {
-              const taskAssetId = task.mediaLibraryAssetId || `local_${task.id}`;
-              const alreadyExists = validAudio.some(
-                (a) =>
-                  a.id === taskAssetId ||
-                  (task.mediaLibraryAssetId && a.id === task.mediaLibraryAssetId) ||
-                  a.uri === task.localFileUri
-              );
-              if (!alreadyExists) {
-                const downloadedAsset: MediaLibrary.Asset = {
-                  id: taskAssetId,
-                  filename: task.fileName || `${task.title || 'audio'}.mp3`,
-                  uri: task.localFileUri,
-                  mediaType: 'audio' as any,
-                  width: 0,
-                  height: 0,
-                  creationTime: task.createdAt || Date.now(),
-                  modificationTime: task.completedAt || Date.now(),
-                  duration: task.duration || 0,
-                };
-                validAudio.unshift(downloadedAsset);
-              }
+      const validAudioIds = new Set(validAudio.map((a) => a.id));
+      const validAudioUris = new Set(validAudio.map((a) => a.uri));
 
-              // Metadata ve Artwork kayıtlarını her halükarda güncelle
-              if (task.title || task.artist || task.artwork) {
-                const metaPayload = {
-                  title: task.title,
-                  artist: task.artist,
-                  artwork: task.artwork,
-                };
-                const ids = [taskAssetId, task.localFileUri, task.id, `local_${task.id}`];
-                if (task.mediaLibraryAssetId) ids.push(task.mediaLibraryAssetId);
-                for (const id of ids) {
-                  useStore.getState().setTrackMetadata(id, metaPayload);
-                  if (task.artwork) {
-                    useStore.getState().setArtwork(id, task.artwork);
-                  }
-                }
-              }
-            }
-          } catch {
-            // ignore
-          }
-        }
-      }
-
-      // Mevcut kütüphanede olup sistemde taranamayan (local_ veya indirilmiş) yerel dosyaları da koru
-      const existingLib = useStore.getState().library;
-      for (const item of existingLib) {
-        const isFromDownloads = downloadTasks.some(
-          (t) =>
-            t.status === 'completed' &&
-            (t.mediaLibraryAssetId === item.id || `local_${t.id}` === item.id || t.localFileUri === item.uri)
+      // Kütüphaneye eklenmiş yerel indirmeleri (useDownloadStore) PARALEL olarak tara ve dahil et
+      const completedTasks = downloadTasks.filter((t) => t.status === 'completed' && t.localFileUri);
+      const tasksToCheck = completedTasks.filter((task) => {
+        const taskAssetId = task.mediaLibraryAssetId || `local_${task.id}`;
+        return (
+          !validAudioIds.has(taskAssetId) &&
+          (!task.mediaLibraryAssetId || !validAudioIds.has(task.mediaLibraryAssetId)) &&
+          !validAudioUris.has(task.localFileUri!)
         );
-        const shouldPreserve = item.id.startsWith('local_') || isFromDownloads;
+      });
 
-        if (shouldPreserve && !validAudio.some((a) => a.id === item.id || a.uri === item.uri)) {
-          try {
-            const info = await FileSystem.getInfoAsync(item.uri);
-            if (info.exists) {
-              validAudio.unshift(item);
+      const metaBatchToSet: Record<string, any> = {};
+
+      if (tasksToCheck.length > 0) {
+        const checkedTasks = await Promise.all(
+          tasksToCheck.map(async (task) => {
+            try {
+              const fileInfo = await FileSystem.getInfoAsync(task.localFileUri!);
+              if (!fileInfo.exists) return null;
+              const taskAssetId = task.mediaLibraryAssetId || `local_${task.id}`;
+              const downloadedAsset: MediaLibrary.Asset = {
+                id: taskAssetId,
+                filename: task.fileName || `${task.title || 'audio'}.mp3`,
+                uri: task.localFileUri!,
+                mediaType: 'audio' as any,
+                width: 0,
+                height: 0,
+                creationTime: task.createdAt || Date.now(),
+                modificationTime: task.completedAt || Date.now(),
+                duration: task.duration || 0,
+              };
+              return { asset: downloadedAsset, task };
+            } catch {
+              return null;
             }
-          } catch {
-            // ignore
+          })
+        );
+
+        for (const item of checkedTasks) {
+          if (!item) continue;
+          validAudio.unshift(item.asset);
+          validAudioIds.add(item.asset.id);
+          validAudioUris.add(item.asset.uri);
+
+          if (item.task.title || item.task.artist || item.task.artwork) {
+            const metaPayload = {
+              title: item.task.title,
+              artist: item.task.artist,
+              artwork: item.task.artwork,
+            };
+            const ids = [item.asset.id, item.task.localFileUri!, item.task.id, `local_${item.task.id}`];
+            if (item.task.mediaLibraryAssetId) ids.push(item.task.mediaLibraryAssetId);
+            for (const id of ids) {
+              metaBatchToSet[id] = metaPayload;
+              if (item.task.artwork) {
+                useStore.getState().setArtwork(id, item.task.artwork);
+              }
+            }
           }
         }
+      }
+
+      // Mevcut kütüphanede olup sistemde taranamayan (local_ veya indirilmiş) yerel dosyaları da PARALEL koru
+      const existingLib = useStore.getState().library;
+      const existingToCheck = existingLib.filter((item) => {
+        const isFromDownloads = downloadedAssetIds.has(item.id) || downloadedUris.has(item.uri);
+        const shouldPreserve = item.id.startsWith('local_') || isFromDownloads;
+        return shouldPreserve && !validAudioIds.has(item.id) && !validAudioUris.has(item.uri);
+      });
+
+      if (existingToCheck.length > 0) {
+        const checkedExisting = await Promise.all(
+          existingToCheck.map(async (item) => {
+            try {
+              const info = await FileSystem.getInfoAsync(item.uri);
+              return info.exists ? item : null;
+            } catch {
+              return null;
+            }
+          })
+        );
+        for (const item of checkedExisting) {
+          if (item) {
+            validAudio.unshift(item);
+            validAudioIds.add(item.id);
+            validAudioUris.add(item.uri);
+          }
+        }
+      }
+
+      if (Object.keys(metaBatchToSet).length > 0) {
+        setBatchTrackMetadata(metaBatchToSet as any);
       }
 
       // Kütüphane listesini güncellemeden önce bekleyen arayüz etkileşimlerine yer aç
