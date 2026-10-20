@@ -12,6 +12,7 @@ import {
   resolveTrackId,
   trackKey,
   markUpNextConsumed,
+  replenishUpcomingQueueIfNeeded,
 } from './services/queueController';
 import { cleanYouTubeTitle, cleanDisplayTitle } from './services/lyricsService';
 import { useStore } from './store/useStore';
@@ -180,6 +181,7 @@ export default async function playbackService() {
         markUpNextConsumed(event.track);
         clearSessionFailedTracks();
         recordAttemptedTrack(event.track, event.index);
+        replenishUpcomingQueueIfNeeded().catch(() => {});
         const rawId = String(event.track.id ?? '').trim();
         const rawUrl = String(event.track.url ?? '').trim();
         const allAssets = useStore.getState().allAssets;

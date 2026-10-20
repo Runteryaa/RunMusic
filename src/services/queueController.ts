@@ -377,6 +377,136 @@ export async function playQueueTrack(
 }
 
 /** Kullanıcı kütüphaneden bir parçaya dokunduğunda kuyruğu kurar ve çalar. */
+export const CONTEXT_BUFFER_TARGET = 20;
+export const CONTEXT_REPLENISH_THRESHOLD = 10;
+
+let activeContextOrder: string[] = [];
+
+export function getActiveContextOrder(): string[] {
+  if (activeContextOrder.length === 0) {
+    activeContextOrder = useStore.getState().contextIds || [];
+  }
+  return activeContextOrder;
+}
+
+export function setActiveContextOrder(order: string[]): void {
+  activeContextOrder = order;
+}
+
+export function getUpcomingContextWindow(
+  orderIds: string[],
+  startId: string,
+  limit: number = CONTEXT_BUFFER_TARGET,
+  isRepeatQueue: boolean = false
+): string[] {
+  const startIdx = orderIds.indexOf(startId);
+  const effectiveStart = startIdx >= 0 ? startIdx : 0;
+  const upcoming: string[] = [];
+
+  for (let i = 1; i <= limit; i++) {
+    const nextIdx = effectiveStart + i;
+    if (nextIdx < orderIds.length) {
+      upcoming.push(orderIds[nextIdx]);
+    } else if (isRepeatQueue && orderIds.length > 0) {
+      upcoming.push(orderIds[nextIdx % orderIds.length]);
+    } else {
+      break;
+    }
+  }
+  return upcoming;
+}
+
+let isReplenishing = false;
+
+/** Son 10 parça kaldığında kütüphaneden 10 parça daha ekleyerek kuyruğu 20 parçaya tamamlar. */
+export async function replenishUpcomingQueueIfNeeded(): Promise<void> {
+  if (isReplenishing) return;
+  isReplenishing = true;
+  try {
+    const { queue, activeIndex } = await readQueueState();
+    if (queue.length === 0 || activeIndex < 0) return;
+
+    const upNextSet = new Set(useStore.getState().upNextIds);
+    const upcomingContext = queue.slice(activeIndex + 1).filter((t) => {
+      const k = trackKey(t);
+      return k && !upNextSet.has(k);
+    });
+
+    if (upcomingContext.length >= CONTEXT_REPLENISH_THRESHOLD) {
+      return;
+    }
+
+    const fullOrder = getActiveContextOrder();
+    if (fullOrder.length === 0) return;
+
+    let lastContextKey = "";
+    for (let i = queue.length - 1; i >= 0; i--) {
+      const k = trackKey(queue[i]);
+      if (k && !upNextSet.has(k) && fullOrder.includes(k)) {
+        lastContextKey = k;
+        break;
+      }
+    }
+
+    let nextIdx = 0;
+    if (lastContextKey) {
+      const found = fullOrder.lastIndexOf(lastContextKey);
+      if (found >= 0) nextIdx = found + 1;
+    } else {
+      const activeKey = trackKey(queue[activeIndex]);
+      const found = activeKey ? fullOrder.indexOf(activeKey) : -1;
+      nextIdx = found >= 0 ? found + 1 : 0;
+    }
+
+    const needed = CONTEXT_BUFFER_TARGET - upcomingContext.length;
+    const repeatMode = useStore.getState().repeatMode;
+    const isRepeatQueue = repeatMode === RepeatMode.Queue;
+
+    const idsToAdd: string[] = [];
+    for (let i = 0; i < needed; i++) {
+      const targetIdx = nextIdx + i;
+      if (targetIdx < fullOrder.length) {
+        idsToAdd.push(fullOrder[targetIdx]);
+      } else if (isRepeatQueue && fullOrder.length > 0) {
+        idsToAdd.push(fullOrder[targetIdx % fullOrder.length]);
+      } else {
+        break;
+      }
+    }
+
+    if (idsToAdd.length === 0) return;
+
+    const allAssets = useStore.getState().allAssets;
+    const metadataMap = useStore.getState().metadataMap;
+    const artworkMap = useStore.getState().artworkMap;
+
+    const tracksToAdd: Track[] = [];
+    for (const id of idsToAdd) {
+      const asset = allAssets.find((a) => a.id === id || a.uri === id);
+      if (asset) {
+        const meta = metadataMap[asset.id];
+        tracksToAdd.push({
+          id: asset.id,
+          url: asset.uri,
+          title: meta?.title || asset.filename,
+          artist: meta?.artist || "Unknown Artist",
+          artwork: meta?.artwork || artworkMap[asset.id] || undefined,
+          duration: asset.duration,
+        } as Track);
+      }
+    }
+
+    if (tracksToAdd.length > 0) {
+      await TrackPlayer.add(tracksToAdd);
+      useStore.getState().bumpQueueRevision();
+    }
+  } catch (err) {
+    console.warn("[queueController] replenishUpcomingQueueIfNeeded error:", err);
+  } finally {
+    isReplenishing = false;
+  }
+}
+
 export async function startPlaybackFromLibrary(params: {
   tracks: QueueTrack[];
   startId: string;
@@ -472,35 +602,45 @@ export async function startPlaybackFromLibrary(params: {
     }
   }
 
-  let finalQueue: Track[];
-  let finalStartIndex: number;
+  setActiveContextOrder(orderIds);
 
-  if (preservedUpNextTracks.length > 0) {
-    const upNextKeys = new Set(preservedUpNextTracks.map((t) => trackKey(t)));
-    if (shuffle) {
-      // Karışık modda startTrack ilk sırada yer alır, ardına upNext eklenir
-      const remainingContext = ordered
-        .filter((t, idx) => idx !== startIndex && !upNextKeys.has(trackKey(t))) as Track[];
-      finalQueue = [startTrack as Track, ...preservedUpNextTracks, ...remainingContext];
-      finalStartIndex = 0;
-    } else {
-      // Doğrusal sırada context sırası korunur, upNext mevcut çalanın hemen ardına yerleşir
-      const before = ordered
-        .slice(0, startIndex + 1)
-        .filter((t, idx) => idx === startIndex || !upNextKeys.has(trackKey(t))) as Track[];
-      const after = ordered
-        .slice(startIndex + 1)
-        .filter((t) => !upNextKeys.has(trackKey(t))) as Track[];
-      finalQueue = [...before, ...preservedUpNextTracks, ...after];
-      finalStartIndex = finalQueue.findIndex((t) => trackKey(t) === startId);
-      if (finalStartIndex < 0) {
-        finalStartIndex = Math.max(0, before.length - 1);
+  const isRepeatQueue = useStore.getState().repeatMode === RepeatMode.Queue;
+  const upcomingContextIds = getUpcomingContextWindow(
+    orderIds,
+    startId,
+    CONTEXT_BUFFER_TARGET,
+    isRepeatQueue
+  );
+  const upNextKeys = new Set(preservedUpNextTracks.map((t) => trackKey(t)));
+
+  const allAssets = useStore.getState().allAssets;
+  const upcomingContextTracks = upcomingContextIds
+    .filter((id) => !upNextKeys.has(id))
+    .map((id) => {
+      const direct = byId.get(id);
+      if (direct) return direct as Track;
+      const asset = allAssets.find((a) => a.id === id || a.uri === id);
+      if (asset) {
+        const meta = metadataMap[asset.id];
+        return {
+          id: asset.id,
+          url: asset.uri,
+          title: meta?.title || asset.filename,
+          artist: meta?.artist || "Unknown Artist",
+          artwork: meta?.artwork || useStore.getState().artworkMap[asset.id] || undefined,
+          duration: asset.duration,
+        } as Track;
       }
-    }
-  } else {
-    finalQueue = ordered as Track[];
-    finalStartIndex = startIndex;
-  }
+      return null;
+    })
+    .filter((t): t is Track => Boolean(t));
+
+  const finalQueue: Track[] = [
+    startTrack as Track,
+    ...preservedUpNextTracks,
+    ...upcomingContextTracks,
+  ];
+  const finalStartIndex = 0;
 
   const enrichedQueue = finalQueue.map((t) => {
     const k = trackKey(t);
