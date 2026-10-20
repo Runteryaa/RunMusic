@@ -29,7 +29,7 @@ export const InstallExtensionModal: React.FC = () => {
   const handleInstall = async () => {
     const trimmed = url.trim();
     if (!trimmed) {
-      Alert.alert(t('common.error') || 'Hata', 'Lütfen geçerli bir eklenti manifest URL\'si girin.');
+      Alert.alert(t('common.error'), t('extensions.invalid_url'));
       return;
     }
 
@@ -38,11 +38,11 @@ export const InstallExtensionModal: React.FC = () => {
       const ext = await installExtension(trimmed);
       setUrl('');
       Alert.alert(
-        'Eklenti Yüklendi',
-        `"${ext.manifest.name}" başarıyla kuruldu ve kullanıma hazır.`
+        t('extensions.installed_title'),
+        t('extensions.installed_msg', { name: ext.manifest.name })
       );
     } catch (err: any) {
-      Alert.alert('Kurulum Başarısız', err?.message || 'Manifest yüklenirken bir hata oluştu.');
+      Alert.alert(t('extensions.install_failed_title'), err?.message || t('extensions.manifest_failed_msg'));
     } finally {
       setLoading(false);
     }
@@ -71,7 +71,7 @@ export const InstallExtensionModal: React.FC = () => {
               <View style={[styles.iconWrap, { backgroundColor: theme.primary + '20' }]}>
                 <Ionicons name="extension-puzzle-outline" size={22} color={theme.primary} />
               </View>
-              <Text style={styles.title}>Yeni Eklenti Ekle</Text>
+              <Text style={styles.title}>{t('extensions.install_modal_title')}</Text>
             </View>
             <TouchableOpacity onPress={close} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Ionicons name="close" size={24} color="#a1a1aa" />
@@ -79,7 +79,7 @@ export const InstallExtensionModal: React.FC = () => {
           </View>
 
           <Text style={styles.description}>
-            Geliştiricinin veya topluluğun sağladığı eklenti manifest {"URL'sini"} (manifest.json) yapıştırın:
+            {t('extensions.install_modal_desc')}
           </Text>
 
           <View style={styles.inputContainer}>
@@ -109,7 +109,7 @@ export const InstallExtensionModal: React.FC = () => {
           >
             <Ionicons name="sparkles" size={14} color={theme.primary} style={{ marginRight: 6 }} />
             <Text style={[styles.sampleFillText, { color: theme.primary }]}>
-              Örnek Eklenti Linkini Doldur (Açık Müzik & Ses)
+              {t('extensions.fill_sample')}
             </Text>
           </TouchableOpacity>
 
@@ -119,7 +119,7 @@ export const InstallExtensionModal: React.FC = () => {
               onPress={close}
               disabled={loading}
             >
-              <Text style={styles.cancelBtnText}>{t('common.cancel') || 'Vazgeç'}</Text>
+              <Text style={styles.cancelBtnText}>{t('common.cancel')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -132,7 +132,7 @@ export const InstallExtensionModal: React.FC = () => {
               ) : (
                 <>
                   <Ionicons name="download-outline" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-                  <Text style={styles.installBtnText}>Yükle</Text>
+                  <Text style={styles.installBtnText}>{t('extensions.install_btn')}</Text>
                 </>
               )}
             </TouchableOpacity>

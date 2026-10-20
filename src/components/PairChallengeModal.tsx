@@ -2,9 +2,11 @@ import React from 'react';
 import { StyleSheet, Text, View, Modal, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeStore } from '../store/useThemeStore';
+import { useTranslation } from '../services/i18n';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 
 export function PairChallengeModal() {
+  const { t } = useTranslation();
   const theme = useThemeStore((s) => s.theme);
   const challenge = useRemoteConnectStore((s) => s.pendingPairChallenge);
   const setChallenge = useRemoteConnectStore((s) => s.setPendingPairChallenge);
@@ -35,7 +37,7 @@ export function PairChallengeModal() {
           </View>
 
           <Text style={styles.title}>
-            Bağlantı İsteği
+            {t('remote.pair_request')}
           </Text>
 
           <Text style={[styles.deviceName, { color: theme.primaryLight || theme.primary }]}>
@@ -43,7 +45,7 @@ export function PairChallengeModal() {
           </Text>
 
           <Text style={styles.subtitle}>
-            Bu cihaz müziğinizi kontrol etmek istiyor. Eşleşmeyi onaylamak için istemci cihazda aşağıdaki PIN kodunu girin:
+            {t('remote.pair_request_desc')}
           </Text>
 
           <View style={[styles.pinBox, { borderColor: theme.border }]}>
@@ -59,7 +61,7 @@ export function PairChallengeModal() {
               activeOpacity={0.7}
             >
               <Text style={styles.rejectBtnText}>
-                Reddet
+                {t('remote.reject')}
               </Text>
             </TouchableOpacity>
 
@@ -69,7 +71,7 @@ export function PairChallengeModal() {
               activeOpacity={0.7}
             >
               <Text style={styles.approveBtnText}>
-                İzin Ver
+                {t('remote.approve')}
               </Text>
             </TouchableOpacity>
           </View>

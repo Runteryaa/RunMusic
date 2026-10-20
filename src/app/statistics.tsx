@@ -371,7 +371,7 @@ export default function StatisticsScreen() {
                     renderTrackItem(
                       item.track_id,
                       getTrackInfo(item.track_id, item).artist,
-                      `${item.play_count} ${resolvedLanguage === 'tr' ? 'kez' : 'plays'}`,
+                      `${item.play_count} ${t('stats.plays_count')}`,
                       `month-${idx}`,
                       item
                     )
@@ -391,7 +391,7 @@ export default function StatisticsScreen() {
                     renderTrackItem(
                       item.track_id,
                       getTrackInfo(item.track_id, item).artist,
-                      `${item.play_count} ${resolvedLanguage === 'tr' ? 'kez' : 'plays'}`,
+                      `${item.play_count} ${t('stats.plays_count')}`,
                       `all-${idx}`,
                       item
                     )
@@ -445,7 +445,7 @@ export default function StatisticsScreen() {
                         <ActivityIndicator size="small" color={theme.primary} />
                       ) : (
                         <Text style={[styles.loadMoreText, { color: theme.primary }]}>
-                          {resolvedLanguage === 'tr' ? 'Daha Fazla Göster' : 'Load More'}
+                          {t('stats.load_more')}
                         </Text>
                       )}
                     </TouchableOpacity>
@@ -453,7 +453,7 @@ export default function StatisticsScreen() {
 
                   {!hasMoreHistory && recentHistory.length >= PAGE_SIZE && (
                     <Text style={styles.endOfHistoryText}>
-                      {resolvedLanguage === 'tr' ? 'Tüm geçmiş yüklendi' : 'All history loaded'}
+                      {t('stats.all_history_loaded')}
                     </Text>
                   )}
                 </>

@@ -11,10 +11,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeStore } from '../store/useThemeStore';
+import { useTranslation } from '../services/i18n';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { tcpClient } from '../services/remote/tcpClient';
 
 export function PairVerifyModal() {
+  const { t } = useTranslation();
   const theme = useThemeStore((s) => s.theme);
   const pendingVerify = useRemoteConnectStore((s) => s.pendingPinVerification);
   const setPendingVerify = useRemoteConnectStore((s) => s.setPendingPinVerification);
@@ -28,7 +30,7 @@ export function PairVerifyModal() {
   const handleVerify = () => {
     const trimmed = pin.trim();
     if (trimmed.length !== 4) {
-      setError('Lütfen 4 haneli PIN kodunu girin.');
+      setError(t('remote.pin_error'));
       return;
     }
     setError(null);
@@ -61,13 +63,13 @@ export function PairVerifyModal() {
           </View>
 
           <Text style={styles.title}>
-            PIN Kodunu Girin
+            {t('remote.enter_pin')}
           </Text>
 
           <Text style={styles.subtitle}>
             {connectedDeviceName
-              ? `${connectedDeviceName} ekranında görüntülenen 4 haneli eşleşme kodunu girin:`
-              : 'Ana cihaz ekranındaki 4 haneli PIN kodunu girin:'}
+              ? t('remote.enter_pin_desc', { name: connectedDeviceName })
+              : t('remote.enter_pin_desc_fallback')}
           </Text>
 
           <TextInput
@@ -103,7 +105,7 @@ export function PairVerifyModal() {
               activeOpacity={0.7}
             >
               <Text style={styles.cancelBtnText}>
-                İptal
+                {t('common.cancel')}
               </Text>
             </TouchableOpacity>
 
@@ -118,7 +120,7 @@ export function PairVerifyModal() {
               activeOpacity={0.7}
             >
               <Text style={styles.verifyBtnText}>
-                Bağlan
+                {t('remote.verify')}
               </Text>
             </TouchableOpacity>
           </View>

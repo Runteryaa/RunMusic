@@ -17,6 +17,7 @@ import { useDownloadStore } from '../store/useDownloadStore';
 import { useExtensionStore } from '../store/useExtensionStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useStore } from '../store/useStore';
+import { useTranslation } from '../services/i18n';
 import { setupTrackPlayerIfNeeded } from '../services/playerBootstrap';
 import {
   cancelDownload,
@@ -26,6 +27,7 @@ import {
 import type { DownloadTask } from '../types/download';
 
 export const DownloadsModal: React.FC = () => {
+  const { t } = useTranslation();
   const theme = useThemeStore((s) => s.theme);
   const isOpen = useExtensionStore((s) => s.isDownloadsModalOpen);
   const close = useExtensionStore((s) => s.closeDownloadsModal);
@@ -71,7 +73,7 @@ export const DownloadsModal: React.FC = () => {
       });
     } catch (err: any) {
       console.warn('[DownloadsModal] Oynatma hatası:', err);
-      Alert.alert('Oynatma Hatası', err?.message || 'Parça çalınamadı.');
+      Alert.alert(t('downloads.play_error_title'), err?.message || t('downloads.play_error_msg'));
     }
   };
 
@@ -81,9 +83,9 @@ export const DownloadsModal: React.FC = () => {
     setAddingMap((prev) => ({ ...prev, [item.id]: true }));
     try {
       await addDownloadToLibrary(item.id);
-      Alert.alert('Başarılı', `"${item.title}" müzik kütüphanenize eklendi.`);
+      Alert.alert(t('common.success'), t('downloads.added_to_library_success', { title: item.title }));
     } catch (err: any) {
-      Alert.alert('Kütüphaneye Eklenemedi', err?.message || 'Bir hata oluştu.');
+      Alert.alert(t('downloads.add_to_library_error_title'), err?.message || t('common.error'));
     } finally {
       setAddingMap((prev) => ({ ...prev, [item.id]: false }));
     }
@@ -172,7 +174,7 @@ export const DownloadsModal: React.FC = () => {
 
             {isFailed && (
               <Text style={styles.errorText} numberOfLines={1}>
-                {item.error || 'İndirme hatası'}
+                {item.error || t('downloads.error_generic')}
               </Text>
             )}
           </TouchableOpacity>
@@ -208,13 +210,17 @@ export const DownloadsModal: React.FC = () => {
           <View style={styles.cardFooter}>
             <View style={styles.storageBadge}>
               <Ionicons name="shield-checkmark" size={12} color="#71717a" style={{ marginRight: 4 }} />
-              <Text style={styles.storageBadgeText}>Özel Depolama</Text>
+              <Text style={styles.storageBadgeText}>
+                {item.storageTarget === 'public'
+                  ? t('downloads.public_storage')
+                  : t('downloads.private_storage')}
+              </Text>
             </View>
 
             {isInLibrary ? (
               <View style={styles.inLibraryBadge}>
                 <Ionicons name="checkmark-done" size={14} color="#10b981" style={{ marginRight: 4 }} />
-                <Text style={styles.inLibraryText}>Kütüphanede</Text>
+                <Text style={styles.inLibraryText}>{t('downloads.in_library')}</Text>
               </View>
             ) : (
               <TouchableOpacity
@@ -229,7 +235,7 @@ export const DownloadsModal: React.FC = () => {
                   <Ionicons name="add" size={14} color={theme.primary} style={{ marginRight: 3 }} />
                 )}
                 <Text style={[styles.addToLibText, { color: theme.primary }]}>
-                  {isAdding ? 'Ekleniyor...' : 'Kütüphaneye Ekle'}
+                  {isAdding ? t('downloads.adding') : t('downloads.add_to_library')}
                 </Text>
               </TouchableOpacity>
             )}
@@ -250,7 +256,7 @@ export const DownloadsModal: React.FC = () => {
         <View style={styles.header}>
           <View style={styles.headerTitleRow}>
             <Ionicons name="download" size={24} color={theme.primary} style={{ marginRight: 10 }} />
-            <Text style={styles.headerTitle}>İndirme Yöneticisi</Text>
+            <Text style={styles.headerTitle}>{t('downloads.title')}</Text>
           </View>
 
           <TouchableOpacity onPress={close} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -261,9 +267,9 @@ export const DownloadsModal: React.FC = () => {
         {/* Liste Başlığı & Temizleme Butonu */}
         {tasks.some((t) => t.status === 'completed') && (
           <View style={styles.subHeader}>
-            <Text style={styles.tasksCount}>{tasks.length} Görev</Text>
+            <Text style={styles.tasksCount}>{t('downloads.tasks_count', { count: tasks.length })}</Text>
             <TouchableOpacity onPress={clearCompleted}>
-              <Text style={[styles.clearText, { color: theme.primary }]}>Tamamlananları Temizle</Text>
+              <Text style={[styles.clearText, { color: theme.primary }]}>{t('downloads.clear_completed')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -277,9 +283,9 @@ export const DownloadsModal: React.FC = () => {
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Ionicons name="cloud-download-outline" size={54} color="#3f3f46" />
-              <Text style={styles.emptyTitle}>Henüz indirme yok</Text>
+              <Text style={styles.emptyTitle}>{t('downloads.empty_title')}</Text>
               <Text style={styles.emptySubtitle}>
-                Eklentilerden indirdiğiniz tüm parçalar uygulamanın özel depolama alanına kaydedilir.
+                {t('downloads.empty_subtitle')}
               </Text>
             </View>
           }

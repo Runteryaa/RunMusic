@@ -557,19 +557,19 @@ export default function SettingsScreen() {
       {/* ── RUNMUSIC CONNECTO (Wİ-Fİ KUMANDASI) ───────────────────────── */}
       <Section
         icon="radio-outline"
-        title="RunMusic Connecto"
+        title={t('settings.connecto_section')}
         subtitle={
           remoteMode === 'client' && connectionStatus === 'connected'
-            ? `Bağlandı: ${connectedDeviceName}`
+            ? t('settings.connecto_connected', { name: connectedDeviceName || '' })
             : isRemoteEnabled
-            ? 'Sunucu aktif (Cihazınız ağda görünür)'
-            : 'Kapalı'
+            ? t('settings.connecto_server_active')
+            : t('settings.connecto_off')
         }
         theme={theme}>
         <ToggleRow
           theme={theme}
-          label="RunMusic Connecto (Wi-Fi, Bluetooth & İnternet)"
-          hint="Aynı Wi-Fi ağındaki, Bluetooth kapsama alanındaki veya herhangi bir internet bağlantısındaki diğer RunMusic cihazlarının bu telefonu uzaktan kontrol etmesine izin verin."
+          label={t('settings.connecto_label')}
+          hint={t('settings.connecto_hint')}
           value={isRemoteEnabled}
           onChange={(v) => {
             setRemoteEnabled(v);
@@ -578,8 +578,8 @@ export default function SettingsScreen() {
 
         <View style={styles.row}>
           <View style={styles.rowText}>
-            <Text style={styles.rowLabel}>Cihaz Adı</Text>
-            <Text style={styles.rowHint}>Ağdaki diğer cihazlarda görünecek isim.</Text>
+            <Text style={styles.rowLabel}>{t('settings.connecto_device_name')}</Text>
+            <Text style={styles.rowHint}>{t('settings.connecto_device_name_hint')}</Text>
           </View>
           <TextInput
             style={[styles.smallInput, { width: 140, textAlign: 'left', paddingHorizontal: 10 }]}
@@ -601,9 +601,9 @@ export default function SettingsScreen() {
 
         <View style={styles.row}>
           <View style={styles.rowText}>
-            <Text style={styles.rowLabel}>Özel Relay Sunucusu</Text>
+            <Text style={styles.rowLabel}>{t('settings.connecto_relay')}</Text>
             <Text style={styles.rowHint}>
-              Kendi barındırdığınız Relay sunucu adresi (örn: wss://connecto.onrender.com). Boş bırakılırsa varsayılan sunucu kullanılır.
+              {t('settings.connecto_relay_hint')}
             </Text>
           </View>
           <TextInput
@@ -622,17 +622,17 @@ export default function SettingsScreen() {
           icon="chevron-forward"
           label={
             remoteMode === 'client' && connectionStatus === 'connected'
-              ? `Bağlı: ${connectedDeviceName}`
-              : 'Başka Bir Cihaza Bağlan'
+              ? t('settings.connecto_connected', { name: connectedDeviceName || '' })
+              : t('settings.connecto_connect_device')
           }
-          hint="Ağdaki diğer RunMusic cihazlarını bulun ve bu telefonu uzaktan kumanda olarak kullanın."
+          hint={t('settings.connecto_connect_device_hint')}
           onPress={openDeviceSelector}
         />
 
         {trustedDevices.length > 0 && (
           <View style={{ marginTop: 8, paddingBottom: 6 }}>
             <Text style={[styles.rowLabel, { fontSize: 13, color: '#a1a1aa', marginBottom: 6 }]}>
-              Güvenilen Eşleşmiş Cihazlar ({trustedDevices.length})
+              {t('settings.connecto_trusted_devices', { count: trustedDevices.length })}
             </Text>
             {trustedDevices.map((dev) => (
               <View
@@ -650,7 +650,9 @@ export default function SettingsScreen() {
                     {dev.deviceName}
                   </Text>
                   <Text style={{ fontSize: 11, color: '#71717a' }}>
-                    Son bağlantı: {new Date(dev.lastConnected).toLocaleDateString()}
+                    {t('settings.connecto_last_connected', {
+                      date: new Date(dev.lastConnected).toLocaleDateString(),
+                    })}
                   </Text>
                 </View>
                 <TouchableOpacity

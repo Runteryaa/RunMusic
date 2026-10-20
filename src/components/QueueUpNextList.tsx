@@ -4,6 +4,7 @@ import { Gesture, GestureDetector, Swipeable } from 'react-native-gesture-handle
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { TrackArtwork } from './TrackArtwork';
+import { useTranslation } from '../services/i18n';
 
 /** Sürükleme matematiği sabit satır yüksekliğine dayanır; stil ile eşleşmeli. */
 export const UPNEXT_ROW_HEIGHT = 62;
@@ -82,6 +83,7 @@ function UpNextRow({
   onRemove,
   onPress,
 }: RowProps) {
+  const { t } = useTranslation();
   const dragY = useSharedValue(0);
   const isDragging = useSharedValue(false);
 
@@ -181,11 +183,11 @@ function UpNextRow({
                       color="rgba(255,255,255,0.7)"
                       style={{ marginRight: 3 }}
                     />
-                    <Text style={styles.extBadgeText}>Eklenti</Text>
+                    <Text style={styles.extBadgeText}>{t('common.extension')}</Text>
                   </View>
                 ) : null}
                 <Text style={styles.artist} numberOfLines={1}>
-                  {item.artist || 'Bilinmeyen Sanatçı'}
+                  {item.artist || t('common.unknown_artist')}
                 </Text>
               </View>
             </View>

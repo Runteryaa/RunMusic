@@ -194,9 +194,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     try {
       await remoteSyncManager.connectToHost(host);
     } catch (err: any) {
-      Alert.alert('Bağlantı Hatası', err?.message || 'Cihaza bağlanılamadı');
+      Alert.alert(t('remote.connection_error'), err?.message || t('remote.device_unreachable'));
     }
-  }, []);
+  }, [t]);
 
   const handleManualConnect = useCallback(async () => {
     const ip = manualIp.trim();
@@ -1267,18 +1267,18 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const handleDownloadCurrentTrack = useCallback(async () => {
     if (!targetDownloadUrl || !isRemoteStream) {
-      Alert.alert('Bilgi', 'Bu parça zaten cihazınızın yerel depolamasında kayıtlıdır.');
+      Alert.alert(t('common.info'), t('player.already_local'));
       return;
     }
 
     if (isCurrentTrackDownloaded) {
       Alert.alert(
-        'Zaten İndirildi',
-        `"${displayTitle}" zaten özel depolama alanınızda kayıtlıdır.`,
+        t('player.already_downloaded_title'),
+        t('player.already_downloaded_msg', { title: displayTitle }),
         [
-          { text: 'Tamam' },
+          { text: t('common.ok') },
           {
-            text: 'İndirilenleri Aç',
+            text: t('downloads.title'),
             onPress: () => useExtensionStore.getState().openDownloadsModal(),
           },
         ]
@@ -1287,7 +1287,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
     }
 
     if (isCurrentTrackDownloading) {
-      Alert.alert('İndiriliyor', `"${displayTitle}" şu anda arka planda indiriliyor.`);
+      Alert.alert(t('player.downloading_title'), t('player.downloading_msg', { title: displayTitle }));
       return;
     }
 
@@ -1308,14 +1308,14 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       });
 
       Alert.alert(
-        'İndirme Başlatıldı',
-        `"${finalTitle}" indirilmeye başlandı. İndirme Yöneticisi'nden takip edebilirsiniz.`
+        t('player.download_started_title'),
+        t('player.download_started_msg', { title: finalTitle })
       );
     } catch (err: any) {
       console.warn('[FullscreenPlayerModal] İndirme hatası:', err);
-      Alert.alert('İndirme Hatası', err?.message || 'İndirme başlatılamadı.');
+      Alert.alert(t('player.download_error_title'), err?.message || t('player.download_error_msg'));
     }
-  }, [targetDownloadUrl, isRemoteStream, isCurrentTrackDownloaded, isCurrentTrackDownloading, displayTitle, displayArtist, localActiveTrack, currentArtworkUri]);
+  }, [targetDownloadUrl, isRemoteStream, isCurrentTrackDownloaded, isCurrentTrackDownloading, displayTitle, displayArtist, localActiveTrack, currentArtworkUri, t]);
 
   // Metadata senkronizasyonu.
   //

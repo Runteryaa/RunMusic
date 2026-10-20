@@ -11,9 +11,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAlertStore } from '../store/useAlertStore';
 import { useThemeStore } from '../store/useThemeStore';
+import { useTranslation } from '../services/i18n';
 import type { AlertButton } from 'react-native';
 
 export const AppAlertModal: React.FC = () => {
+  const { t } = useTranslation();
   const theme = useThemeStore((s) => s.theme);
   const currentAlert = useAlertStore((s) => s.currentAlert);
   const hideAlert = useAlertStore((s) => s.hideAlert);
@@ -88,7 +90,7 @@ export const AppAlertModal: React.FC = () => {
     }
   };
 
-  const resolvedButtons = buttons.length > 0 ? buttons : [{ text: 'Tamam' }];
+  const resolvedButtons = buttons.length > 0 ? buttons : [{ text: t('common.ok') }];
   const isTwoButtons = resolvedButtons.length === 2;
   const isMultiButtons = resolvedButtons.length > 2;
 

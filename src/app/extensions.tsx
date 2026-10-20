@@ -58,13 +58,13 @@ export default function ExtensionsScreen() {
       const cleanUrl = decodeURIComponent(rawUrl).trim();
       installExtension(cleanUrl)
         .then((ext) => {
-          Alert.alert('Eklenti Yüklendi', `"${ext.manifest.name}" başarıyla kuruldu.`);
+          Alert.alert(t('extensions.installed_title'), t('extensions.installed_msg', { name: ext.manifest.name }));
         })
         .catch((err) => {
-          Alert.alert('Kurulum Başarısız', err?.message || 'Eklenti yüklenemedi.');
+          Alert.alert(t('extensions.install_failed_title'), err?.message || t('extensions.install_failed_msg'));
         });
     }
-  }, [params.url, params.install, installExtension]);
+  }, [params.url, params.install, installExtension, t]);
 
   // Donanım geri tuşu: Eğer eklenti sitesi açıksa kapat ve listeye dön
   useEffect(() => {
@@ -83,7 +83,7 @@ export default function ExtensionsScreen() {
   const handleAddExtension = async () => {
     const trimmed = inputUrl.trim();
     if (!trimmed) {
-      Alert.alert(t('common.error') || 'Hata', 'Lütfen geçerli bir eklenti manifest URL\'si girin.');
+      Alert.alert(t('common.error'), t('extensions.invalid_url'));
       return;
     }
 
@@ -93,11 +93,11 @@ export default function ExtensionsScreen() {
       const ext = await installExtension(trimmed);
       setInputUrl('');
       Alert.alert(
-        'Eklenti Yüklendi',
-        `"${ext.manifest.name}" başarıyla kuruldu. Açmak için listeden seçebilirsiniz.`
+        t('extensions.installed_title'),
+        t('extensions.installed_msg', { name: ext.manifest.name })
       );
     } catch (err: any) {
-      Alert.alert('Kurulum Başarısız', err?.message || 'Eklenti manifest dosyası yüklenemedi.');
+      Alert.alert(t('extensions.install_failed_title'), err?.message || t('extensions.manifest_failed_msg'));
     } finally {
       setIsInstalling(false);
     }
@@ -107,41 +107,48 @@ export default function ExtensionsScreen() {
     const authorStr =
       typeof ext.manifest.author === 'string'
         ? ext.manifest.author
-        : ext.manifest.author?.name || 'Topluluk';
+        : ext.manifest.author?.name || t('extensions.community');
 
     Alert.alert(
       ext.manifest.name,
-      `${ext.manifest.description || 'Web Eklentisi'}\nSürüm: v${ext.manifest.version}\nYazar: ${authorStr}\n\nManifest: ${ext.manifest.url || ext.manifestUrl}`,
+      `${ext.manifest.description || t('extensions.title')}\n${t('extensions.version_prefix')}: v${ext.manifest.version}\n${t('extensions.author_prefix')}: ${authorStr}\n\nManifest: ${ext.manifest.url || ext.manifestUrl}`,
       [
-        { text: t('common.cancel') || 'İptal', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Güncellemeleri Kontrol Et',
+          text: t('extensions.check_updates'),
           onPress: async () => {
             const res = await updateExtension(ext.manifest.id);
             if (!res) {
               Alert.alert(
-                'Güncelleme Başarısız',
-                'Eklenti güncellemeleri kontrol edilirken bir hata oluştu veya eklenti adresine ulaşılamadı.'
+                t('extensions.update_failed_title'),
+                t('extensions.update_failed_msg')
               );
             } else if (res.hasUpdate) {
               Alert.alert(
-                'Güncellendi 🎉',
-                `"${res.extension.manifest.name}" başarıyla v${res.oldVersion} sürümünden v${res.newVersion} sürümüne güncellendi.`
+                t('extensions.updated_title'),
+                t('extensions.updated_msg', {
+                  name: res.extension.manifest.name,
+                  oldVersion: res.oldVersion,
+                  newVersion: res.newVersion,
+                })
               );
             } else {
               Alert.alert(
-                'En Güncel Sürüm',
-                `"${res.extension.manifest.name}" zaten en güncel sürümde (v${res.extension.manifest.version}).`,
+                t('extensions.up_to_date_title'),
+                t('extensions.up_to_date_msg', {
+                  name: res.extension.manifest.name,
+                  version: res.extension.manifest.version,
+                }),
                 [
-                  { text: 'Tamam' },
+                  { text: t('common.ok') },
                   {
-                    text: 'Yeniden Yükle (Zorla)',
+                    text: t('extensions.force_reload'),
                     onPress: async () => {
                       const forcedRes = await updateExtension(ext.manifest.id, true);
                       if (forcedRes) {
                         Alert.alert(
-                          'Yenilendi',
-                          `"${forcedRes.extension.manifest.name}" önbelleği temizlendi ve yeniden yüklendi.`
+                          t('extensions.reloaded_title'),
+                          t('extensions.reloaded_msg', { name: forcedRes.extension.manifest.name })
                         );
                       }
                     },
@@ -152,16 +159,16 @@ export default function ExtensionsScreen() {
           },
         },
         {
-          text: 'Eklentiyi Kaldır',
+          text: t('extensions.uninstall_title'),
           style: 'destructive',
           onPress: () => {
             Alert.alert(
-              'Eklentiyi Kaldır',
-              `"${ext.manifest.name}" eklentisini silmek istediğinizden emin misiniz?`,
+              t('extensions.uninstall_title'),
+              t('extensions.uninstall_confirm', { name: ext.manifest.name }),
               [
-                { text: t('common.cancel') || 'İptal', style: 'cancel' },
+                { text: t('common.cancel'), style: 'cancel' },
                 {
-                  text: t('common.delete') || 'Sil',
+                  text: t('common.delete'),
                   style: 'destructive',
                   onPress: () => {
                     if (openedExtensionId === ext.manifest.id) {
@@ -214,8 +221,8 @@ export default function ExtensionsScreen() {
                 const res = await updateExtension(openedExtension.manifest.id, true);
                 if (res) {
                   Alert.alert(
-                    'Yenilendi',
-                    `"${res.extension.manifest.name}" önbelleği temizlendi ve yeniden yüklendi.`
+                    t('extensions.reloaded_title'),
+                    t('extensions.reloaded_msg', { name: res.extension.manifest.name })
                   );
                 }
               }}
@@ -337,13 +344,11 @@ export default function ExtensionsScreen() {
       <View style={[styles.emptyIconWrap, { backgroundColor: theme.primary + '15' }]}>
         <Ionicons name="extension-puzzle-outline" size={48} color={theme.primary} />
       </View>
-      <Text style={styles.emptyTitle}>Henüz bir eklenti eklenmedi</Text>
+      <Text style={styles.emptyTitle}>{t('extensions.empty_title')}</Text>
       <Text style={styles.emptySubtitle}>
-        Yukarıdaki alana bir eklenti manifest {"URL'si"} girip {`"Ekle"`} butonuna basarak kütüphanenize yeni eklentiler ekleyebilirsiniz.
+        {t('extensions.empty_subtitle')}
       </Text>
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-
-
         <TouchableOpacity
           style={[styles.emptyQuickAddBtn, { borderColor: theme.primary }]}
           onPress={() => {
@@ -353,7 +358,7 @@ export default function ExtensionsScreen() {
         >
           <Ionicons name="sparkles" size={15} color={theme.primary} style={{ marginRight: 6 }} />
           <Text style={[styles.emptyQuickAddBtnText, { color: theme.primary }]}>
-            Example Extension
+            {t('extensions.example_extension')}
           </Text>
         </TouchableOpacity>
       </View>
@@ -365,7 +370,7 @@ export default function ExtensionsScreen() {
       {/* Top Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Text style={styles.headerTitle}>{t('tabs.extensions') || 'Eklentiler'}</Text>
+          <Text style={styles.headerTitle}>{t('tabs.extensions')}</Text>
         </View>
 
         <View style={styles.headerRight}>
@@ -392,7 +397,7 @@ export default function ExtensionsScreen() {
             <Ionicons name="link-outline" size={18} color="#71717a" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
-              placeholder="Eklenti URL'si (ör. https://.../manifest.json)"
+              placeholder={t('extensions.input_placeholder')}
               placeholderTextColor="#52525b"
               value={inputUrl}
               onChangeText={setInputUrl}
@@ -425,7 +430,7 @@ export default function ExtensionsScreen() {
             ) : (
               <>
                 <Ionicons name="add" size={18} color="#ffffff" style={{ marginRight: 4 }} />
-                <Text style={styles.addBtnText}>Ekle</Text>
+                <Text style={styles.addBtnText}>{t('extensions.add_btn')}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -435,23 +440,12 @@ export default function ExtensionsScreen() {
         <View style={styles.sampleChipRow}>
           <TouchableOpacity
             style={styles.sampleChip}
-            onPress={() => setInputUrl('https://runteryaa.github.io/RunMusic/examples/youtube-extension/manifest.json')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="logo-youtube" size={13} color="#ef4444" style={{ marginRight: 5 }} />
-            <Text style={[styles.sampleChipText, { color: '#ef4444' }]}>
-              YouTube Eklentisi
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.sampleChip}
             onPress={() => setInputUrl('https://runteryaa.github.io/RunMusic/examples/sample-audio-extension/manifest.json')}
             activeOpacity={0.7}
           >
             <Ionicons name="sparkles-outline" size={13} color={theme.primary} style={{ marginRight: 5 }} />
             <Text style={[styles.sampleChipText, { color: theme.primary }]}>
-              Açık Müzik Örneği
+              {t('extensions.example_extension')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -459,7 +453,7 @@ export default function ExtensionsScreen() {
 
       {/* Extensions List Header */}
       <View style={styles.listHeaderRow}>
-        <Text style={styles.listHeaderTitle}>Yüklü Eklentiler</Text>
+        <Text style={styles.listHeaderTitle}>{t('extensions.installed_extensions')}</Text>
         {extensions.length > 0 && (
           <View style={styles.countBadge}>
             <Text style={styles.countBadgeText}>{extensions.length}</Text>

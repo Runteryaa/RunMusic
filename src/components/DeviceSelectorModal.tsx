@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeStore } from '../store/useThemeStore';
+import { useTranslation } from '../services/i18n';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { udpDiscoveryService } from '../services/remote/udpDiscovery';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
@@ -22,6 +23,7 @@ interface DeviceSelectorModalProps {
 }
 
 export function DeviceSelectorModal({ visible, onClose }: DeviceSelectorModalProps) {
+  const { t } = useTranslation();
   const theme = useThemeStore((s) => s.theme);
   const mode = useRemoteConnectStore((s) => s.mode);
   const connectionStatus = useRemoteConnectStore((s) => s.connectionStatus);
@@ -90,7 +92,7 @@ export function DeviceSelectorModal({ visible, onClose }: DeviceSelectorModalPro
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Ionicons name="radio" size={24} color={theme.primary} />
-              <Text style={styles.title}>Cihaza Bağlan</Text>
+              <Text style={styles.title}>{t('remote.title')}</Text>
             </View>
             <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.closeBtn}>
               <Ionicons name="close" size={24} color="rgba(255,255,255,0.7)" />
@@ -115,9 +117,9 @@ export function DeviceSelectorModal({ visible, onClose }: DeviceSelectorModalPro
               />
             </View>
             <View style={styles.deviceInfo}>
-              <Text style={styles.deviceName}>Bu Telefon</Text>
+              <Text style={styles.deviceName}>{t('remote.this_device')}</Text>
               <Text style={styles.deviceSubtitle}>
-                {!isConnectedToRemote ? 'Şu anda çalıyor' : 'Yerel oynatıcıya dön'}
+                {!isConnectedToRemote ? t('remote.currently_playing') : t('remote.return_to_local')}
               </Text>
             </View>
             {!isConnectedToRemote && (
@@ -126,16 +128,16 @@ export function DeviceSelectorModal({ visible, onClose }: DeviceSelectorModalPro
           </TouchableOpacity>
 
           <View style={styles.sectionDivider}>
-            <Text style={styles.sectionTitle}>AYNI Wİ-Fİ AĞINDAKİ CİHAZLAR</Text>
+            <Text style={styles.sectionTitle}>{t('remote.wifi_devices')}</Text>
           </View>
 
           {/* Discovered Wi-Fi Hosts List */}
           {discoveredHosts.length === 0 ? (
             <View style={styles.emptyContainer}>
               <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 8 }} />
-              <Text style={styles.emptyText}>Wi-Fi ağındaki RunMusic cihazları aranıyor...</Text>
+              <Text style={styles.emptyText}>{t('remote.searching')}</Text>
               <Text style={styles.emptySubtext}>
-                Diğer cihazda Ayarlar &gt; RunMusic Connecto özelliğinin açık olduğundan emin olun.
+                {t('remote.searching_hint')}
               </Text>
             </View>
           ) : (
@@ -188,7 +190,7 @@ export function DeviceSelectorModal({ visible, onClose }: DeviceSelectorModalPro
                         style={[styles.disconnectBadge, { backgroundColor: 'rgba(239, 68, 68, 0.2)' }]}
                         onPress={() => remoteSyncManager.disconnectClient()}
                       >
-                        <Text style={styles.disconnectBadgeText}>Bağlantıyı Kes</Text>
+                        <Text style={styles.disconnectBadgeText}>{t('remote.disconnect')}</Text>
                       </TouchableOpacity>
                     ) : isConnecting ? (
                       <ActivityIndicator size="small" color={theme.primary} />
@@ -204,13 +206,13 @@ export function DeviceSelectorModal({ visible, onClose }: DeviceSelectorModalPro
           {/* Manual IP Fallback */}
           {showManualIp ? (
             <View style={[styles.manualBox, { borderColor: theme.border }]}>
-              <Text style={styles.manualTitle}>IP Adresiyle Bağlan</Text>
+              <Text style={styles.manualTitle}>{t('remote.manual_ip')}</Text>
               <View style={styles.manualRow}>
                 <TextInput
                   style={[styles.manualInput, { borderColor: theme.border, flex: 2 }]}
                   value={manualIp}
                   onChangeText={setManualIp}
-                  placeholder="192.168.1.50"
+                  placeholder={t('remote.ip_placeholder')}
                   placeholderTextColor="rgba(255,255,255,0.3)"
                   keyboardType="numbers-and-punctuation"
                   autoFocus
@@ -219,7 +221,7 @@ export function DeviceSelectorModal({ visible, onClose }: DeviceSelectorModalPro
                   style={[styles.manualInput, { borderColor: theme.border, flex: 1 }]}
                   value={manualPort}
                   onChangeText={setManualPort}
-                  placeholder="8945"
+                  placeholder={t('remote.port_placeholder')}
                   placeholderTextColor="rgba(255,255,255,0.3)"
                   keyboardType="number-pad"
                 />
@@ -229,14 +231,14 @@ export function DeviceSelectorModal({ visible, onClose }: DeviceSelectorModalPro
                   style={[styles.manualBtn, { borderColor: theme.border, borderWidth: 1 }]}
                   onPress={() => setShowManualIp(false)}
                 >
-                  <Text style={styles.manualBtnText}>Vazgeç</Text>
+                  <Text style={styles.manualBtnText}>{t('common.cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.manualBtn, { backgroundColor: theme.primary }]}
                   onPress={handleManualConnect}
                 >
                   <Text style={[styles.manualBtnText, { color: '#FFFFFF', fontWeight: 'bold' }]}>
-                    Bağlan
+                    {t('remote.connect')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -249,7 +251,7 @@ export function DeviceSelectorModal({ visible, onClose }: DeviceSelectorModalPro
             >
               <Ionicons name="link-outline" size={18} color={theme.primary} />
               <Text style={[styles.manualTriggerText, { color: theme.primary }]}>
-                IP Adresi ile Manuel Bağlan
+                {t('remote.manual_ip')}
               </Text>
             </TouchableOpacity>
           )}
