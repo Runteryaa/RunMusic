@@ -271,7 +271,7 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
   const finalAsset: MediaLibrary.Asset = (createdAsset && createdAsset.id) ? {
     ...createdAsset,
     creationTime: createdAsset.creationTime || task.createdAt || Date.now(),
-    modificationTime: createdAsset.modificationTime || Date.now(),
+    modificationTime: createdAsset.modificationTime || task.completedAt || Date.now(),
     duration: createdAsset.duration || task.duration || 0,
   } : {
     id: `local_${downloadId}`,
@@ -281,7 +281,7 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
     width: 0,
     height: 0,
     creationTime: task.createdAt || Date.now(),
-    modificationTime: Date.now(),
+    modificationTime: task.completedAt || task.createdAt || Date.now(),
     duration: task.duration || 0,
   };
 
