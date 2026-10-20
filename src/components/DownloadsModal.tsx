@@ -32,6 +32,7 @@ export const DownloadsModal: React.FC = () => {
 
   const tasks = useDownloadStore((s) => s.tasks);
   const clearCompleted = useDownloadStore((s) => s.clearCompleted);
+  const library = useStore((s) => s.library);
 
   const [addingMap, setAddingMap] = useState<Record<string, boolean>>({});
 
@@ -75,12 +76,12 @@ export const DownloadsModal: React.FC = () => {
   };
 
   const handleAddToLibrary = async (item: DownloadTask) => {
-    if (addingMap[item.id] || item.mediaLibraryAssetId) return;
+    if (addingMap[item.id]) return;
 
     setAddingMap((prev) => ({ ...prev, [item.id]: true }));
     try {
       await addDownloadToLibrary(item.id);
-      Alert.alert('Başarılı', `"${item.title}" cihaz müzik kütüphanenize eklendi.`);
+      Alert.alert('Başarılı', `"${item.title}" müzik kütüphanenize eklendi.`);
     } catch (err: any) {
       Alert.alert('Kütüphaneye Eklenemedi', err?.message || 'Bir hata oluştu.');
     } finally {
@@ -100,7 +101,16 @@ export const DownloadsModal: React.FC = () => {
     const isDownloading = item.status === 'downloading';
     const isCompleted = item.status === 'completed';
     const isFailed = item.status === 'failed';
-    const isInLibrary = !!item.mediaLibraryAssetId;
+    const isInLibrary = Boolean(
+      item.mediaLibraryAssetId ||
+      item.storageTarget === 'public' ||
+      library.some(
+        (a) =>
+          a.id === item.mediaLibraryAssetId ||
+          a.id === `local_${item.id}` ||
+          (item.localFileUri && a.uri === item.localFileUri)
+      )
+    );
     const isAdding = !!addingMap[item.id];
 
     return (

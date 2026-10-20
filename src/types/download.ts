@@ -10,6 +10,7 @@ export interface DownloadTask {
   title: string;
   artist: string;
   artwork?: string;
+  duration?: number;
   downloadUrl: string;
   fileName: string;
   localFileUri?: string;

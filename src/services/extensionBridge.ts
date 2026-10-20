@@ -402,6 +402,7 @@ export async function handleBridgeMessage(
             title: payload.title || 'Unknown Title',
             artist: payload.artist || extension.manifest.name,
             artwork: payload.artwork,
+            duration: typeof payload.duration === 'number' ? payload.duration : undefined,
             downloadUrl: payload.downloadUrl,
             suggestedFileName: payload.suggestedFileName || payload.fileName,
             storageTarget: payload.storageTarget,

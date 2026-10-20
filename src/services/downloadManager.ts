@@ -15,6 +15,7 @@ export interface StartDownloadParams {
   title: string;
   artist?: string;
   artwork?: string;
+  duration?: number;
   downloadUrl: string;
   suggestedFileName?: string;
   storageTarget?: 'public' | 'private';
@@ -49,8 +50,11 @@ export async function startDownload(params: StartDownloadParams): Promise<{ down
   const baseName = sanitizeFileName(params.suggestedFileName?.replace(/\.[^/.]+$/, '') || `${artist} - ${title}`);
   const finalFileName = `${baseName}${ext}`;
 
-  // Hedef depolama: Tüm indirmeler güvenli ve izole olarak uygulamanın özel depolama alanına kaydedilir
-  const target: 'public' | 'private' = params.storageTarget === 'public' ? 'public' : 'private';
+  // Hedef depolama: parametre verilmemişse varsayılan depolama hedefini kullan
+  const defaultTarget = store.defaultStorageTarget || 'private';
+  const target: 'public' | 'private' = params.storageTarget
+    ? (params.storageTarget === 'public' ? 'public' : 'private')
+    : (defaultTarget === 'public' ? 'public' : 'private');
 
   const downloadDir = `${FileSystem.documentDirectory || ''}downloads/`;
   const localFileUri = `${downloadDir}${downloadId}_${finalFileName}`;
@@ -60,6 +64,7 @@ export async function startDownload(params: StartDownloadParams): Promise<{ down
     title,
     artist,
     artwork: params.artwork,
+    duration: params.duration,
     downloadUrl: params.downloadUrl,
     fileName: finalFileName,
     localFileUri,
@@ -127,38 +132,34 @@ async function executeDownload(task: DownloadTask): Promise<void> {
       throw new Error('İndirme tamamlanamadı veya dosya oluşturulamadı.');
     }
 
+    // Kullanıcı deneyimi: mp4 uzantılı indirmeleri doğrudan .mp3 uzantısına taşı
+    let finalFileUri = task.localFileUri!;
+    let finalFileName = task.fileName;
+    if (finalFileUri.toLowerCase().endsWith('.mp4')) {
+      const newFileUri = finalFileUri.replace(/\.mp4$/i, '.mp3');
+      try {
+        await FileSystem.moveAsync({ from: finalFileUri, to: newFileUri });
+        finalFileUri = newFileUri;
+        finalFileName = finalFileName.replace(/\.mp4$/i, '.mp3');
+      } catch (moveErr) {
+        console.warn('[downloadManager] mp4 -> mp3 dönüştürme uyarısı:', moveErr);
+      }
+    }
+
     let mediaAssetId: string | undefined;
 
     // Eğer genel müzik kütüphanesine kaydedilmesi istenmişse
     if (task.storageTarget === 'public') {
       try {
-        const isVideo = task.fileName.toLowerCase().endsWith('.mp4');
-        const permissionsToRequest: ('audio' | 'video')[] = isVideo ? ['audio', 'video'] : ['audio'];
-        let permission = await MediaLibrary.getPermissionsAsync(false, permissionsToRequest as any);
+        let permission = await MediaLibrary.getPermissionsAsync(false, ['audio']);
         if (!permission.granted && permission.status !== 'granted' && permission.canAskAgain) {
-          permission = await MediaLibrary.requestPermissionsAsync(false, permissionsToRequest as any);
+          permission = await MediaLibrary.requestPermissionsAsync(false, ['audio']);
         }
 
         if (permission.granted || permission.status === 'granted') {
-          const createdAsset = await MediaLibrary.createAssetAsync(result.uri);
+          const createdAsset = await MediaLibrary.createAssetAsync(finalFileUri);
           if (createdAsset?.id) {
             mediaAssetId = createdAsset.id;
-
-            // RunMusic ana kütüphanesine yeni varlığı anında ekle ve önbelleğe kaydet
-            const currentLib = useStore.getState().library;
-            if (!currentLib.some((a) => a.id === createdAsset.id || a.uri === createdAsset.uri)) {
-              const updatedLib = [createdAsset, ...currentLib];
-              useStore.getState().setLibrary(updatedLib);
-              saveCachedLibrary(updatedLib).catch(() => {});
-            }
-
-            if (task.title || task.artist || task.artwork) {
-              useStore.getState().setTrackMetadata(createdAsset.id, {
-                title: task.title,
-                artist: task.artist,
-                artwork: task.artwork,
-              });
-            }
           }
         }
       } catch (mediaLibErr) {
@@ -171,7 +172,16 @@ async function executeDownload(task: DownloadTask): Promise<void> {
       progress: 1,
       completedAt: Date.now(),
       mediaLibraryAssetId: mediaAssetId,
+      localFileUri: finalFileUri,
+      fileName: finalFileName,
     });
+
+    // Eğer genel kütüphaneye eklendiyse veya hedef public ise kütüphaneye ve store'a hemen kaydet
+    if (task.storageTarget === 'public' || mediaAssetId) {
+      await addDownloadToLibrary(task.id).catch((e) => {
+        console.warn('[downloadManager] Otomatik kütüphane ekleme hatası:', e);
+      });
+    }
   } catch (error: any) {
     activeDownloads.delete(task.id);
     const errMsg = error?.message || 'İndirme sırasında bir hata oluştu.';
@@ -258,7 +268,12 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
   }
 
   // Cihaz MediaStore varlığı oluşturulamasa dahi parçayı doğrudan RunMusic kütüphanesine ekle
-  const finalAsset: MediaLibrary.Asset = (createdAsset && createdAsset.id) ? createdAsset : {
+  const finalAsset: MediaLibrary.Asset = (createdAsset && createdAsset.id) ? {
+    ...createdAsset,
+    creationTime: createdAsset.creationTime || task.createdAt || Date.now(),
+    modificationTime: createdAsset.modificationTime || Date.now(),
+    duration: createdAsset.duration || task.duration || 0,
+  } : {
     id: `local_${downloadId}`,
     filename: targetFileName,
     uri: targetFileUri,
@@ -267,33 +282,123 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
     height: 0,
     creationTime: task.createdAt || Date.now(),
     modificationTime: Date.now(),
-    duration: 0,
+    duration: task.duration || 0,
   };
 
-  // RunMusic ana kütüphanesine varlığı anında ekle ve önbelleğe kaydet
+  // RunMusic ana kütüphanesine varlığı anında ekle ve önbelleğe kaydet (listenin en başına)
   const currentLib = useStore.getState().library;
-  if (!currentLib.some((a) => a.id === finalAsset.id || a.uri === finalAsset.uri)) {
-    const updatedLib = [finalAsset, ...currentLib];
-    useStore.getState().setLibrary(updatedLib);
-    saveCachedLibrary(updatedLib).catch(() => {});
-  }
+  const filteredLib = currentLib.filter(
+    (a) => a.id !== finalAsset.id && a.uri !== finalAsset.uri && a.id !== `local_${downloadId}`
+  );
+  const updatedLib = [finalAsset, ...filteredLib];
+  useStore.getState().setLibrary(updatedLib);
+  saveCachedLibrary(updatedLib).catch(() => {});
 
-  // Şarkı bilgilerini metadataMap'e yaz ki kütüphanede sanatçı ve başlık anında görünsün
+  // Şarkı bilgilerini metadataMap ve artworkMap'e yaz ki kütüphanede sanatçı, başlık ve kapak anında görünsün
   if (task.title || task.artist || task.artwork) {
-    useStore.getState().setTrackMetadata(finalAsset.id, {
+    const metaPayload = {
       title: task.title,
       artist: task.artist,
       artwork: task.artwork,
-    });
+    };
+    const ids = Array.from(new Set([
+      finalAsset.id,
+      finalAsset.uri,
+      `local_${downloadId}`,
+      task.id,
+      targetFileUri,
+    ]));
+    for (const id of ids) {
+      useStore.getState().setTrackMetadata(id, metaPayload);
+      if (task.artwork) {
+        useStore.getState().setArtwork(id, task.artwork);
+      }
+    }
   }
 
-  // Görevi kütüphaneye eklendi olarak işaretle
+  // Görevi kütüphaneye eklendi olarak işaretle ve dosya yolunu güncelle
   useDownloadStore.getState().updateTask(downloadId, {
     mediaLibraryAssetId: finalAsset.id,
     storageTarget: 'public',
+    localFileUri: targetFileUri,
+    fileName: targetFileName,
   });
 
   return true;
+}
+
+/**
+ * Tamamlanan tüm indirmeleri RunMusic ana kütüphanesi (useStore.library) ile senkronize eder.
+ * Dosyaların diskte var olduğunu doğrular ve kütüphanede eksik olanları en başa ekler.
+ */
+export async function syncCompletedDownloadsWithLibrary(): Promise<MediaLibrary.Asset[]> {
+  const downloadTasks = useDownloadStore.getState().tasks;
+  const currentLib = useStore.getState().library;
+  const newAssetsToAdd: MediaLibrary.Asset[] = [];
+
+  for (const task of downloadTasks) {
+    if (task.status !== 'completed' || !task.localFileUri) continue;
+
+    // Sadece kütüphaneye eklenmiş parçaları (storageTarget === 'public' veya mediaLibraryAssetId olan)
+    if (!task.mediaLibraryAssetId && task.storageTarget !== 'public') continue;
+
+    try {
+      const fileInfo = await FileSystem.getInfoAsync(task.localFileUri);
+      if (!fileInfo.exists) continue;
+
+      const assetId = task.mediaLibraryAssetId || `local_${task.id}`;
+      const alreadyInLib = currentLib.some(
+        (a) =>
+          a.id === assetId ||
+          a.uri === task.localFileUri ||
+          (task.mediaLibraryAssetId && a.id === task.mediaLibraryAssetId)
+      );
+
+      const asset: MediaLibrary.Asset = {
+        id: assetId,
+        filename: task.fileName || `${task.title || 'audio'}.mp3`,
+        uri: task.localFileUri,
+        mediaType: 'audio' as any,
+        width: 0,
+        height: 0,
+        creationTime: task.createdAt || Date.now(),
+        modificationTime: task.completedAt || Date.now(),
+        duration: task.duration || 0,
+      };
+
+      if (!alreadyInLib) {
+        newAssetsToAdd.push(asset);
+      }
+
+      // Metadata ve Artwork kayıtlarını garanti et
+      if (task.title || task.artist || task.artwork) {
+        const metaPayload = {
+          title: task.title,
+          artist: task.artist,
+          artwork: task.artwork,
+        };
+        const ids = [assetId, task.localFileUri, task.id, `local_${task.id}`];
+        if (task.mediaLibraryAssetId) ids.push(task.mediaLibraryAssetId);
+        for (const id of ids) {
+          useStore.getState().setTrackMetadata(id, metaPayload);
+          if (task.artwork) {
+            useStore.getState().setArtwork(id, task.artwork);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (newAssetsToAdd.length > 0) {
+    const updatedLib = [...newAssetsToAdd, ...currentLib];
+    useStore.getState().setLibrary(updatedLib);
+    saveCachedLibrary(updatedLib).catch(() => {});
+    return updatedLib;
+  }
+
+  return currentLib;
 }
 
 /**
