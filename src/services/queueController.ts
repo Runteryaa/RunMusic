@@ -294,17 +294,7 @@ export async function playQueueTrack(
   }
   if (targetIndex < 0 || targetIndex >= queue.length) return;
 
-  const currentUpNextIds = useStore.getState().upNextIds;
-  const clearOnSelect = useStore.getState().preferences.clearQueueOnTrackSelect;
-
-  const { newQueue, newStartIndex, newUpNextIds } = reorderQueueOnTrackSelect({
-    queue,
-    targetIndex,
-    upNextIds: currentUpNextIds,
-    clearOnSelect,
-  });
-
-  const targetTrack = newQueue[newStartIndex];
+  const targetTrack = queue[targetIndex];
   if (!targetTrack) return;
 
   // Optimistik arayüz ve dinamik tema güncellemesi
@@ -331,29 +321,26 @@ export async function playQueueTrack(
     useThemeStore.getState().updateThemeFromArtwork(art);
   }
 
-  const queueChanged =
-    newQueue.length !== queue.length ||
-    newQueue.some((t, i) => trackKey(t) !== trackKey(queue[i]));
+  // Doğrudan hedef parçaya atla ve çal (ses kesintisi ve setQueue sıfırlaması olmadan)
+  await TrackPlayer.skip(targetIndex);
+  await TrackPlayer.play();
 
-  if (queueChanged) {
-    setIsMutatingQueue(true);
-    try {
-      await TrackPlayer.setQueue(newQueue);
-      if (newStartIndex > 0) {
-        await TrackPlayer.skip(newStartIndex);
-      }
-      await TrackPlayer.play();
-    } finally {
-      setIsMutatingQueue(false);
-    }
-  } else {
-    await TrackPlayer.skip(newStartIndex);
-    await TrackPlayer.play();
+  const currentUpNextIds = useStore.getState().upNextIds;
+  const clearOnSelect = useStore.getState().preferences.clearQueueOnTrackSelect;
+  const targetKey = trackKey(targetTrack);
+
+  let newUpNext = currentUpNextIds.filter((id) => id !== targetKey);
+  if (clearOnSelect) {
+    newUpNext = [];
   }
 
-  useStore.getState().setUpNextIds(newUpNextIds);
-  await persistQueue();
-  useStore.getState().bumpQueueRevision();
+  if (newUpNext.length > 0) {
+    await syncUpcomingQueue(newUpNext);
+  } else {
+    useStore.getState().setUpNextIds([]);
+    await persistQueue();
+    useStore.getState().bumpQueueRevision();
+  }
 }
 
 /** Kullanıcı kütüphaneden bir parçaya dokunduğunda kuyruğu kurar ve çalar. */
@@ -416,13 +403,32 @@ export async function startPlaybackFromLibrary(params: {
 
   if (!clearOnSelect && currentUpNextIds.length > 0) {
     try {
-      const oldQueue = await TrackPlayer.getQueue();
+      const oldQueue = await TrackPlayer.getQueue().catch(() => []);
       const upNextSet = new Set(currentUpNextIds);
       const trackMap = new Map<string, Track>();
       for (const t of oldQueue) {
         const k = trackKey(t);
         if (k && upNextSet.has(k) && !trackMap.has(k)) {
           trackMap.set(k, t);
+        }
+      }
+      for (const [id, t] of byId.entries()) {
+        if (upNextSet.has(id) && !trackMap.has(id)) {
+          trackMap.set(id, t as Track);
+        }
+      }
+      const allAssets = useStore.getState().allAssets;
+      for (const asset of allAssets) {
+        if (upNextSet.has(asset.id) && !trackMap.has(asset.id)) {
+          const meta = metadataMap[asset.id];
+          trackMap.set(asset.id, {
+            id: asset.id,
+            url: asset.uri,
+            title: meta?.title || asset.filename,
+            artist: meta?.artist || 'Unknown Artist',
+            artwork: meta?.artwork || useStore.getState().artworkMap[asset.id] || undefined,
+            duration: asset.duration,
+          } as Track);
         }
       }
       preservedUpNextTracks = currentUpNextIds
@@ -501,49 +507,117 @@ export async function startPlaybackFromLibrary(params: {
   await persistQueue();
 }
 
+
 /**
- * Kuyruktaki manuel bölümü yeniden hesaplar ve `upNextIds`'i gerçek duruma
- * göre günceller. Ekleme/silme/taşıma sonrası çağrılır; böylece kimlik listesi
- * ile native kuyruk asla ayrışmaz.
+ * Yerel oynatıcıdaki yaklaşan (upcoming) parçaları çalan parçayı durdurmadan
+ * kesintisiz (gapless) olarak senkronize eder.
+ *
+ * 1. Öncelikli sıra (upNextIds) parçaları hemen çalan parçanın ardına dizilir.
+ * 2. Kütüphane bağlamındaki (context) parçalar mükerrer olmayacak şekilde ardına eklenir.
+ * 3. Çalan parça HİÇ DURMAZ, `removeUpcomingTracks` + `add` ile güncellenir.
  */
-async function resyncUpNextFromQueue(): Promise<void> {
+export async function syncUpcomingQueue(
+  newUpNextIds: string[],
+  extraTracks: Track[] = []
+): Promise<void> {
   const { queue, activeIndex } = await readQueueState();
-  const ids = useStore.getState().upNextIds;
-  const sections = deriveQueueSections(queue, activeIndex, ids);
-  useStore.getState().setUpNextIds(sections.upNext.map((e) => trackKey(e.track)));
-}
-
-async function insertManual(track: QueueTrack, position: 'next' | 'end'): Promise<void> {
-  const key = track.id;
-  const { queue, activeIndex } = await readQueueState();
-  const currentUpNext = useStore.getState().upNextIds;
-  const sections = deriveQueueSections(queue, activeIndex, currentUpNext);
-
-  const existing = sections.upNext.find((entry) => trackKey(entry.track) === key);
-  if (existing && position === 'end') {
-    // Zaten sırada: mükerrer giriş oluşturma.
+  if (queue.length === 0 || activeIndex < 0) {
+    if (extraTracks.length > 0) {
+      await TrackPlayer.add(extraTracks);
+    }
+    useStore.getState().setUpNextIds(newUpNextIds);
+    await persistQueue();
+    useStore.getState().bumpQueueRevision();
     return;
   }
 
-  let insertAt: number;
-  if (position === 'next') {
-    insertAt = activeIndex + 1;
-  } else {
-    const last = sections.upNext[sections.upNext.length - 1];
-    insertAt = last ? last.index + 1 : activeIndex + 1;
+  // Havuz: Mevcut kuyruktaki tüm parçalar + dışarıdan gelen parçalar
+  const pool = new Map<string, Track>();
+  for (const t of queue) {
+    const k = trackKey(t);
+    if (k && !pool.has(k)) pool.set(k, t);
+  }
+  for (const t of extraTracks) {
+    const k = trackKey(t);
+    if (k && !pool.has(k)) pool.set(k, t);
   }
 
-  if (existing) {
-    // "Şimdi çal" için mevcut girişi kopyalamak yerine taşı.
-    await TrackPlayer.remove(existing.index);
-    if (existing.index < insertAt) insertAt -= 1;
+  // Store'daki allAssets'tan da gerekirse tamamla
+  const allAssets = useStore.getState().allAssets;
+  const metadataMap = useStore.getState().metadataMap;
+  const artworkMap = useStore.getState().artworkMap;
+
+  const upNextTracks: Track[] = [];
+  const validUpNextIds: string[] = [];
+  for (const id of newUpNextIds) {
+    let t = pool.get(id);
+    if (!t) {
+      const asset = allAssets.find((a) => a.id === id || a.uri === id);
+      if (asset) {
+        const meta = metadataMap[asset.id];
+        t = {
+          id: asset.id,
+          url: asset.uri,
+          title: meta?.title || asset.filename,
+          artist: meta?.artist || 'Unknown Artist',
+          artwork: meta?.artwork || artworkMap[asset.id] || undefined,
+          duration: asset.duration,
+        } as Track;
+        pool.set(id, t);
+      }
+    }
+    if (t) {
+      upNextTracks.push(t);
+      validUpNextIds.push(id);
+    }
   }
 
-  await TrackPlayer.add(track as Track, insertAt);
+  const upNextSet = new Set(validUpNextIds);
+  const activeTrackKey = trackKey(queue[activeIndex]);
 
-  const remaining = currentUpNext.filter((id) => id !== key);
-  useStore.getState().setUpNextIds(position === 'next' ? [key, ...remaining] : [...remaining, key]);
+  // Mevcut çalan parçanın ardındaki kütüphane bağlamı parçaları
+  // (Öncelikli sırada olanlar ve çalan parça elenir)
+  const remainingContext: Track[] = [];
+  const seenContext = new Set<string>();
+  for (let i = activeIndex + 1; i < queue.length; i++) {
+    const t = queue[i];
+    const k = trackKey(t);
+    if (k && !upNextSet.has(k) && k !== activeTrackKey && !seenContext.has(k)) {
+      seenContext.add(k);
+      remainingContext.push(t);
+    }
+  }
+
+  const upcoming = [...upNextTracks, ...remainingContext];
+
+  setIsMutatingQueue(true);
+  try {
+    await TrackPlayer.removeUpcomingTracks();
+    if (upcoming.length > 0) {
+      await TrackPlayer.add(upcoming);
+    }
+  } catch (err) {
+    console.warn('[queueController] syncUpcomingQueue error:', err);
+  } finally {
+    setTimeout(() => {
+      setIsMutatingQueue(false);
+    }, 400);
+  }
+
+  useStore.getState().setUpNextIds(validUpNextIds);
   await persistQueue();
+  useStore.getState().bumpQueueRevision();
+}
+
+async function insertManual(track: QueueTrack, position: 'next' | 'end'): Promise<void> {
+  const key = trackKey(track);
+  if (!key) return;
+
+  const currentUpNext = useStore.getState().upNextIds;
+  const remaining = currentUpNext.filter((id) => id !== key);
+  const newUpNextIds = position === 'next' ? [key, ...remaining] : [...remaining, key];
+
+  await syncUpcomingQueue(newUpNextIds, [track as Track]);
 }
 
 /** Şarkıyı hemen mevcut parçadan sonra çalar ("Play next"). */
@@ -565,26 +639,13 @@ export async function addTracksToQueue(
   position: 'next' | 'end' = 'end'
 ): Promise<void> {
   if (!tracks || tracks.length === 0) return;
-  const { queue, activeIndex } = await readQueueState();
+  const newKeys = tracks.map((t) => trackKey(t)).filter(Boolean);
   const currentUpNext = useStore.getState().upNextIds;
-  const sections = deriveQueueSections(queue, activeIndex, currentUpNext);
-
-  let insertAt: number;
-  if (position === 'next') {
-    insertAt = activeIndex + 1;
-  } else {
-    const last = sections.upNext[sections.upNext.length - 1];
-    insertAt = last ? last.index + 1 : activeIndex + 1;
-  }
-
-  await TrackPlayer.add(tracks as Track[], insertAt);
-
-  const newKeys = tracks.map((t) => trackKey(t));
   const remaining = currentUpNext.filter((id) => !newKeys.includes(id));
-  useStore.getState().setUpNextIds(
-    position === 'next' ? [...newKeys, ...remaining] : [...remaining, ...newKeys]
-  );
-  await persistQueue();
+  const newUpNextIds =
+    position === 'next' ? [...newKeys, ...remaining] : [...remaining, ...newKeys];
+
+  await syncUpcomingQueue(newUpNextIds, tracks as Track[]);
 }
 
 /**
@@ -592,7 +653,7 @@ export async function addTracksToQueue(
  * yüksek öncelikli "Sırada" (Up Next) bölümünün sonuna taşır.
  */
 export async function promoteContextTrackToUpNext(queueIndex: number, trackId?: string): Promise<void> {
-  const { queue, activeIndex, activeTrack } = await readQueueState();
+  const { queue, activeIndex } = await readQueueState();
   let targetIndex = queueIndex;
   if (trackId) {
     const resolved = queue.findIndex(
@@ -605,31 +666,12 @@ export async function promoteContextTrackToUpNext(queueIndex: number, trackId?: 
   const targetTrack = queue[targetIndex];
   if (!targetTrack) return;
 
-  const currentUpNext = useStore.getState().upNextIds;
-  const activeKey = activeTrack ? trackKey(activeTrack) : undefined;
-  const sections = deriveQueueSections(queue, activeIndex, currentUpNext, undefined, activeKey);
-
   const key = trackKey(targetTrack);
+  const currentUpNext = useStore.getState().upNextIds;
   if (currentUpNext.includes(key)) return;
 
-  const last = sections.upNext[sections.upNext.length - 1];
-  const targetDesiredIndex = last ? last.index + 1 : activeIndex + 1;
-
-  setIsMutatingQueue(true);
-  try {
-    if (targetIndex !== targetDesiredIndex) {
-      await TrackPlayer.move(targetIndex, targetDesiredIndex);
-    }
-    const remaining = currentUpNext.filter((id) => id !== key);
-    useStore.getState().setUpNextIds([...remaining, key]);
-    await persistQueue();
-  } catch (err) {
-    console.warn('[queueController] promoteContextTrackToUpNext error:', err);
-  } finally {
-    setTimeout(() => {
-      setIsMutatingQueue(false);
-    }, 400);
-  }
+  const newUpNextIds = [...currentUpNext, key];
+  await syncUpcomingQueue(newUpNextIds, [targetTrack]);
 }
 
 /**
@@ -647,58 +689,36 @@ export async function removeQueueItem(index: number, trackId?: string): Promise<
   }
   if (targetIndex <= activeIndex || targetIndex >= queue.length) return;
 
-  setIsMutatingQueue(true);
-  try {
-    await TrackPlayer.remove(targetIndex);
-    if (trackId) {
-      const currentUpNext = useStore.getState().upNextIds.filter((id) => id !== trackId);
-      useStore.getState().setUpNextIds(currentUpNext);
-    } else {
-      await resyncUpNextFromQueue();
+  const targetTrack = queue[targetIndex];
+  const key = targetTrack ? trackKey(targetTrack) : trackId;
+  const currentUpNext = useStore.getState().upNextIds;
+  const isUpNext = key && currentUpNext.includes(key);
+
+  if (isUpNext && key) {
+    const newUpNextIds = currentUpNext.filter((id) => id !== key);
+    await syncUpcomingQueue(newUpNextIds);
+  } else {
+    setIsMutatingQueue(true);
+    try {
+      await TrackPlayer.remove(targetIndex);
+      await persistQueue();
+      useStore.getState().bumpQueueRevision();
+    } catch (err) {
+      console.warn('[queueController] removeQueueItem error:', err);
+    } finally {
+      setTimeout(() => {
+        setIsMutatingQueue(false);
+      }, 400);
     }
-    await persistQueue();
-  } catch (err) {
-    console.warn('[queueController] removeQueueItem error:', err);
-  } finally {
-    setTimeout(() => {
-      setIsMutatingQueue(false);
-    }, 400);
   }
 }
 
 /**
  * Manuel "Sırada" öğelerinin TAMAMINI kuyruktan çıkarır.
- *
- * Yalnızca `upNextIds` listesini temizlemek yetmez: öğeler native kuyrukta
- * kaldığı sürece çalınmaya devam eder. Bu yüzden önce kuyruktan silinirler
- * (sondan başa doğru, indeksler kaymasın diye), sonra liste boşaltılır.
  */
 export async function clearUpNextQueue(): Promise<void> {
-  const { queue, activeIndex, activeTrack } = await readQueueState();
-  const activeKey = activeTrack ? trackKey(activeTrack) : undefined;
-  const sections = deriveQueueSections(queue, activeIndex, useStore.getState().upNextIds, undefined, activeKey);
-
-  const indices = sections.upNext.map((entry) => entry.index).sort((a, b) => b - a);
-  setIsMutatingQueue(true);
-  try {
-    for (const index of indices) {
-      try {
-        if (index > activeIndex) {
-          await TrackPlayer.remove(index);
-        }
-      } catch (e) {
-        console.warn('Failed to remove up-next item', e);
-      }
-    }
-    useStore.getState().clearUpNext();
-    await persistQueue();
-  } catch (err) {
-    console.warn('[queueController] clearUpNextQueue error:', err);
-  } finally {
-    setTimeout(() => {
-      setIsMutatingQueue(false);
-    }, 400);
-  }
+  await syncUpcomingQueue([]);
+  useStore.getState().clearUpNext();
 }
 
 /** "Sırada" bölümü içinde yeniden sıralama (indeksler bölüme görelidir). */
@@ -707,34 +727,10 @@ export async function moveUpNext(from: number, to: number): Promise<void> {
   if (from < 0 || to < 0 || from >= currentUpNextIds.length || to >= currentUpNextIds.length) return;
   if (from === to) return;
 
-  const { queue, activeIndex, activeTrack } = await readQueueState();
-  const activeKey = activeTrack ? trackKey(activeTrack) : undefined;
-  const sections = deriveQueueSections(queue, activeIndex, currentUpNextIds, undefined, activeKey);
-
-  if (!sections.upNext[from] || !sections.upNext[to]) return;
-  const fromIndex = sections.upNext[from].index;
-  const toIndex = sections.upNext[to].index;
-
-  // Güvenlik kontrolü: Asla şu an çalan parçayı veya geçmişi taşımaya çalışma!
-  if (fromIndex <= activeIndex || toIndex <= activeIndex) return;
-
-  // 1. Önce Zustand store'daki upNextIds listesini doğrudan güncelle
   const [movedId] = currentUpNextIds.splice(from, 1);
   currentUpNextIds.splice(to, 0, movedId);
-  useStore.getState().setUpNextIds(currentUpNextIds);
 
-  // 2. Native TrackPlayer'da taşıma yaparken sahte parça geçişlerini engellemek için kilitle
-  setIsMutatingQueue(true);
-  try {
-    await TrackPlayer.move(fromIndex, toIndex);
-    await persistQueue();
-  } catch (err) {
-    console.warn('[queueController] moveUpNext error:', err);
-  } finally {
-    setTimeout(() => {
-      setIsMutatingQueue(false);
-    }, 400);
-  }
+  await syncUpcomingQueue(currentUpNextIds);
 }
 
 /**
@@ -882,6 +878,8 @@ export function markUpNextConsumed(track: { id?: string; url?: string } | null |
   const ids = useStore.getState().upNextIds;
   if (ids.includes(key)) {
     useStore.getState().setUpNextIds(ids.filter((id) => id !== key));
+    persistQueue().catch(() => {});
+    useStore.getState().bumpQueueRevision();
   }
 }
 

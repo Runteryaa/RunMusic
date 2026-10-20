@@ -1011,11 +1011,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         const info = resolveTrackDisplay(item.entry.track);
         return (
           <Swipeable
-            overshootRight={false}
-            overshootLeft={false}
             friction={1}
-            leftThreshold={56}
-            rightThreshold={56}
+            leftThreshold={45}
+            rightThreshold={45}
             activeOffsetX={[-20, 20]}
             failOffsetY={[-15, 15]}
             onSwipeableOpen={(direction, swipeable) => {

@@ -840,10 +840,9 @@ export default function LibraryScreen() {
         <Swipeable
           renderLeftActions={renderLeftActions}
           friction={1}
-          leftThreshold={110}
+          leftThreshold={60}
           activeOffsetX={[-20, 20]}
           failOffsetY={[-15, 15]}
-          overshootLeft={false}
           onSwipeableOpen={(direction, swipeable) => {
             swipeable?.close?.();
             if (direction === 'left') {
@@ -933,10 +932,9 @@ export default function LibraryScreen() {
         <Swipeable
           renderLeftActions={renderLeftActions}
           friction={1}
-          leftThreshold={110}
+          leftThreshold={60}
           activeOffsetX={[-20, 20]}
           failOffsetY={[-15, 15]}
-          overshootLeft={false}
           onSwipeableOpen={(direction, swipeable) => {
             swipeable?.close?.();
             if (direction === 'left') {

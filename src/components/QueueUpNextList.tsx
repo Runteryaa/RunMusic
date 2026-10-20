@@ -135,9 +135,8 @@ function UpNextRow({
     <Animated.View style={[styles.rowWrapper, animatedStyle]}>
       <Swipeable
         renderRightActions={renderRightActions}
-        overshootRight={false}
         friction={1}
-        rightThreshold={52}
+        rightThreshold={45}
         activeOffsetX={[-20, 20]}
         failOffsetY={[-15, 15]}
         onSwipeableOpen={(direction, swipeable) => {

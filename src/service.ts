@@ -11,6 +11,7 @@ import {
   recordAttemptedTrack,
   resolveTrackId,
   trackKey,
+  markUpNextConsumed,
 } from './services/queueController';
 import { cleanYouTubeTitle, cleanDisplayTitle } from './services/lyricsService';
 import { useStore } from './store/useStore';
@@ -176,6 +177,7 @@ export default async function playbackService() {
             recordTrackToHistory(event.lastTrack);
           }
         }
+        markUpNextConsumed(event.track);
         clearSessionFailedTracks();
         recordAttemptedTrack(event.track, event.index);
         const rawId = String(event.track.id ?? '').trim();
