@@ -101,6 +101,7 @@ export interface TrackMetadata {
   artist?: string;
   album?: string;
   artwork?: string;
+  duration?: number;
 }
 
 export interface PlayedHistoryItem {
@@ -109,6 +110,7 @@ export interface PlayedHistoryItem {
   title?: string;
   artist?: string;
   artwork?: string;
+  duration?: number;
 }
 
 interface AppState {

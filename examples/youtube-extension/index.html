@@ -850,7 +850,8 @@
             artwork: streamData.thumbnail || activeVideo.thumbnail,
             downloadUrl: downloadUrl,
             suggestedFileName: fileName,
-            storageTarget: 'private'
+            duration: activeVideo.durationSec || 0,
+            storageTarget: 'public'
           });
           showToast(`⬇ İndirme başlatıldı! (ID: ${res.downloadId})`);
         } else {

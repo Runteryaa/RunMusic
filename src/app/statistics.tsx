@@ -3,13 +3,25 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getRecentHistory, getMostPlayed, getTotalListeningTime, PlayHistoryItem, MostPlayedItem } from '../services/statsDatabase';
+import {
+  getRecentHistory,
+  getMostPlayed,
+  getTotalListeningTime,
+  getTotalHistoryCount,
+  PlayHistoryItem,
+  MostPlayedItem,
+} from '../services/statsDatabase';
+import { useDownloadStore } from '../store/useDownloadStore';
+import { startPlaybackFromLibrary } from '../services/queueController';
+
 import { useThemeStore } from '../store/useThemeStore';
 import { useStore } from '../store/useStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { AdBanner } from '../components/AdBanner';
 import { cleanDisplayTitle } from '../services/lyricsService';
 import { useTranslation } from '../services/i18n';
+
+const PAGE_SIZE = 50;
 
 export default function StatisticsScreen() {
   const router = useRouter();
@@ -20,6 +32,13 @@ export default function StatisticsScreen() {
   const allAssets = useStore((s) => s.allAssets);
   const metadataMap = useStore((s) => s.metadataMap);
   const artworkMap = useStore((s) => s.artworkMap);
+  const library = useStore((s) => s.library);
+  const downloadTasks = useDownloadStore((s) => s.tasks);
+
+  const [historyPage, setHistoryPage] = useState(1);
+  const [hasMoreHistory, setHasMoreHistory] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [totalHistoryCount, setTotalHistoryCount] = useState(0);
 
   const [loading, setLoading] = useState(true);
   const [totalTime, setTotalTime] = useState(0);
@@ -33,16 +52,20 @@ export default function StatisticsScreen() {
   const loadStats = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
     try {
-      const [time, history, mostAll, mostMonth] = await Promise.all([
+      const [time, history, mostAll, mostMonth, count] = await Promise.all([
         getTotalListeningTime(),
-        getRecentHistory(30),
+        getRecentHistory(PAGE_SIZE, 0),
         getMostPlayed(10),
         getMostPlayed(10, 'month'),
+        getTotalHistoryCount(),
       ]);
       setTotalTime(time);
       setRecentHistory(history);
       setMostPlayedAllTime(mostAll);
       setMostPlayedMonth(mostMonth);
+      setTotalHistoryCount(count);
+      setHistoryPage(1);
+      setHasMoreHistory(history.length < count);
     } catch (e) {
       console.warn('Stats fetch error:', e);
     } finally {
@@ -50,6 +73,29 @@ export default function StatisticsScreen() {
       if (isRefresh) setRefreshing(false);
     }
   }, []);
+
+  const loadMoreHistory = useCallback(async () => {
+    if (loadingMore || !hasMoreHistory) return;
+    setLoadingMore(true);
+    try {
+      const nextPage = historyPage + 1;
+      const offset = (nextPage - 1) * PAGE_SIZE;
+      const moreItems = await getRecentHistory(PAGE_SIZE, offset);
+      if (moreItems.length > 0) {
+        setRecentHistory((prev) => [...prev, ...moreItems]);
+        setHistoryPage(nextPage);
+        if (moreItems.length < PAGE_SIZE || recentHistory.length + moreItems.length >= totalHistoryCount) {
+          setHasMoreHistory(false);
+        }
+      } else {
+        setHasMoreHistory(false);
+      }
+    } catch (e) {
+      console.warn('Failed to load more history:', e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMoreHistory, historyPage, recentHistory.length, totalHistoryCount]);
 
   useFocusEffect(
     useCallback(() => {
@@ -83,33 +129,151 @@ export default function StatisticsScreen() {
     };
   };
 
-  const getTrackInfo = (trackId: string) => {
-    const asset = allAssets.find((a) => a.id === trackId);
-    const meta = metadataMap[trackId];
-    const unknownArtist = t('common.unknown_artist');
+  const formatDateDetailed = (dateStr: string) => {
+    try {
+      const isoStr = dateStr.includes('T') ? dateStr : `${dateStr.replace(' ', 'T')}Z`;
+      const date = new Date(isoStr);
+      if (isNaN(date.getTime())) {
+        return dateStr;
+      }
 
-    let artist = meta?.artist?.trim() || unknownArtist;
+      const now = new Date();
+      const isToday =
+        date.getDate() === now.getDate() &&
+        date.getMonth() === now.getMonth() &&
+        date.getFullYear() === now.getFullYear();
+
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      const isYesterday =
+        date.getDate() === yesterday.getDate() &&
+        date.getMonth() === yesterday.getMonth() &&
+        date.getFullYear() === yesterday.getFullYear();
+
+      const timeStr = date.toLocaleTimeString(resolvedLanguage === 'tr' ? 'tr-TR' : 'en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      if (isToday) {
+        return resolvedLanguage === 'tr' ? `Bugün, ${timeStr}` : `Today, ${timeStr}`;
+      }
+      if (isYesterday) {
+        return resolvedLanguage === 'tr' ? `Dün, ${timeStr}` : `Yesterday, ${timeStr}`;
+      }
+
+      const isCurrentYear = date.getFullYear() === now.getFullYear();
+      return date.toLocaleDateString(resolvedLanguage === 'tr' ? 'tr-TR' : 'en-US', {
+        day: 'numeric',
+        month: 'short',
+        year: isCurrentYear ? undefined : 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const getTrackInfo = (trackId: string, historyItem?: PlayHistoryItem | MostPlayedItem) => {
+    const unknownArtist = t('common.unknown_artist');
+    const unknownTrack = t('common.unknown_track');
+
+    if (historyItem?.title) {
+      const artist = historyItem.artist?.trim() || unknownArtist;
+      const asset = allAssets.find((a) => a.id === trackId) || library.find((a) => a.id === trackId);
+      const task = downloadTasks.find((t) => t.id === trackId || t.mediaLibraryAssetId === trackId);
+      return {
+        title: cleanDisplayTitle(historyItem.title, artist !== unknownArtist ? artist : undefined),
+        artist: artist === 'Local Audio' || artist === 'Bilinmeyen Sanatçı' ? unknownArtist : artist,
+        uri: asset?.uri || task?.localFileUri,
+        artwork: historyItem.artwork || metadataMap[trackId]?.artwork || artworkMap[trackId],
+      };
+    }
+
+    const meta = metadataMap[trackId];
+    const asset = allAssets.find((a) => a.id === trackId) || library.find((a) => a.id === trackId);
+    const task = downloadTasks.find((t) => t.id === trackId || t.mediaLibraryAssetId === trackId);
+
+    let artist = meta?.artist?.trim() || task?.artist?.trim() || unknownArtist;
     if (artist === 'Local Audio' || artist === 'Bilinmeyen Sanatçı') artist = unknownArtist;
 
-    let rawTitle = meta?.title?.trim() || '';
+    let rawTitle = meta?.title?.trim() || task?.title?.trim() || '';
     if (!rawTitle && asset) {
       rawTitle = asset.filename;
     }
 
     let title = rawTitle
       ? cleanDisplayTitle(rawTitle, artist !== unknownArtist ? artist : undefined)
-      : t('common.unknown_track');
+      : unknownTrack;
 
-    return { title, artist, uri: asset?.uri };
+    return {
+      title,
+      artist,
+      uri: asset?.uri || task?.localFileUri,
+      artwork: meta?.artwork || task?.artwork || artworkMap[trackId],
+    };
   };
 
-  const renderTrackItem = (trackId: string, subtitle: string, rightText?: string, keySuffix?: string | number) => {
-    const info = getTrackInfo(trackId);
+  const handlePlayTrack = async (trackId: string, historyItem?: PlayHistoryItem | MostPlayedItem) => {
+    try {
+      const asset = allAssets.find((a) => a.id === trackId) || library.find((a) => a.id === trackId);
+      const task = downloadTasks.find((t) => t.id === trackId || t.mediaLibraryAssetId === trackId);
+      const uri = asset?.uri || task?.localFileUri;
+      if (!uri) return;
+
+      const trackList = (allAssets.length > 0 ? allAssets : library).map((a) => ({
+        id: a.id,
+        url: a.uri,
+        title: metadataMap[a.id]?.title || a.filename,
+        artist: metadataMap[a.id]?.artist || t('common.unknown_artist'),
+        duration: a.duration,
+      }));
+
+      const startTrackId = asset?.id || trackId;
+      if (!trackList.some((t) => t.id === startTrackId)) {
+        const info = getTrackInfo(trackId, historyItem);
+        trackList.unshift({
+          id: startTrackId,
+          url: uri,
+          title: info.title,
+          artist: info.artist,
+          duration: metadataMap[trackId]?.duration || task?.duration || 0,
+        });
+      }
+
+      await startPlaybackFromLibrary({
+        tracks: trackList,
+        startId: startTrackId,
+        shuffle: false,
+      });
+    } catch (e) {
+      console.warn('Failed to play track from stats:', e);
+    }
+  };
+
+  const renderTrackItem = (
+    trackId: string,
+    subtitle: string,
+    rightText?: string,
+    keySuffix?: string | number,
+    historyItem?: PlayHistoryItem | MostPlayedItem
+  ) => {
+    const info = getTrackInfo(trackId, historyItem);
     const itemKey = keySuffix != null ? `${trackId}-${keySuffix}` : trackId;
+    const canPlay = Boolean(info.uri);
+
     return (
-      <View key={itemKey} style={styles.trackItem}>
+      <TouchableOpacity
+        key={itemKey}
+        style={styles.trackItem}
+        activeOpacity={canPlay ? 0.7 : 1}
+        onPress={() => {
+          if (canPlay) handlePlayTrack(trackId, historyItem);
+        }}
+      >
         <TrackArtwork
-          uri={metadataMap[trackId]?.artwork || artworkMap[trackId]}
+          uri={info.artwork || metadataMap[trackId]?.artwork || artworkMap[trackId]}
           trackId={trackId}
           trackUri={info.uri}
           size={44}
@@ -125,7 +289,7 @@ export default function StatisticsScreen() {
             <Text style={[styles.rightText, { color: theme.primary }]}>{rightText}</Text>
           </View>
         ) : null}
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -206,9 +370,10 @@ export default function StatisticsScreen() {
                   mostPlayedMonth.map((item, idx) =>
                     renderTrackItem(
                       item.track_id,
-                      getTrackInfo(item.track_id).artist,
+                      getTrackInfo(item.track_id, item).artist,
                       `${item.play_count} ${resolvedLanguage === 'tr' ? 'kez' : 'plays'}`,
-                      `month-${idx}`
+                      `month-${idx}`,
+                      item
                     )
                   )
                 ) : (
@@ -225,9 +390,10 @@ export default function StatisticsScreen() {
                   mostPlayedAllTime.map((item, idx) =>
                     renderTrackItem(
                       item.track_id,
-                      getTrackInfo(item.track_id).artist,
+                      getTrackInfo(item.track_id, item).artist,
                       `${item.play_count} ${resolvedLanguage === 'tr' ? 'kez' : 'plays'}`,
-                      `all-${idx}`
+                      `all-${idx}`,
+                      item
                     )
                   )
                 ) : (
@@ -244,24 +410,53 @@ export default function StatisticsScreen() {
               {/* Ad Banner - Geçmiş Başı */}
               <AdBanner style={{ marginBottom: 12 }} />
 
+              <View style={styles.historyHeaderRow}>
+                <Text style={styles.sectionTitle}>
+                  {t('stats.listening_history')}
+                  {totalHistoryCount > 0 ? ` (${totalHistoryCount})` : ''}
+                </Text>
+              </View>
+
               {recentHistory.length > 0 ? (
-                recentHistory.map((item, idx) => {
-                  const date = new Date(item.played_at);
-                  const dateStr = date.toLocaleDateString(resolvedLanguage === 'tr' ? 'tr-TR' : 'en-US', {
-                    day: '2-digit',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  });
-                  return (
-                    <React.Fragment key={`hist-${item.played_at}-${idx}`}>
-                      {renderTrackItem(item.track_id, dateStr, undefined, `hist-${item.played_at}-${idx}`)}
-                      {(idx + 1) % 15 === 0 && idx !== recentHistory.length - 1 ? (
-                        <AdBanner style={{ marginVertical: 6 }} />
-                      ) : null}
-                    </React.Fragment>
-                  );
-                })
+                <>
+                  {recentHistory.map((item, idx) => {
+                    const dateFormatted = formatDateDetailed(item.played_at);
+                    const info = getTrackInfo(item.track_id, item);
+                    const subtitle = info.artist && info.artist !== t('common.unknown_artist')
+                      ? `${info.artist} • ${dateFormatted}`
+                      : dateFormatted;
+                    return (
+                      <React.Fragment key={`hist-${item.played_at}-${idx}`}>
+                        {renderTrackItem(item.track_id, subtitle, undefined, `hist-${item.played_at}-${idx}`, item)}
+                        {(idx + 1) % 15 === 0 && idx !== recentHistory.length - 1 ? (
+                          <AdBanner style={{ marginVertical: 6 }} />
+                        ) : null}
+                      </React.Fragment>
+                    );
+                  })}
+
+                  {hasMoreHistory && (
+                    <TouchableOpacity
+                      style={[styles.loadMoreBtn, { borderColor: theme.primary }]}
+                      onPress={loadMoreHistory}
+                      disabled={loadingMore}
+                    >
+                      {loadingMore ? (
+                        <ActivityIndicator size="small" color={theme.primary} />
+                      ) : (
+                        <Text style={[styles.loadMoreText, { color: theme.primary }]}>
+                          {resolvedLanguage === 'tr' ? 'Daha Fazla Göster' : 'Load More'}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
+
+                  {!hasMoreHistory && recentHistory.length >= PAGE_SIZE && (
+                    <Text style={styles.endOfHistoryText}>
+                      {resolvedLanguage === 'tr' ? 'Tüm geçmiş yüklendi' : 'All history loaded'}
+                    </Text>
+                  )}
+                </>
               ) : (
                 <Text style={styles.emptyText}>
                   {t('stats.history_empty')}
@@ -358,6 +553,35 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#ffffff',
     marginBottom: 12,
+  },
+  historyHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  loadMoreBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+    marginBottom: 16,
+    backgroundColor: '#18181b',
+  },
+  loadMoreText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  endOfHistoryText: {
+    textAlign: 'center',
+    color: '#71717a',
+    fontSize: 13,
+    marginTop: 12,
+    marginBottom: 16,
+    fontStyle: 'italic',
   },
   emptyText: {
     color: '#71717a',

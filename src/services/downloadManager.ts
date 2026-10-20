@@ -303,6 +303,7 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
       title: task.title,
       artist: task.artist,
       artwork: task.artwork,
+      duration: task.duration,
     };
     const ids = Array.from(new Set([
       finalAsset.id,
@@ -391,6 +392,7 @@ export async function syncCompletedDownloadsWithLibrary(): Promise<MediaLibrary.
         title: task.title,
         artist: task.artist,
         artwork: task.artwork,
+        duration: task.duration,
       };
       const ids = [assetId, task.localFileUri!, task.id, `local_${task.id}`];
       if (task.mediaLibraryAssetId) ids.push(task.mediaLibraryAssetId);

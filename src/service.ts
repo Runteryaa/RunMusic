@@ -215,11 +215,25 @@ export default async function playbackService() {
           'Unknown Title';
 
         const trackId = canonicalId || rawId || rawUrl;
+        const realDuration = event.track.duration && event.track.duration > 0 ? event.track.duration : (meta?.duration || 0);
+
+        if (realDuration > 0) {
+          useStore.getState().setTrackMetadata(trackId, { duration: realDuration });
+          if (rawUrl && rawUrl !== trackId) {
+            useStore.getState().setTrackMetadata(rawUrl, { duration: realDuration });
+          }
+          const currentLib = useStore.getState().library;
+          const libAsset = currentLib.find((a) => a.id === trackId || a.uri === rawUrl);
+          if (libAsset && (!libAsset.duration || libAsset.duration <= 0)) {
+            libAsset.duration = realDuration;
+            useStore.getState().setLibrary([...currentLib]);
+          }
+        }
         const summary = {
           id: trackId,
           title: cleanTit,
           artist: cleanArt,
-          duration: event.track.duration || 0,
+          duration: realDuration,
           hasArtwork: !!art,
         };
         useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);

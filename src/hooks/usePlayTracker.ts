@@ -3,6 +3,8 @@ import { AppState } from 'react-native';
 import TrackPlayer, { useActiveTrack, useProgress, useIsPlaying } from 'react-native-track-player';
 import { recordPlay, addListeningTime } from '../services/statsDatabase';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
+import { useStore } from '../store/useStore';
+import { useDownloadStore } from '../store/useDownloadStore';
 
 export function usePlayTracker() {
   const activeTrack = useActiveTrack();
@@ -23,13 +25,25 @@ export function usePlayTracker() {
       trackedSessionIdRef.current = null;
     }
 
-    // Şarkı henüz kaydedilmediyse ve 30 saniye eşiğini geçtiyse
-    if (trackedSessionIdRef.current !== activeTrack.id && progress.position >= 30) {
-      // Dinlenme geçmişe ekleniyor (sadece sayılma amaçlı, süre 0 geçiyoruz çünkü app_stats'den tam süre hesaplanıyor)
-      recordPlay(activeTrack.id, 0); 
+    // Şarkı henüz kaydedilmediyse ve dinleme eşiğini (30 sn veya kısa şarkılarda sürenin %50'sini) geçtiyse
+    const threshold = Math.min(30, (activeTrack.duration && activeTrack.duration > 0 ? activeTrack.duration * 0.5 : 30));
+    if (trackedSessionIdRef.current !== activeTrack.id && progress.position >= threshold) {
+      const metadataMap = useStore.getState().metadataMap;
+      const downloadTasks = useDownloadStore.getState().tasks;
+      const dlTask = downloadTasks.find(
+        (t) => t.id === activeTrack.id || (activeTrack.url && t.localFileUri === activeTrack.url)
+      );
+
+      const meta = metadataMap[activeTrack.id] || (activeTrack.url ? metadataMap[activeTrack.url] : undefined);
+      const title = dlTask?.title || meta?.title || activeTrack.title || null;
+      const artist = dlTask?.artist || meta?.artist || activeTrack.artist || null;
+      const artwork = dlTask?.artwork || meta?.artwork || (typeof activeTrack.artwork === 'string' ? activeTrack.artwork : null);
+
+      // Dinlenme geçmişe şarkının başlığı, sanatçısı ve kapağı ile birlikte kaydediliyor
+      recordPlay(activeTrack.id, 0, { title, artist, artwork });
       trackedSessionIdRef.current = activeTrack.id;
     }
-  }, [progress.position, activeTrack?.id]);
+  }, [progress.position, activeTrack]);
 
   useEffect(() => {
     // Exact listening time accumulator

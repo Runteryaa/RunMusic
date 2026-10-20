@@ -398,11 +398,32 @@ export async function handleBridgeMessage(
             reply(false, null, 'downloadUrl zorunludur.');
             return;
           }
+          let parsedDuration: number | undefined;
+          if (typeof payload?.duration === 'number' && !isNaN(payload.duration) && payload.duration > 0) {
+            parsedDuration = payload.duration;
+          } else if (typeof payload?.duration === 'string' && payload.duration.trim()) {
+            const rawD = payload.duration.trim();
+            const parts = rawD.split(':');
+            if (parts.length === 2) {
+              const m = parseFloat(parts[0]);
+              const s = parseFloat(parts[1]);
+              if (!isNaN(m) && !isNaN(s)) parsedDuration = m * 60 + s;
+            } else if (parts.length === 3) {
+              const h = parseFloat(parts[0]);
+              const m = parseFloat(parts[1]);
+              const s = parseFloat(parts[2]);
+              if (!isNaN(h) && !isNaN(m) && !isNaN(s)) parsedDuration = h * 3600 + m * 60 + s;
+            } else {
+              const num = parseFloat(rawD);
+              if (!isNaN(num) && num > 0) parsedDuration = num;
+            }
+          }
+
           const res = await startDownload({
             title: payload.title || 'Unknown Title',
             artist: payload.artist || extension.manifest.name,
             artwork: payload.artwork,
-            duration: typeof payload.duration === 'number' ? payload.duration : undefined,
+            duration: parsedDuration,
             downloadUrl: payload.downloadUrl,
             suggestedFileName: payload.suggestedFileName || payload.fileName,
             storageTarget: payload.storageTarget,

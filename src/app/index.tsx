@@ -374,6 +374,7 @@ export default function LibraryScreen() {
               title: item.task.title,
               artist: item.task.artist,
               artwork: item.task.artwork,
+              duration: item.task.duration,
             };
             const ids = [item.asset.id, item.task.localFileUri!, item.task.id, `local_${item.task.id}`];
             if (item.task.mediaLibraryAssetId) ids.push(item.task.mediaLibraryAssetId);
@@ -940,11 +941,21 @@ export default function LibraryScreen() {
                   </Text>
                 </View>
                 <Text style={styles.trackDuration} numberOfLines={1}>
-                  {Math.floor(asset.duration / 60)}:
-                  {Math.floor(asset.duration % 60)
-                    .toString()
-                    .padStart(2, '0')}
-                  {info.artist ? ` • ${info.artist}` : ''}
+                  {(() => {
+                    const dur =
+                      (typeof asset.duration === 'number' && asset.duration > 0
+                        ? asset.duration
+                        : metadataMap[asset.id]?.duration ||
+                          metadataMap[asset.uri]?.duration) || 0;
+                    if (dur <= 0) {
+                      return info.artist ? info.artist : '';
+                    }
+                    const m = Math.floor(dur / 60);
+                    const s = Math.floor(dur % 60)
+                      .toString()
+                      .padStart(2, '0');
+                    return `${m}:${s}${info.artist ? ` • ${info.artist}` : ''}`;
+                  })()}
                 </Text>
               </View>
             </TouchableOpacity>
