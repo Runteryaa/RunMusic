@@ -453,6 +453,12 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const plainScrollViewHeightRef = useRef(0);
   const isPlainUserScrollingRef = useRef(false);
   const plainScrollTimeoutRef = useRef<any>(null);
+  /**
+   * Son bilinen şarkı konumu + zaman damgası. `useProgress` saniyede 4 kez
+   * güncellendiği için aradaki karelerde konumu duvar saatinden tahmin ederek
+   * düz metin sözlerini kesintisiz kaydırıyoruz.
+   */
+  const plainProgressRef = useRef({ position: 0, at: 0, playing: false });
 
   const currentPosition = isDragging ? dragTime : progress.position;
   const duration = progress.duration > 0 ? progress.duration : 0;
@@ -1673,34 +1679,69 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     }
   }, [activeLineIndex, isFullscreenPlayerOpen, isLyricsMode, isLyricsAutoScrollPaused, parsedLines.length]);
 
-  // Düz metin (Genius / LRCLIB plain) şarkı sözlerini şarkının saniyesine göre aşağıya doğru orantılı kaydır
-  const lastTargetPlainYRef = useRef<number>(0);
+  // Progress 4Hz geldiği için konumu son tick'ten bu yana geçen süreyle
+  // besliyoruz; böylece düz metin sözler 60fps'te tek bir akış hâlinde kayar.
+  useEffect(() => {
+    plainProgressRef.current = {
+      position: progress.position,
+      at: Date.now(),
+      playing,
+    };
+  }, [progress.position, playing]);
+
+  // Düz metin (Genius / LRCLIB plain) şarkı sözlerini şarkının saniyesine göre aşağıya doğru orantılı kaydır.
+  // `scrollTo(animated: true)` her progress tick'inde yeniden başlatıldığı için
+  // takılma yapıyordu; bunun yerine her karede hedefi yeniden hesaplayıp
+  // animasyonsuz kaydırıyoruz.
   useEffect(() => {
     if (
-      isFullscreenPlayerOpen &&
-      isLyricsMode &&
-      !isLyricsAutoScrollPaused &&
-      !currentLyrics?.syncedLyrics &&
-      currentLyrics?.plainLyrics &&
-      duration > 0 &&
-      !isPlainUserScrollingRef.current
+      !isFullscreenPlayerOpen ||
+      !isLyricsMode ||
+      isLyricsAutoScrollPaused ||
+      currentLyrics?.syncedLyrics ||
+      !currentLyrics?.plainLyrics ||
+      duration <= 0
     ) {
-      const maxScroll = Math.max(0, plainContentHeightRef.current - plainScrollViewHeightRef.current);
-      if (maxScroll > 0) {
-        const progressRatio = Math.min(1, Math.max(0, progress.position / duration));
-        const targetY = progressRatio * maxScroll;
-        // Animasyon çatışmasını (jitter/glitch) önlemek için en az 3 piksellik fark olunca kaydır
-        if (Math.abs(targetY - lastTargetPlainYRef.current) >= 3) {
-          lastTargetPlainYRef.current = targetY;
-          plainLyricsScrollRef.current?.scrollTo({
-            y: targetY,
-            animated: true,
-          });
+      return;
+    }
+
+    let frameId = 0;
+    let lastY = -1;
+
+    const tick = () => {
+      if (!isPlainUserScrollingRef.current) {
+        const maxScroll = Math.max(
+          0,
+          plainContentHeightRef.current - plainScrollViewHeightRef.current
+        );
+
+        if (maxScroll > 0) {
+          const snapshot = plainProgressRef.current;
+          const elapsed = snapshot.playing
+            ? Math.min(0.5, Math.max(0, (Date.now() - snapshot.at) / 1000))
+            : 0;
+          const estimatedPosition = Math.min(
+            duration,
+            Math.max(0, snapshot.position + elapsed)
+          );
+          const targetY = (estimatedPosition / duration) * maxScroll;
+
+          if (lastY < 0 || Math.abs(targetY - lastY) >= 0.5) {
+            lastY = targetY;
+            plainLyricsScrollRef.current?.scrollTo({
+              y: targetY,
+              animated: false,
+            });
+          }
         }
       }
-    }
+
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
   }, [
-    progress.position,
     duration,
     isFullscreenPlayerOpen,
     isLyricsMode,
@@ -1715,7 +1756,6 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   useEffect(() => {
     if (activeTrackKey && activeTrackKey !== lastPlainResetTrackIdRef.current) {
       lastPlainResetTrackIdRef.current = activeTrackKey;
-      lastTargetPlainYRef.current = 0;
       isPlainUserScrollingRef.current = false;
       if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
       plainLyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
