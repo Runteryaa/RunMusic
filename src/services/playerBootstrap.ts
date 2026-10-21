@@ -7,6 +7,7 @@ import TrackPlayer, {
   State,
 } from 'react-native-track-player';
 import { getQueueSnapshot, getLastPlayback } from './playbackStorage';
+import { toPlayableTrack, toPlayableTracks } from './playbackUri';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
@@ -190,7 +191,7 @@ export async function restoreQueueIfNeeded(): Promise<boolean> {
     const restoreQueue = useStore.getState().preferences?.restoreQueueOnLaunch ?? true;
 
     if (restoreQueue && snapshot && snapshot.queue && snapshot.queue.length > 0) {
-      await TrackPlayer.setQueue(snapshot.queue as Track[]);
+      await TrackPlayer.setQueue(toPlayableTracks(snapshot.queue as Track[]));
 
       let targetIndex = -1;
       if (lastPlayback?.trackId) {
@@ -281,7 +282,7 @@ export async function restoreQueueIfNeeded(): Promise<boolean> {
 
       return true;
     } else if (lastPlayback && lastPlayback.track) {
-      await TrackPlayer.add([lastPlayback.track]);
+      await TrackPlayer.add([toPlayableTrack(lastPlayback.track as Track)]);
       try {
         await TrackPlayer.skip(0);
       } catch {

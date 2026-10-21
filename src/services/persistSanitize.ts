@@ -32,6 +32,23 @@ export const MAX_SAFE_BYTES = 1_800_000;
 /** Genel üst sınır: bunun üzerindeki veri hiçbir koşulda yazılmaya çalışılmaz. */
 export const HARD_MAX_BYTES = 3_500_000;
 
+/**
+ * v12 migrasyonu: yerel `file://` yollarındaki `#` karakteri ExoPlayer
+ * tarafından fragment sanıldığı için geçerli dosyalar "çalınamaz" işaretlenip
+ * gizleniyordu. Bu otomatik işaretleri bir kez temizler; kullanıcının elle
+ * gizlediği parçaları (unplayable listesinde olmayanları) korur.
+ */
+export function resetLegacyUnplayableMarks(params: {
+  hiddenTrackIds: string[];
+  unplayableTrackIds: string[];
+}): { hiddenTrackIds: string[]; unplayableTrackIds: string[] } {
+  const unplayable = new Set(params.unplayableTrackIds);
+  return {
+    hiddenTrackIds: params.hiddenTrackIds.filter((id) => !unplayable.has(id)),
+    unplayableTrackIds: [],
+  };
+}
+
 /** UTF-8 bayt uzunluğu. TextEncoder yoksa kod noktası üzerinden hesaplar. */
 export function byteLength(value: string): number {
   try {

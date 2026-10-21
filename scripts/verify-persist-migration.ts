@@ -18,6 +18,7 @@ import {
   normalizeLyricsCache,
   findLyricsInCache,
   reducePersistedState,
+  resetLegacyUnplayableMarks,
   byteLength,
   MAX_SAFE_BYTES,
   type LyricsCacheEntry,
@@ -516,7 +517,10 @@ const migratedV9Unplayable = Array.isArray(v9StateWithUnplayable.unplayableTrack
   ? v9StateWithUnplayable.unplayableTrackIds
   : [];
 
-check('mevcut unplayableTrackIds kayıtları migrasyonda korunuyor', migratedV9Unplayable.length === 2 && migratedV9Unplayable[0] === 'broken-1');
+check(
+  'v9 kaydındaki unplayableTrackIds okunabiliyor (v12 temizliği aşağıda test edilir)',
+  migratedV9Unplayable.length === 2 && migratedV9Unplayable[0] === 'broken-1'
+);
 
 const malformedV9 = {
   unplayableTrackIds: 'not-an-array',
@@ -590,6 +594,32 @@ const incomingPrefsV11Custom = (v11StateWithCustom.preferences && typeof v11Stat
 check(
   'kullanıcının seçtiği queueBufferTarget ve queueReplenishThreshold korunuyor',
   incomingPrefsV11Custom.queueBufferTarget === 40 && incomingPrefsV11Custom.queueReplenishThreshold === 15
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+section('17) v11 -> v12 migrasyonu ve #PLA4 çalınamaz işaretlerinin temizlenmesi');
+
+const v11StateWithLegacyFailures = {
+  hiddenTrackIds: ['manual-hidden', 'broken-hash-file'],
+  unplayableTrackIds: ['broken-hash-file'],
+};
+const migratedV12 = resetLegacyUnplayableMarks(v11StateWithLegacyFailures);
+
+check(
+  'file:///# yüzünden otomatik işaretlenen unplayable kimlikleri temizlendi',
+  migratedV12.unplayableTrackIds.length === 0
+);
+check(
+  'elle gizlenen parça korundu',
+  JSON.stringify(migratedV12.hiddenTrackIds) === JSON.stringify(['manual-hidden'])
+);
+check(
+  'çalınamaz olmayan gizli parçalar korunuyor',
+  resetLegacyUnplayableMarks({
+    hiddenTrackIds: ['manual-only'],
+    unplayableTrackIds: [],
+  }).hiddenTrackIds[0] === 'manual-only'
 );
 
 // ─────────────────────────────────────────────────────────────────────────────

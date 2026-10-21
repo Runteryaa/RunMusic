@@ -19,6 +19,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { useStore } from '../store/useStore';
 import { useTranslation } from '../services/i18n';
 import { setupTrackPlayerIfNeeded } from '../services/playerBootstrap';
+import { toPlayableTrack } from '../services/playbackUri';
 import {
   cancelDownload,
   addDownloadToLibrary,
@@ -50,13 +51,13 @@ export const DownloadsModal: React.FC = () => {
     if (!item.localFileUri) return;
     try {
       await setupTrackPlayerIfNeeded();
-      const track: Track = {
+      const track: Track = toPlayableTrack({
         id: item.id,
         url: item.localFileUri,
         title: item.title,
         artist: item.artist,
         artwork: item.artwork,
-      };
+      });
       await TrackPlayer.setQueue([track]);
       await TrackPlayer.play();
       if (item.artwork) {

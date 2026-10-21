@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { saveQueueSnapshot } from './playbackStorage';
+import { toPlayableTrack, toPlayableTracks } from './playbackUri';
 import { getPlayCountsMap } from './statsDatabase';
 import {
   buildPlayOrder,
@@ -150,7 +151,7 @@ export async function skipToPreviousTrack(): Promise<void> {
     } else {
       const rawActive = await TrackPlayer.getActiveTrackIndex();
       const active = typeof rawActive === 'number' && rawActive >= 0 ? rawActive : 0;
-      await TrackPlayer.add(targetTrack as Track, active);
+      await TrackPlayer.add(toPlayableTrack(targetTrack as Track), active);
       await TrackPlayer.skip(active);
     }
     await TrackPlayer.play();
@@ -216,7 +217,7 @@ export async function playHistoryTrack(historyIndex: number, track?: Track | Que
     } else {
       const rawActive = await TrackPlayer.getActiveTrackIndex();
       const active = typeof rawActive === 'number' && rawActive >= 0 ? rawActive : 0;
-      await TrackPlayer.add(targetTrack as Track, active);
+      await TrackPlayer.add(toPlayableTrack(targetTrack as Track), active);
       await TrackPlayer.skip(active);
     }
     await TrackPlayer.play();
@@ -508,7 +509,7 @@ export async function replenishUpcomingQueueIfNeeded(): Promise<void> {
     }
 
     if (tracksToAdd.length > 0) {
-      await TrackPlayer.add(tracksToAdd);
+      await TrackPlayer.add(toPlayableTracks(tracksToAdd));
       useStore.getState().bumpQueueRevision();
     }
   } catch (err) {
@@ -668,7 +669,7 @@ export async function startPlaybackFromLibrary(params: {
     };
   });
 
-  await TrackPlayer.setQueue(enrichedQueue);
+  await TrackPlayer.setQueue(toPlayableTracks(enrichedQueue));
   if (finalStartIndex > 0) {
     await TrackPlayer.skip(finalStartIndex);
   }
@@ -748,7 +749,7 @@ async function executeNativeUpcomingSync(
   const { queue, activeIndex } = await readQueueState();
   if (queue.length === 0 || activeIndex < 0) {
     if (extraTracks.length > 0) {
-      await TrackPlayer.add(extraTracks);
+      await TrackPlayer.add(toPlayableTracks(extraTracks));
     }
     return;
   }
@@ -815,7 +816,7 @@ async function executeNativeUpcomingSync(
   try {
     await TrackPlayer.removeUpcomingTracks();
     if (upcoming.length > 0) {
-      await TrackPlayer.add(upcoming);
+      await TrackPlayer.add(toPlayableTracks(upcoming));
     }
   } catch (err) {
     console.warn('[queueController] executeNativeUpcomingSync error:', err);
@@ -1032,12 +1033,12 @@ export async function setShuffle(enabled: boolean, smart: boolean = false): Prom
     // Çalan parçayı durdurmadan ve sıfırlamadan sıradaki parçaları güncelle
     await TrackPlayer.removeUpcomingTracks();
     if (upcoming.length > 0) {
-      await TrackPlayer.add(upcoming as Track[]);
+      await TrackPlayer.add(toPlayableTracks(upcoming as Track[]));
     }
   } catch (err) {
     console.warn('Seamless queue update failed, falling back to setQueue', err);
     const newQueue = [...history, ...upcoming];
-    await TrackPlayer.setQueue(newQueue);
+    await TrackPlayer.setQueue(toPlayableTracks(newQueue));
     if (activeIndex > 0) {
       await TrackPlayer.skip(activeIndex);
     }

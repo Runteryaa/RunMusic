@@ -12,6 +12,7 @@ import { STORE_STORAGE_KEY, resilientStorage } from '../services/persistStorage'
 import {
   findLyricsInCache,
   normalizeLyricsCache,
+  resetLegacyUnplayableMarks,
   type LyricsCacheEntry,
 } from '../services/persistSanitize';
 
@@ -206,7 +207,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 11;
+const PERSIST_VERSION = 12;
 
 export const useStore = create<AppState>()(
   persist(
@@ -482,12 +483,26 @@ export const useStore = create<AppState>()(
         const isDynamicUnlocked = Boolean(incomingPrefs.isDynamicColorUnlocked);
         const isDevMode = Boolean(incomingPrefs.isDevModeActive);
 
-        const unplayableTrackIds = Array.isArray(incoming.unplayableTrackIds)
+        const incomingUnplayableTrackIds = Array.isArray(incoming.unplayableTrackIds)
           ? incoming.unplayableTrackIds
           : [];
-        const hiddenTrackIds = Array.isArray(incoming.hiddenTrackIds)
+        const incomingHiddenTrackIds = Array.isArray(incoming.hiddenTrackIds)
           ? incoming.hiddenTrackIds
           : [];
+
+        // v12: `file://` yollarındaki `#` nedeniyle yanlışlıkla çalınamaz
+        // işaretlenen parçaları bir kez kütüphaneye geri getir.
+        const legacyPlaybackFailures =
+          fromVersion < 12
+            ? resetLegacyUnplayableMarks({
+                hiddenTrackIds: incomingHiddenTrackIds,
+                unplayableTrackIds: incomingUnplayableTrackIds,
+              })
+            : null;
+        const unplayableTrackIds =
+          legacyPlaybackFailures?.unplayableTrackIds ?? incomingUnplayableTrackIds;
+        const hiddenTrackIds =
+          legacyPlaybackFailures?.hiddenTrackIds ?? incomingHiddenTrackIds;
 
         const migrated = {
           ...incoming,

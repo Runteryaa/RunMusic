@@ -120,7 +120,10 @@ export function mergeCompletedDownloadsIntoAssets(
 }
 
 function sanitizeFileName(name: string): string {
-  return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+  // `#` ve `%` dosya sisteminde geçerli olsa da `file://` URI'larında fragment
+  // veya yüzde-kod çözümleme karakteri olarak yorumlanır. İndirme hedefi
+  // URI'sinin (ve MediaStore'a aktarımın) bozulmaması için baştan temizle.
+  return name.replace(/[<>:"/\\|?*#%\x00-\x1F]/g, '_').trim();
 }
 
 export interface StartDownloadParams {
