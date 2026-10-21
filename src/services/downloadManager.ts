@@ -7,6 +7,7 @@ import { t } from './i18n';
 import type { DownloadTask } from '../types/download';
 
 const activeDownloads = new Map<string, FileSystem.DownloadResumable>();
+const libraryAdditions = new Map<string, Promise<boolean>>();
 
 /**
  * Incremental library updates must start from `allAssets`; `library` only
@@ -19,6 +20,103 @@ function getAllLibraryAssets(): MediaLibrary.Asset[] {
 
 function isTaskCancelled(taskId: string): boolean {
   return useDownloadStore.getState().tasks.find((t) => t.id === taskId)?.status === 'cancelled';
+}
+
+function buildDownloadAsset(task: DownloadTask): MediaLibrary.Asset {
+  return {
+    id: task.mediaLibraryAssetId || `local_${task.id}`,
+    filename: task.fileName || `${task.title || 'audio'}.mp3`,
+    uri: task.localFileUri!,
+    mediaType: 'audio' as any,
+    width: 0,
+    height: 0,
+    creationTime: task.createdAt || Date.now(),
+    modificationTime: task.completedAt || task.createdAt || Date.now(),
+    duration: task.duration || 0,
+  };
+}
+
+function isAssetForDownload(asset: MediaLibrary.Asset, task: DownloadTask): boolean {
+  return (
+    asset.id === (task.mediaLibraryAssetId || `local_${task.id}`) ||
+    asset.uri === task.localFileUri
+  );
+}
+
+/**
+ * Bir medya taraması sürerken tamamlanan indirmeler taramanın başlangıç
+ * anlık görüntüsünde yer almaz. Tarama sonucu yazılmadan hemen önce bu
+ * yardımcı çağrılır; tamamlanan indirmeleri güncel store'dan okuyup listeye
+ * ekler. Böylece indirme, tarama tarafından sessizce ezilmez.
+ *
+ * `completedAfter`: bu andan sonra tamamlanan görevler, tarama sonucunda
+ * henüz görünmeseler bile iyimser biçimde eklenir. Eski ve dosyası silinmiş
+ * görevlerin hayalet kayıt olarak geri gelmesini önler.
+ */
+export function mergeCompletedDownloadsIntoAssets(
+  assets: MediaLibrary.Asset[],
+  options?: { completedAfter?: number }
+): MediaLibrary.Asset[] {
+  const completedTasks = useDownloadStore
+    .getState()
+    .tasks.filter((t) => t.status === 'completed' && t.localFileUri);
+  if (completedTasks.length === 0) return assets;
+
+  const currentAssets = getAllLibraryAssets();
+  const cutoff = options?.completedAfter;
+
+  const assetIds = new Set(assets.map((asset) => asset.id));
+  const assetUris = new Set(assets.map((asset) => asset.uri));
+
+  const isKnownInScannedAssets = (task: DownloadTask): boolean => {
+    const assetId = task.mediaLibraryAssetId || `local_${task.id}`;
+    return (
+      assetIds.has(assetId) ||
+      assetIds.has(`local_${task.id}`) ||
+      assetUris.has(task.localFileUri!)
+    );
+  };
+
+  const relevantTasks = completedTasks.filter((task) => {
+    // Tarama sürerken tamamlanan görevler henüz taranmamış olabilir; onları
+    // iyimser biçimde ekle. Daha eski görevler yalnızca tarama sonucunda
+    // doğrulanmış bir varlıkları varsa korunur; böylece cache'te kalmış,
+    // dosyası silinmiş hayalet kayıtlar geri getirilmez.
+    if (cutoff != null && (task.completedAt || 0) >= cutoff) return true;
+    return isKnownInScannedAssets(task);
+  });
+  if (relevantTasks.length === 0) return assets;
+
+  const downloadAssetIds = new Set<string>();
+  const downloadUris = new Set<string>();
+  for (const task of relevantTasks) {
+    downloadAssetIds.add(task.mediaLibraryAssetId || `local_${task.id}`);
+    downloadAssetIds.add(`local_${task.id}`);
+    if (task.localFileUri) downloadUris.add(task.localFileUri);
+  }
+
+  const candidates = [...assets, ...currentAssets];
+  const downloadAssets: MediaLibrary.Asset[] = [];
+  const seenIds = new Set<string>();
+  const seenUris = new Set<string>();
+
+  for (const task of relevantTasks) {
+    const existing =
+      (task.mediaLibraryAssetId
+        ? candidates.find((asset) => asset.id === task.mediaLibraryAssetId)
+        : undefined) || candidates.find((asset) => isAssetForDownload(asset, task));
+    const asset = existing || buildDownloadAsset(task);
+
+    if (seenIds.has(asset.id) || seenUris.has(asset.uri)) continue;
+    seenIds.add(asset.id);
+    seenUris.add(asset.uri);
+    downloadAssets.push(asset);
+  }
+
+  const remaining = assets.filter(
+    (asset) => !downloadAssetIds.has(asset.id) && !downloadUris.has(asset.uri)
+  );
+  return [...downloadAssets, ...remaining];
 }
 
 function sanitizeFileName(name: string): string {
@@ -209,11 +307,27 @@ async function executeDownload(task: DownloadTask): Promise<void> {
       fileName: finalFileName,
     });
 
-    // Eğer genel kütüphaneye eklendiyse veya hedef public ise kütüphaneye ve store'a hemen kaydet
-    if ((task.storageTarget === 'public' || mediaAssetId) && !isTaskCancelled(task.id)) {
-      await addDownloadToLibrary(task.id).catch((e) => {
-        console.warn('[downloadManager] Otomatik kütüphane ekleme hatası:', e);
-      });
+    if (!isTaskCancelled(task.id)) {
+      let addedToLibrary = false;
+
+      // Genel (public) indirmeler cihazın medya kütüphanesine de kaydedilir.
+      // Özel (private) indirmeler burada MediaStore'a taşınmaz.
+      if (task.storageTarget === 'public' || mediaAssetId) {
+        try {
+          addedToLibrary = await addDownloadToLibrary(task.id);
+        } catch (e) {
+          console.warn('[downloadManager] Otomatik kütüphane ekleme hatası:', e);
+        }
+      }
+
+      // Public ekleme başarısız olduysa veya indirme private ise, tamamlanan
+      // dosyayı kitaplık ekranının odaklanmasını beklemeden RunMusic
+      // kütüphanesine yerel kayıt olarak ekle.
+      if (!addedToLibrary && !isTaskCancelled(task.id)) {
+        await syncCompletedDownloadsWithLibrary().catch((e) => {
+          console.warn('[downloadManager] Tamamlanan indirme eşitleme hatası:', e);
+        });
+      }
     }
   } catch (error: any) {
     activeDownloads.delete(task.id);
@@ -255,8 +369,24 @@ export async function cancelDownload(downloadId: string): Promise<void> {
 /**
  * Özel depolamadaki indirilmiş parçayı kullanıcının isteğiyle cihazın genel
  * müzik kütüphanesine (MediaLibrary) aktarır ve RunMusic kütüphanesine ekler.
+ *
+ * Aynı görev için eşzamanlı çağrılar (otomatik ekleme + kullanıcı butonu)
+ * paylaşılır; aksi halde iki ayrı MediaStore varlığı oluşturulabilir.
  */
-export async function addDownloadToLibrary(downloadId: string): Promise<boolean> {
+export function addDownloadToLibrary(downloadId: string): Promise<boolean> {
+  const inFlight = libraryAdditions.get(downloadId);
+  if (inFlight) return inFlight;
+
+  const promise = addDownloadToLibraryInternal(downloadId).finally(() => {
+    if (libraryAdditions.get(downloadId) === promise) {
+      libraryAdditions.delete(downloadId);
+    }
+  });
+  libraryAdditions.set(downloadId, promise);
+  return promise;
+}
+
+async function addDownloadToLibraryInternal(downloadId: string): Promise<boolean> {
   const task = useDownloadStore.getState().tasks.find((t) => t.id === downloadId);
   if (!task || !task.localFileUri) {
     throw new Error(t('downloads.file_not_found'));
@@ -336,7 +466,12 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
   // RunMusic ana kütüphanesine varlığı anında ekle ve önbelleğe kaydet (listenin en başına)
   const currentAssets = getAllLibraryAssets();
   const filteredAssets = currentAssets.filter(
-    (a) => a.id !== finalAsset.id && a.uri !== finalAsset.uri && a.id !== `local_${downloadId}`
+    (a) =>
+      a.id !== finalAsset.id &&
+      a.uri !== finalAsset.uri &&
+      a.id !== `local_${downloadId}` &&
+      a.uri !== task.localFileUri &&
+      a.uri !== targetFileUri
   );
   const updatedAssets = [finalAsset, ...filteredAssets];
   useStore.getState().setLibrary(updatedAssets);
@@ -416,17 +551,7 @@ export async function syncCompletedDownloadsWithLibrary(): Promise<MediaLibrary.
       currentAssetUris.has(task.localFileUri!) ||
       (task.mediaLibraryAssetId ? currentAssetIds.has(task.mediaLibraryAssetId) : false);
 
-    const asset: MediaLibrary.Asset = {
-      id: assetId,
-      filename: task.fileName || `${task.title || 'audio'}.mp3`,
-      uri: task.localFileUri!,
-      mediaType: 'audio' as any,
-      width: 0,
-      height: 0,
-      creationTime: task.createdAt || Date.now(),
-      modificationTime: task.completedAt || Date.now(),
-      duration: task.duration || 0,
-    };
+    const asset: MediaLibrary.Asset = buildDownloadAsset(task);
 
     if (!alreadyInLib) {
       newAssetsToAdd.push(asset);

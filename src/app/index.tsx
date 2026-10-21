@@ -46,7 +46,10 @@ import { compareAddedDate, type SortOption } from '../services/librarySort';
 import { normalizeSearchText } from '../services/searchUtils';
 import { useTranslation } from '../services/i18n';
 import { getCachedLibrary, saveCachedLibrary } from '../services/libraryStorage';
-import { syncCompletedDownloadsWithLibrary } from '../services/downloadManager';
+import {
+  mergeCompletedDownloadsIntoAssets,
+  syncCompletedDownloadsWithLibrary,
+} from '../services/downloadManager';
 
 interface SortItem {
   id: SortOption;
@@ -240,6 +243,7 @@ export default function LibraryScreen() {
   };
 
   const scanMedia = useCallback(async () => {
+    const scanStartedAt = Date.now();
     setIsScanning(true);
     setStatusMessage(t('library.permissions_checking'));
     try {
@@ -422,9 +426,16 @@ export default function LibraryScreen() {
 
       // Kütüphane listesini güncellemeden önce bekleyen arayüz etkileşimlerine yer aç
       await new Promise((r) => setTimeout(r, 0));
-      setLibrary(validAudio);
-      saveCachedLibrary(validAudio).catch(() => {});
-      setStatusMessage(t('library.songs_found', { count: validAudio.length }));
+
+      // Tarama sürerken tamamlanan indirmeler taramanın başlangıç anlık
+      // görüntüsünde yoktur. Store'u son kez okuyup listeye birleştir; aksi
+      // halde eski tarama sonucu yeni indirilmiş parçayı listeden düşürebilir.
+      const mergedAudio = mergeCompletedDownloadsIntoAssets(validAudio, {
+        completedAfter: scanStartedAt,
+      });
+      setLibrary(mergedAudio);
+      saveCachedLibrary(mergedAudio).catch(() => {});
+      setStatusMessage(t('library.songs_found', { count: mergedAudio.length }));
 
       // Background extraction of missing metadata & artworks (nefes payı ve tek seferlik toplu kayıt ile)
       (async () => {
@@ -432,7 +443,7 @@ export default function LibraryScreen() {
           // Açılışta kullanıcı arayüzünün 0ms anında tepki vermesi için 2 sn bekle
           await new Promise((r) => setTimeout(r, 2000));
           const currentMeta = useStore.getState().metadataMap;
-          const missing = validAudio.filter((a) => !currentMeta[a.id]);
+          const missing = mergedAudio.filter((a) => !currentMeta[a.id]);
           if (missing.length === 0) return;
           const accumulatedBatch: Record<string, any> = {};
           for (let i = 0; i < missing.length; i += 50) {
