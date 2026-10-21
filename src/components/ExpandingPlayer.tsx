@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Dimensions, Animated as RNAnimated, Easing as RNEasing } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -38,6 +38,27 @@ export function ExpandingPlayer() {
 
   const expandVal = useSharedValue(0);
   const rnExpandAnim = useMemo(() => new RNAnimated.Value(0), []);
+
+  // The fullscreen player tree is large and subscribes to playback progress.
+  // Keeping it mounted while it is collapsed means it keeps re-rendering (and
+  // recreating native Animated nodes) in the background. Mount it on demand
+  // and keep it around only for the closing animation.
+  const [shouldRenderFullscreen, setShouldRenderFullscreen] = useState(isFullscreenPlayerOpen);
+
+  useEffect(() => {
+    if (isFullscreenPlayerOpen) {
+      setShouldRenderFullscreen(true);
+      return;
+    }
+    if (!shouldRenderFullscreen) {
+      return;
+    }
+    const unmountTimer = setTimeout(
+      () => setShouldRenderFullscreen(false),
+      reduceMotion ? 0 : 320
+    );
+    return () => clearTimeout(unmountTimer);
+  }, [isFullscreenPlayerOpen, reduceMotion, shouldRenderFullscreen]);
 
   // "Player açılınca sözleri göster" tercihi: yalnızca player AÇILIRKEN uygulanır
   useEffect(() => {
@@ -148,9 +169,11 @@ export function ExpandingPlayer() {
           fullscreenAnimatedStyle,
         ]}
         pointerEvents={isFullscreenPlayerOpen ? 'auto' : 'none'}>
-        <ErrorBoundary>
-          <FullscreenPlayerModal expandAnim={rnExpandAnim} />
-        </ErrorBoundary>
+        {shouldRenderFullscreen ? (
+          <ErrorBoundary>
+            <FullscreenPlayerModal expandAnim={rnExpandAnim} />
+          </ErrorBoundary>
+        ) : null}
       </Animated.View>
     </>
   );

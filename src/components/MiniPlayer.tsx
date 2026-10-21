@@ -27,7 +27,7 @@ import { useTranslation } from '../services/i18n';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
-export function MiniPlayer({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
+function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
   const { t } = useTranslation();
   const player = useActivePlayer();
   const progress = useActiveProgress();
@@ -581,3 +581,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 });
+
+// Progress updates are handled internally; parent re-renders must not rebuild
+// the mini player and its marquee animations.
+export const MiniPlayer = React.memo(MiniPlayerImpl);

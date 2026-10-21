@@ -90,7 +90,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
 
 
-export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
+function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
   const {
@@ -1878,6 +1878,230 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
   const CARD_OFFSET = ARTWORK_SIZE + 24;
 
+  // IMPORTANT: Interpolations must be memoized.
+  //
+  // This component re-renders on every progress tick (4x/sec while playing).
+  // Creating `Animated.Value.interpolate(...)` inline on each render creates a
+  // new native Animated node graph every time. On long background playback
+  // this churns/leaks native nodes until Android aborts with OutOfMemoryError
+  // in NativeAnimatedNodesManager.createAnimatedNode.
+  const headerMorphStyle = useMemo(
+    () => ({ transform: [{ translateY: headerMorphY }] }),
+    [headerMorphY]
+  );
+
+  const middleMorphStyle = useMemo(
+    () => ({
+      transform: [
+        { scale: middleMorphScale },
+        { translateX: middleMorphX },
+        { translateY: middleMorphY },
+      ],
+    }),
+    [middleMorphScale, middleMorphX, middleMorphY]
+  );
+
+  const bottomMorphStyle = useMemo(
+    () => ({ transform: [{ translateY: bottomMorphY }] }),
+    [bottomMorphY]
+  );
+
+  const metaMorphStyle = useMemo(
+    () => ({
+      transform: [{ translateX: textMorphX }, { translateY: textMorphY }],
+    }),
+    [textMorphX, textMorphY]
+  );
+
+  const coverTransitionStyle = useMemo(
+    () => ({
+      opacity: coverTransition.interpolate({
+        inputRange: [0, 0.45, 1],
+        outputRange: [0, 0.2, 1],
+      }),
+      transform: [
+        {
+          scale: coverTransition.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.55, 1],
+          }),
+        },
+        {
+          translateY: coverTransition.interpolate({
+            inputRange: [0, 1],
+            outputRange: [90, 0],
+          }),
+        },
+      ],
+    }),
+    [coverTransition]
+  );
+
+  const prevArtworkTransitionStyle = useMemo(
+    () => ({
+      transform: [
+        {
+          translateX: panX.interpolate({
+            inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
+            outputRange: [-CARD_OFFSET * 2, -CARD_OFFSET, 0],
+            extrapolate: 'clamp',
+          }),
+        },
+        {
+          scale: panX.interpolate({
+            inputRange: [0, CARD_OFFSET],
+            outputRange: [0.82, 1],
+            extrapolate: 'clamp',
+          }),
+        },
+      ],
+      opacity: panX.interpolate({
+        inputRange: [0, CARD_OFFSET * 0.75],
+        outputRange: [0.25, 1],
+        extrapolate: 'clamp',
+      }),
+    }),
+    [panX, CARD_OFFSET]
+  );
+
+  const artworkTransitionStyle = useMemo(
+    () => ({
+      transform: [
+        { translateX: panX },
+        { scale: artworkScale },
+        {
+          scale: panX.interpolate({
+            inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
+            outputRange: [0.85, 1, 0.85],
+            extrapolate: 'clamp',
+          }),
+        },
+        {
+          rotate: panX.interpolate({
+            inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
+            outputRange: ['-5deg', '0deg', '5deg'],
+            extrapolate: 'clamp',
+          }),
+        },
+      ],
+      opacity: panX.interpolate({
+        inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
+        outputRange: [0.45, 1, 0.45],
+        extrapolate: 'clamp',
+      }),
+    }),
+    [panX, artworkScale, CARD_OFFSET]
+  );
+
+  const nextArtworkTransitionStyle = useMemo(
+    () => ({
+      transform: [
+        {
+          translateX: panX.interpolate({
+            inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
+            outputRange: [0, CARD_OFFSET, CARD_OFFSET * 2],
+            extrapolate: 'clamp',
+          }),
+        },
+        {
+          scale: panX.interpolate({
+            inputRange: [-CARD_OFFSET, 0],
+            outputRange: [1, 0.82],
+            extrapolate: 'clamp',
+          }),
+        },
+      ],
+      opacity: panX.interpolate({
+        inputRange: [-CARD_OFFSET * 0.75, 0],
+        outputRange: [1, 0.25],
+        extrapolate: 'clamp',
+      }),
+    }),
+    [panX, CARD_OFFSET]
+  );
+
+  const lyricsCardTransitionStyle = useMemo(
+    () => ({
+      opacity: lyricsTransition,
+      transform: [
+        {
+          scale: lyricsTransition.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.92, 1],
+          }),
+        },
+        { scale: artworkScale },
+      ],
+    }),
+    [lyricsTransition, artworkScale]
+  );
+
+  const queueCardTransitionStyle = useMemo(
+    () => ({
+      opacity: queueTransition,
+      transform: [
+        {
+          scale: queueTransition.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.92, 1],
+          }),
+        },
+        { scale: artworkScale },
+      ],
+    }),
+    [queueTransition, artworkScale]
+  );
+
+  const sleepTimerCardTransitionStyle = useMemo(
+    () => ({
+      opacity: sleepTimerTransition,
+      transform: [
+        {
+          scale: sleepTimerTransition.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.92, 1],
+          }),
+        },
+        { scale: artworkScale },
+      ],
+    }),
+    [sleepTimerTransition, artworkScale]
+  );
+
+  const connectCardTransitionStyle = useMemo(
+    () => ({
+      opacity: connectTransition,
+      transform: [
+        {
+          scale: connectTransition.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.92, 1],
+          }),
+        },
+        { scale: artworkScale },
+      ],
+    }),
+    [connectTransition, artworkScale]
+  );
+
+  const miniCoverTransitionStyle = useMemo(
+    () => ({
+      opacity: coverTransition.interpolate({
+        inputRange: [0, 1],
+        outputRange: [1, 0],
+      }),
+      transform: [
+        {
+          scale: coverTransition.interpolate({
+            inputRange: [0, 1],
+            outputRange: [1, 0.4],
+          }),
+        },
+      ],
+    }),
+    [coverTransition]
+  );
+
   useEffect(() => {
     // "Hareketleri azalt" açıkken duraklatma ölçek animasyonu uygulanmaz.
     Animated.spring(artworkScale, {
@@ -2235,7 +2459,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
       <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.glowColor, opacity: 0.14 }]} />
 
       {/* TOP HEADER & GRABBER (Morph animasyonu ile yukarıdan süzülür) */}
-      <Animated.View style={{ transform: [{ translateY: headerMorphY }] }}>
+      <Animated.View style={headerMorphStyle}>
         {/* Apple Music Style Top Grabber Bar */}
         <View style={styles.topGrabberContainer} {...headerPanResponder.panHandlers}>
           <View style={styles.topGrabberBar} />
@@ -2303,72 +2527,16 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
       {/* ORTA BÖLÜM: Kapak Fotoğrafı Carousel <---> Senkronize Şarkı Sözleri Değişimi */}
       <Animated.View
-        style={[
-          styles.middleContainer,
-          {
-            transform: [
-              { scale: middleMorphScale },
-              { translateX: middleMorphX },
-              { translateY: middleMorphY },
-            ],
-          },
-        ]}
+        style={[styles.middleContainer, middleMorphStyle]}
         {...artworkPanResponder.panHandlers}>
           {/* 1. Kapak Carousel Görünümü (Apple Music etkileşimli kenar önizlemeli geçiş) */}
           <Animated.View
-            style={[
-              styles.coverCenterBox,
-              {
-                opacity: coverTransition.interpolate({
-                  inputRange: [0, 0.45, 1],
-                  outputRange: [0, 0.2, 1],
-                }),
-                transform: [
-                  {
-                    scale: coverTransition.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.55, 1],
-                    }),
-                  },
-                  {
-                    translateY: coverTransition.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [90, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
+            style={[styles.coverCenterBox, coverTransitionStyle]}
             pointerEvents={(!isLyricsMode && !isQueueMode && !isSleepTimerMode && !isConnectMode) ? 'auto' : 'none'}>
             {/* Önceki Şarkı Kapağı (Soldan süzülen önizleme) */}
             {prevTrack ? (
               <Animated.View
-                style={[
-                  styles.neighborArtworkWrapper,
-                  {
-                    transform: [
-                      {
-                        translateX: panX.interpolate({
-                          inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
-                          outputRange: [-CARD_OFFSET * 2, -CARD_OFFSET, 0],
-                          extrapolate: 'clamp',
-                        }),
-                      },
-                      {
-                        scale: panX.interpolate({
-                          inputRange: [0, CARD_OFFSET],
-                          outputRange: [0.82, 1],
-                          extrapolate: 'clamp',
-                        }),
-                      },
-                    ],
-                    opacity: panX.interpolate({
-                      inputRange: [0, CARD_OFFSET * 0.75],
-                      outputRange: [0.25, 1],
-                      extrapolate: 'clamp',
-                    }),
-                  },
-                ]}
+                style={[styles.neighborArtworkWrapper, prevArtworkTransitionStyle]}
                 pointerEvents="none">
                 <TrackArtwork
                   uri={prevArtworkUri}
@@ -2383,34 +2551,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
             {/* Mevcut Şarkı Kapağı (Merkezde, kaydırılan ana kart) */}
             <Animated.View
-              style={[
-                styles.artworkWrapper,
-                {
-                  transform: [
-                    { translateX: panX },
-                    { scale: artworkScale },
-                    {
-                      scale: panX.interpolate({
-                        inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
-                        outputRange: [0.85, 1, 0.85],
-                        extrapolate: 'clamp',
-                      }),
-                    },
-                    {
-                      rotate: panX.interpolate({
-                        inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
-                        outputRange: ['-5deg', '0deg', '5deg'],
-                        extrapolate: 'clamp',
-                      }),
-                    },
-                  ],
-                  opacity: panX.interpolate({
-                    inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
-                    outputRange: [0.45, 1, 0.45],
-                    extrapolate: 'clamp',
-                  }),
-                },
-              ]}>
+              style={[styles.artworkWrapper, artworkTransitionStyle]}>
               <TouchableOpacity
                 activeOpacity={0.92}
                 onPress={toggleLyricsMode}>
@@ -2428,32 +2569,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
             {/* Sonraki Şarkı Kapağı (Sağdan süzülen önizleme) */}
             {nextTrack ? (
               <Animated.View
-                style={[
-                  styles.neighborArtworkWrapper,
-                  {
-                    transform: [
-                      {
-                        translateX: panX.interpolate({
-                          inputRange: [-CARD_OFFSET, 0, CARD_OFFSET],
-                          outputRange: [0, CARD_OFFSET, CARD_OFFSET * 2],
-                          extrapolate: 'clamp',
-                        }),
-                      },
-                      {
-                        scale: panX.interpolate({
-                          inputRange: [-CARD_OFFSET, 0],
-                          outputRange: [1, 0.82],
-                          extrapolate: 'clamp',
-                        }),
-                      },
-                    ],
-                    opacity: panX.interpolate({
-                      inputRange: [-CARD_OFFSET * 0.75, 0],
-                      outputRange: [1, 0.25],
-                      extrapolate: 'clamp',
-                    }),
-                  },
-                ]}
+                style={[styles.neighborArtworkWrapper, nextArtworkTransitionStyle]}
                 pointerEvents="none">
                 <TrackArtwork
                   uri={nextArtworkUri}
@@ -2469,21 +2585,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
           {/* 2. Senkronize Şarkı Sözleri Görünümü (Yumuşak solma ve büyüme geçişi) */}
           <Animated.View
-            style={[
-              styles.lyricsCardContainer,
-              {
-                opacity: lyricsTransition,
-                transform: [
-                  {
-                    scale: lyricsTransition.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.92, 1],
-                    }),
-                  },
-                  { scale: artworkScale },
-                ],
-              },
-            ]}
+            style={[styles.lyricsCardContainer, lyricsCardTransitionStyle]}
             pointerEvents={isLyricsMode ? 'auto' : 'none'}>
             <View style={styles.lyricsCardHeader}>
               <View style={[styles.lyricsSourceBadge, { backgroundColor: theme.surface }]}>
@@ -2680,21 +2782,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
           {/* 3. Çalma Sırası (Queue) Görünümü (Kapak yerine aynı boyutta yumuşak geçiş) */}
           <Animated.View
-            style={[
-              styles.queueCardContainer,
-              {
-                opacity: queueTransition,
-                transform: [
-                  {
-                    scale: queueTransition.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.92, 1],
-                    }),
-                  },
-                  { scale: artworkScale },
-                ],
-              },
-            ]}
+            style={[styles.queueCardContainer, queueCardTransitionStyle]}
             pointerEvents={isQueueMode ? 'auto' : 'none'}>
             <View style={styles.queueCardHeader}>
               <View style={[styles.queueSourceBadge, { backgroundColor: theme.surface }]}>
@@ -2762,21 +2850,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
           {/* 4. Uyku Zamanlayıcısı Görünümü (Kapak yerine aynı boyutta yumuşak geçiş) */}
           <Animated.View
-            style={[
-              styles.sleepTimerCardContainer,
-              {
-                opacity: sleepTimerTransition,
-                transform: [
-                  {
-                    scale: sleepTimerTransition.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.92, 1],
-                    }),
-                  },
-                  { scale: artworkScale },
-                ],
-              },
-            ]}
+            style={[styles.sleepTimerCardContainer, sleepTimerCardTransitionStyle]}
             pointerEvents={isSleepTimerMode ? 'auto' : 'none'}>
             <View style={styles.queueCardHeader}>
               <View style={[styles.queueSourceBadge, { backgroundColor: theme.surface }]}>
@@ -2936,21 +3010,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
           {/* 5. RunMusic Connect Görünümü (Kapak yerine aynı boyutta yumuşak geçiş) */}
           <Animated.View
-            style={[
-              styles.connectCardContainer,
-              {
-                opacity: connectTransition,
-                transform: [
-                  {
-                    scale: connectTransition.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.92, 1],
-                    }),
-                  },
-                  { scale: artworkScale },
-                ],
-              },
-            ]}
+            style={[styles.connectCardContainer, connectCardTransitionStyle]}
             pointerEvents={isConnectMode ? 'auto' : 'none'}>
             <View style={styles.queueCardHeader}>
               <View style={[styles.queueSourceBadge, { backgroundColor: theme.surface }]}>
@@ -3519,9 +3579,9 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
         </Animated.View>
 
         {/* ALT BÖLÜM: Apple Music Şarkı Bilgileri, Scrubber ve Kontroller */}
-        <Animated.View style={[styles.bottomSection, { transform: [{ translateY: bottomMorphY }] }]}>
+        <Animated.View style={[styles.bottomSection, bottomMorphStyle]}>
           {/* Şarkı Başlığı & Sanatçı */}
-          <Animated.View style={[styles.metaRow, { transform: [{ translateX: textMorphX }, { translateY: textMorphY }] }]}>
+          <Animated.View style={[styles.metaRow, metaMorphStyle]}>
             <View style={{ flex: 1, marginRight: 14 }}>
               <MarqueeText text={displayTitle || ''} style={styles.trackTitle} />
               <MarqueeText text={displayArtist || ''} style={styles.trackArtist} />
@@ -3529,20 +3589,7 @@ export function FullscreenPlayerModal({ expandAnim }: { expandAnim?: Animated.Va
 
             {/* Sözler, Çalma Sırası veya Uyku Zamanlayıcısı Modundayken Sağ Tarafa Animasyonla Yerleşen Küçük Kapak */}
             <Animated.View
-              style={{
-                opacity: coverTransition.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [1, 0],
-                }),
-                transform: [
-                  {
-                    scale: coverTransition.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [1, 0.4],
-                    }),
-                  },
-                ],
-              }}
+              style={miniCoverTransitionStyle}
               pointerEvents={(!isLyricsMode && !isQueueMode && !isSleepTimerMode && !isConnectMode) ? 'none' : 'auto'}>
               <TouchableOpacity
                 activeOpacity={0.8}
@@ -5110,3 +5157,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
 });
+
+// Parent re-renders (progress ticks in ExpandingPlayer) must not re-render the
+// entire fullscreen player tree. Internal store subscriptions still update it.
+export const FullscreenPlayerModal = React.memo(FullscreenPlayerModalImpl);

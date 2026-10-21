@@ -1,6 +1,7 @@
 import { useProgress } from 'react-native-track-player';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
+import { useIsAppActive } from './useIsAppActive';
 
 export interface ActiveProgress {
   position: number;
@@ -26,7 +27,14 @@ export function useActiveProgress(): ActiveProgress {
   );
 
   const optimisticTrack = useOptimisticPlayerStore((s) => s.optimisticTrack);
-  const localProgress = useProgress(isRemote ? 3000 : 250);
+  const isAppActive = useIsAppActive();
+
+  // The player UI is not visible in the background, so there is no reason to
+  // re-render the (large) fullscreen player 4 times per second. Besides
+  // wasting CPU, that churn recreates legacy Animated interpolation nodes and
+  // can exhaust the native animated node heap over long background sessions.
+  const updateInterval = isAppActive ? (isRemote ? 3000 : 250) : 30000;
+  const localProgress = useProgress(updateInterval);
   const interpolatedRemotePosition = useRemoteConnectStore((s) => s.interpolatedPosition);
   const remoteDuration = useRemoteConnectStore(
     (s) => s.remoteState.activeTrack?.duration ?? 0
