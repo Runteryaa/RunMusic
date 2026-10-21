@@ -1506,7 +1506,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   const adjustLyricsOffset = useCallback(
     (delta: number) => {
-      if (!lyricsOffsetKey || player.isRemote) return;
+      if (lyricsOffsetKeys.length === 0 || player.isRemote) return;
       const currentOffsets = useStore.getState().lyricsOffsets;
       let current = 0;
       for (const key of lyricsOffsetKeys) {
@@ -1516,9 +1516,15 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
           break;
         }
       }
-      setLyricsOffset(lyricsOffsetKey, current + delta);
+      // Aynı ofseti kanonik kimlik, kuyruk kimliği ve URL için birlikte yaz;
+      // böylece kütüphane taraması sırasında anahtar değişse bile değer korunur
+      // ve sıfırlama eski bir yedek anahtardan geri gelmez.
+      const next = current + delta;
+      for (const key of lyricsOffsetKeys) {
+        setLyricsOffset(key, next);
+      }
     },
-    [lyricsOffsetKey, lyricsOffsetKeys, player.isRemote, setLyricsOffset]
+    [lyricsOffsetKeys, player.isRemote, setLyricsOffset]
   );
 
   const resetLyricsOffset = useCallback(() => {
