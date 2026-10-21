@@ -540,7 +540,18 @@ export async function syncCompletedDownloadsWithLibrary(): Promise<MediaLibrary.
   const currentAssetIds = new Set(currentAssets.map((a) => a.id));
   const currentAssetUris = new Set(currentAssets.map((a) => a.uri));
 
-  const validTasks = checkedResults.filter((t): t is DownloadTask => t !== null);
+  // A task can be cancelled or removed while its file check is in flight.
+  // Only tasks that are still completed may be inserted into the library.
+  const latestTasksById = new Map(
+    useDownloadStore.getState().tasks.map((task) => [task.id, task])
+  );
+  const validTasks = checkedResults
+    .filter((task): task is DownloadTask => task !== null)
+    .map((task) => latestTasksById.get(task.id))
+    .filter(
+      (task): task is DownloadTask =>
+        !!task && task.status === 'completed' && !!task.localFileUri
+    );
   const newAssetsToAdd: MediaLibrary.Asset[] = [];
   const metaBatch: Record<string, any> = {};
 
