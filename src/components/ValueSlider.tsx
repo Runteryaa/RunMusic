@@ -33,6 +33,8 @@ export interface ValueSliderProps {
   trackColor?: string;
   style?: StyleProp<ViewStyle>;
   onChange: (value: number) => void;
+  /** Kaydırma bittiğinde (veya erişilebilirlik adımında) son değeri bildirir. */
+  onSlidingComplete?: (value: number) => void;
 }
 
 /**
@@ -51,18 +53,21 @@ export function ValueSlider({
   trackColor = '#3f3f46',
   style,
   onChange,
+  onSlidingComplete,
 }: ValueSliderProps) {
   const [width, setWidth] = useState(0);
   const widthRef = useRef(0);
   const valueRef = useRef(value);
   const configRef = useRef({ min, max, step, disabled });
   const onChangeRef = useRef(onChange);
+  const onSlidingCompleteRef = useRef(onSlidingComplete);
 
   useEffect(() => {
     valueRef.current = value;
     configRef.current = { min, max, step, disabled };
     onChangeRef.current = onChange;
-  }, [value, min, max, step, disabled, onChange]);
+    onSlidingCompleteRef.current = onSlidingComplete;
+  }, [value, min, max, step, disabled, onChange, onSlidingComplete]);
 
   const updateFromX = useCallback((x: number) => {
     const currentWidth = widthRef.current;
@@ -77,19 +82,29 @@ export function ValueSlider({
     onChangeRef.current(next);
   }, []);
 
-  const adjust = useCallback((direction: 1 | -1) => {
-    const config = configRef.current;
-    if (config.disabled) return;
-    const next = quantize(
-      valueRef.current + direction * config.step,
-      config.min,
-      config.max,
-      config.step
-    );
-    if (Math.abs(next - valueRef.current) < 0.0001) return;
-    valueRef.current = next;
-    onChangeRef.current(next);
+  const finish = useCallback(() => {
+    if (configRef.current.disabled) return;
+    onSlidingCompleteRef.current?.(valueRef.current);
   }, []);
+
+  const adjust = useCallback(
+    (direction: 1 | -1) => {
+      const config = configRef.current;
+      if (config.disabled) return;
+      const next = quantize(
+        valueRef.current + direction * config.step,
+        config.min,
+        config.max,
+        config.step
+      );
+      if (Math.abs(next - valueRef.current) < 0.0001) return;
+      valueRef.current = next;
+      onChangeRef.current(next);
+      // Erişilebilirlikte her adım ayrı bir tamamlanmış değişikliktir.
+      onSlidingCompleteRef.current?.(next);
+    },
+    []
+  );
 
   const panResponder = useMemo(
     () =>
@@ -103,10 +118,10 @@ export function ValueSlider({
           updateFromX(event.nativeEvent.locationX);
         },
         onPanResponderTerminationRequest: () => false,
-        onPanResponderRelease: () => {},
-        onPanResponderTerminate: () => {},
+        onPanResponderRelease: finish,
+        onPanResponderTerminate: finish,
       }),
-    [updateFromX]
+    [finish, updateFromX]
   );
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {

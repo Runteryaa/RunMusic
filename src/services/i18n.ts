@@ -218,7 +218,8 @@ export const translations = {
     audioEffects: {
       title: 'Ses Efektleri',
       subtitle: 'Ekolayzer ve ReplayGain ayarları',
-      live_hint: 'Değişiklikler çalma sırasında anında uygulanır.',
+      live_hint:
+        'Değişiklikler çalma sırasında uygulanır; kaydırıcılar bırakıldığında etkinleşir.',
       equalizer_section: 'Ekolayzer',
       equalizer_enable: 'Ekolayzeri etkinleştir',
       equalizer_hint: "Beş bantlı ses tonu ayarı. Yalnızca Android'de kullanılabilir.",
@@ -726,7 +727,8 @@ export const translations = {
     audioEffects: {
       title: 'Audio Effects',
       subtitle: 'Equalizer and ReplayGain settings',
-      live_hint: 'Changes apply instantly during playback.',
+      live_hint:
+        'Changes apply during playback; slider values take effect when released.',
       equalizer_section: 'Equalizer',
       equalizer_enable: 'Enable equalizer',
       equalizer_hint: 'Five-band tone control. Available on Android only.',

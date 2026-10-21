@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
   Platform,
@@ -41,6 +41,23 @@ export default function AudioEffectsScreen() {
   const setAudioEffects = useStore((state) => state.setAudioEffects);
   const resetAudioEffects = useStore((state) => state.resetAudioEffects);
 
+  // Kaydırıcılar sürüklenirken yalnızca yerel taslak güncellenir. Böylece her
+  // pikselde büyük AsyncStorage kaydı yazılmaz; ses ayarı parmak kalkınca uygulanır.
+  const [draftBands, setDraftBands] = useState<number[]>(audioEffects.equalizerBands);
+  const [draftPreamp, setDraftPreamp] = useState(audioEffects.preampDb);
+  const draftBandsRef = useRef(audioEffects.equalizerBands);
+  const draftPreampRef = useRef(audioEffects.preampDb);
+
+  useEffect(() => {
+    draftBandsRef.current = audioEffects.equalizerBands;
+    setDraftBands(audioEffects.equalizerBands);
+  }, [audioEffects.equalizerBands]);
+
+  useEffect(() => {
+    draftPreampRef.current = audioEffects.preampDb;
+    setDraftPreamp(audioEffects.preampDb);
+  }, [audioEffects.preampDb]);
+
   const equalizerSupported = Platform.OS === 'android' && isNativeAudioEffectsAvailable();
   const nativeUnavailable = Platform.OS === 'android' && !isNativeAudioEffectsAvailable();
   const iosFallback = Platform.OS === 'ios';
@@ -65,13 +82,36 @@ export default function AudioEffectsScreen() {
     [t]
   );
 
-  const updateBand = useCallback(
+  const updateBand = useCallback((index: number, value: number) => {
+    const bands = [...draftBandsRef.current];
+    bands[index] = value;
+    draftBandsRef.current = bands;
+    setDraftBands(bands);
+  }, []);
+
+  const commitBand = useCallback(
     (index: number, value: number) => {
-      const bands = [...audioEffects.equalizerBands];
+      const bands = [...draftBandsRef.current];
       bands[index] = value;
+      draftBandsRef.current = bands;
+      setDraftBands(bands);
       setAudioEffects({ equalizerBands: bands });
     },
-    [audioEffects.equalizerBands, setAudioEffects]
+    [setAudioEffects]
+  );
+
+  const updatePreamp = useCallback((value: number) => {
+    draftPreampRef.current = value;
+    setDraftPreamp(value);
+  }, []);
+
+  const commitPreamp = useCallback(
+    (value: number) => {
+      draftPreampRef.current = value;
+      setDraftPreamp(value);
+      setAudioEffects({ preampDb: value });
+    },
+    [setAudioEffects]
   );
 
   const resetEqualizer = useCallback(() => {
@@ -156,7 +196,7 @@ export default function AudioEffectsScreen() {
 
           <View style={styles.sliders}>
             {bandLabels.map((label, index) => {
-              const value = audioEffects.equalizerBands[index] ?? 0;
+              const value = draftBands[index] ?? 0;
               return (
                 <View key={label} style={styles.sliderBlock}>
                   <View style={styles.sliderHeader}>
@@ -173,6 +213,7 @@ export default function AudioEffectsScreen() {
                     disabled={!equalizerSupported || !audioEffects.equalizerEnabled}
                     accentColor={theme.primary}
                     onChange={(next) => updateBand(index, next)}
+                    onSlidingComplete={(next) => commitBand(index, next)}
                   />
                 </View>
               );
@@ -249,16 +290,17 @@ export default function AudioEffectsScreen() {
             <View style={styles.sliderHeader}>
               <Text style={styles.sliderLabel}>{t('audioEffects.preamp')}</Text>
               <Text style={[styles.sliderValue, { color: theme.primary }]}>
-                {formatDb(audioEffects.preampDb)}
+                {formatDb(draftPreamp)}
               </Text>
             </View>
             <ValueSlider
-              value={audioEffects.preampDb}
+              value={draftPreamp}
               min={PREAMP_MIN_DB}
               max={PREAMP_MAX_DB}
               step={0.5}
               accentColor={theme.primary}
-              onChange={(value) => setAudioEffects({ preampDb: value })}
+              onChange={updatePreamp}
+              onSlidingComplete={commitPreamp}
             />
             <Text style={styles.rowHint}>{t('audioEffects.preamp_hint')}</Text>
           </View>
