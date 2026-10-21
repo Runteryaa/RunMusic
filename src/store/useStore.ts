@@ -12,6 +12,8 @@ import { STORE_STORAGE_KEY, resilientStorage } from '../services/persistStorage'
 import {
   findLyricsInCache,
   normalizeLyricsCache,
+  normalizeLyricsOffsetValue,
+  normalizeLyricsOffsets,
   resetLegacyUnplayableMarks,
   type LyricsCacheEntry,
 } from '../services/persistSanitize';
@@ -161,6 +163,13 @@ interface AppState {
   clearLyricsCache: () => void;
 
   /**
+   * Parça başına şarkı sözü zaman ofseti (saniye, kanonik parça kimliğiyle).
+   * Pozitif değer sözleri geciktirir; negatif değer öne alır.
+   */
+  lyricsOffsets: Record<string, number>;
+  setLyricsOffset: (trackId: string, offsetSeconds: number) => void;
+
+  /**
    * Manuel "Sırada" (Up Next) kuyruğu: parça kimlikleri, çalınma sırasına göre.
    *
    * Bu öğeler kütüphane bağlamından AYRI tutulur; bağlam devam etmeden önce
@@ -207,7 +216,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 12;
+const PERSIST_VERSION = 13;
 
 export const useStore = create<AppState>()(
   persist(
@@ -273,6 +282,24 @@ export const useStore = create<AppState>()(
       // `findLyricsInCache` içinde yapılır (paylaşılan, test edilebilir mantık).
       getLyricsFromCache: (params) => findLyricsInCache(get().lyricsCache, getLyricsCacheKeys(params)),
       clearLyricsCache: () => set({ lyricsCache: {} }),
+
+      lyricsOffsets: {},
+      setLyricsOffset: (trackId, offsetSeconds) => {
+        const key = String(trackId || '').trim();
+        if (!key) return;
+        const value = normalizeLyricsOffsetValue(offsetSeconds);
+        set((state) => {
+          const current = state.lyricsOffsets[key];
+          if (value === 0) {
+            if (current === undefined) return state;
+            const next = { ...state.lyricsOffsets };
+            delete next[key];
+            return { lyricsOffsets: next };
+          }
+          if (current === value) return state;
+          return { lyricsOffsets: { ...state.lyricsOffsets, [key]: value } };
+        });
+      },
 
       upNextIds: [],
       contextIds: [],
@@ -530,11 +557,13 @@ export const useStore = create<AppState>()(
           },
           isSmartShuffle: Boolean(incoming.isSmartShuffle),
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),
+          lyricsOffsets: normalizeLyricsOffsets(incoming.lyricsOffsets),
         };
 
         console.log(
           `[persist] şema migrasyonu: v${fromVersion} -> v${PERSIST_VERSION} ` +
-            `(${Object.keys(migrated.lyricsCache).length} söz anahtarı normalize edildi)`
+            `(${Object.keys(migrated.lyricsCache).length} söz anahtarı, ` +
+            `${Object.keys(migrated.lyricsOffsets).length} söz ofseti normalize edildi)`
         );
         return migrated;
       },
@@ -550,6 +579,8 @@ export const useStore = create<AppState>()(
         metadataMap: state.metadataMap,
         // Söz önbelleği tekilleştirilmiş + hafifletilmiş olarak yazılır.
         lyricsCache: normalizeLyricsCache(state.lyricsCache),
+        // Parça başına söz ofsetleri; 0 ve geçersiz değerler yazılmaz.
+        lyricsOffsets: normalizeLyricsOffsets(state.lyricsOffsets),
         // Kuyruk modeli: bağlam sırası + manuel "Sırada" listesi (yalnızca kimlikler).
         contextIds: state.contextIds,
         upNextIds: state.upNextIds,

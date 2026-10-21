@@ -49,6 +49,44 @@ export function resetLegacyUnplayableMarks(params: {
   };
 }
 
+/** Şarkı sözü ofseti için izin verilen en büyük sapma (saniye). */
+export const MAX_LYRICS_OFFSET_SECONDS = 30;
+
+/**
+ * Parça başına söz ofsetini normalize eder.
+ *
+ * Pozitif değer sözleri geciktirir (sözler geç gösterilir), negatif değer
+ * sözleri öne alır. Değer 0.1 saniye hassasiyetle yuvarlanır ve makul bir
+ * aralığa sıkıştırılır; geçersiz girdiler 0 kabul edilir.
+ */
+export function normalizeLyricsOffsetValue(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  const clamped = Math.max(
+    -MAX_LYRICS_OFFSET_SECONDS,
+    Math.min(MAX_LYRICS_OFFSET_SECONDS, value)
+  );
+  return Math.round(clamped * 10) / 10;
+}
+
+/**
+ * Kalıcı ofset haritasını güvenli hale getirir.
+ *
+ * Boş/geçersiz anahtarlar ve 0 değerleri haritada tutulmaz; böylece şarkı
+ * başına yalnızca gerçekten ayarlanmış offsetler saklanır.
+ */
+export function normalizeLyricsOffsets(input: unknown): Record<string, number> {
+  const result: Record<string, number> = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return result;
+
+  for (const [key, rawValue] of Object.entries(input as Record<string, unknown>)) {
+    if (!key.trim()) continue;
+    const value = normalizeLyricsOffsetValue(rawValue);
+    if (value !== 0) result[key] = value;
+  }
+
+  return result;
+}
+
 /** UTF-8 bayt uzunluğu. TextEncoder yoksa kod noktası üzerinden hesaplar. */
 export function byteLength(value: string): number {
   try {

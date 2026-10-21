@@ -89,6 +89,12 @@ import { Swipeable } from 'react-native-gesture-handler';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
 
+/** Söz ofsetini işaretli, tek ondalıklı saniye olarak gösterir. */
+function formatLyricsOffset(value: number): string {
+  const normalized = Math.abs(value) < 0.05 ? 0 : value;
+  return `${normalized > 0 ? '+' : ''}${normalized.toFixed(1)}s`;
+}
+
 
 function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
   const insets = useSafeAreaInsets();
@@ -319,7 +325,9 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const artworkMap = useStore((s) => s.artworkMap);
   const metadataMap = useStore((s) => s.metadataMap);
   const lyricsCache = useStore((s) => s.lyricsCache);
+  const lyricsOffsets = useStore((s) => s.lyricsOffsets);
   const setLyrics = useStore((s) => s.setLyrics);
+  const setLyricsOffset = useStore((s) => s.setLyricsOffset);
   const getLyricsFromCache = useStore((s) => s.getLyricsFromCache);
   const hideTrack = useStore((s) => s.hideTrack);
   const isHydrated = useStore((s) => s.isHydrated);
@@ -342,10 +350,12 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const [customTimerMinutes, setCustomTimerMinutes] = useState('');
   const [sleepTimerRemaining, setSleepTimerRemaining] = useState<string>('');
   const [isLyricsAutoScrollPaused, setIsLyricsAutoScrollPaused] = useState(false);
+  const [isLyricsOffsetOpen, setIsLyricsOffsetOpen] = useState(false);
 
   useEffect(() => {
     setIsLyricsAutoScrollPaused(false);
-  }, [activeTrack?.id]);
+    setIsLyricsOffsetOpen(false);
+  }, [activeTrack?.id, player.isRemote]);
 
   // Sleep Timer store
   const isSleepTimerActive = useSleepTimerStore((s) => s.isActive);
@@ -1463,6 +1473,61 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     return parsedLines.some((l) => !!l.words && l.words.length > 0);
   }, [currentLyrics, parsedLines]);
 
+  /**
+   * Söz ofseti parça başına saklanır. Kanonik kütüphane kimliği önceliklidir;
+   * kütüphane henüz taranmadıysa aktif kuyruk kimliği/URL'si yedek olarak
+   * kullanılır. Eski kayıtlarda kalan yedek anahtarlar da okunur.
+   */
+  const lyricsOffsetKeys = useMemo(() => {
+    if (!localActiveTrack) return [] as string[];
+    const keys = [
+      resolveTrackId(localActiveTrack, allAssets),
+      String(localActiveTrack.id || ''),
+      String(localActiveTrack.url || ''),
+    ]
+      .map((key) => key.trim())
+      .filter(Boolean);
+    return Array.from(new Set(keys));
+  }, [localActiveTrack, allAssets]);
+  const lyricsOffsetKey = lyricsOffsetKeys[0] || '';
+
+  const lyricsOffset = useMemo(() => {
+    if (!localActiveTrack || player.isRemote) return 0;
+    for (const key of lyricsOffsetKeys) {
+      const value = lyricsOffsets[key];
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+    }
+    return 0;
+  }, [localActiveTrack, lyricsOffsetKeys, lyricsOffsets, player.isRemote]);
+  /** Uzak oynatımda ofset yerel cihaza uygulanmaz. */
+  const appliedLyricsOffset = player.isRemote ? 0 : lyricsOffset;
+
+  const hasLyricsContent = parsedLines.length > 0 || !!currentLyrics?.plainLyrics;
+
+  const adjustLyricsOffset = useCallback(
+    (delta: number) => {
+      if (!lyricsOffsetKey || player.isRemote) return;
+      const currentOffsets = useStore.getState().lyricsOffsets;
+      let current = 0;
+      for (const key of lyricsOffsetKeys) {
+        const value = currentOffsets[key];
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          current = value;
+          break;
+        }
+      }
+      setLyricsOffset(lyricsOffsetKey, current + delta);
+    },
+    [lyricsOffsetKey, lyricsOffsetKeys, player.isRemote, setLyricsOffset]
+  );
+
+  const resetLyricsOffset = useCallback(() => {
+    if (player.isRemote) return;
+    for (const key of lyricsOffsetKeys) {
+      setLyricsOffset(key, 0);
+    }
+  }, [lyricsOffsetKeys, player.isRemote, setLyricsOffset]);
+
   const remoteLyrics = player.lyrics;
   const remoteLrclibId = remoteLyrics?.lrclibId;
   const remoteGeniusId = remoteLyrics?.geniusId;
@@ -1629,16 +1694,20 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [player.isRemote, localActiveTrack?.id, localActiveTrack?.url, displayTitle, displayArtist, isHydrated, autoFetchLyrics]);
 
+  // Ofset, söz zaman çizelgesini kaydırır. Pozitif değer sözleri geciktirir,
+  // bu yüzden karşılaştırmada ses konumundan ofset çıkarılır. Negatif değer
+  // ilk satırın bile öne alınmasına izin vermek için alt sınır uygulanmaz.
+  const lyricPosition = progress.position - appliedLyricsOffset;
+
   const activeLineIndex = useMemo(() => {
     if (!parsedLines || parsedLines.length === 0) return -1;
-    const pos = progress.position;
     for (let i = parsedLines.length - 1; i >= 0; i--) {
-      if (pos >= parsedLines[i].time) {
+      if (lyricPosition >= parsedLines[i].time) {
         return i;
       }
     }
     return -1;
-  }, [parsedLines, progress.position]);
+  }, [parsedLines, lyricPosition]);
 
   const toggleLyricsAutoScroll = useCallback(() => {
     setIsLyricsAutoScrollPaused((prev) => {
@@ -1724,7 +1793,13 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
             duration,
             Math.max(0, snapshot.position + elapsed)
           );
-          const targetY = (estimatedPosition / duration) * maxScroll;
+          // Düz metinde satır zamanı olmadığı için ofseti orantılı kaydırma
+          // konumuna uyguluyoruz; pozitif değer kaydırmayı geciktirir.
+          const adjustedPosition = Math.min(
+            duration,
+            Math.max(0, estimatedPosition - appliedLyricsOffset)
+          );
+          const targetY = (adjustedPosition / duration) * maxScroll;
 
           if (lastY < 0 || Math.abs(targetY - lastY) >= 0.5) {
             lastY = targetY;
@@ -1748,6 +1823,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     isLyricsAutoScrollPaused,
     currentLyrics?.syncedLyrics,
     currentLyrics?.plainLyrics,
+    appliedLyricsOffset,
   ]);
 
   // Sadece parça kimliği (ID/URL) gerçekten değiştiğinde düz metin kaydırma pozisyonunu sıfırla
@@ -2641,7 +2717,9 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                   color={hasWordSync ? '#10b981' : theme.primary}
                   style={{ marginRight: 4 }}
                 />
-                <Text style={[styles.lyricsSourceText, { color: hasWordSync ? '#10b981' : theme.textAccent }]}>
+                <Text
+                  numberOfLines={1}
+                  style={[styles.lyricsSourceText, { color: hasWordSync ? '#10b981' : theme.textAccent }]}>
                   {hasWordSync
                     ? 'LRCLIB (Word Sync)'
                     : currentLyrics?.syncedLyrics || parsedLines.length > 0
@@ -2654,7 +2732,29 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                {(parsedLines.length > 0 || currentLyrics?.plainLyrics) ? (
+                {hasLyricsContent && !player.isRemote && lyricsOffsetKey ? (
+                  <TouchableOpacity
+                    style={[styles.lyricsActionBtn, { backgroundColor: theme.surface }]}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t('player.lyrics_offset')} ${formatLyricsOffset(appliedLyricsOffset)}`}
+                    onPress={() => setIsLyricsOffsetOpen(true)}
+                    hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+                    {appliedLyricsOffset !== 0 ? (
+                      <Text
+                        style={[
+                          styles.lyricsActionBtnText,
+                          { color: theme.primary, marginLeft: 0, fontVariant: ['tabular-nums'] },
+                        ]}>
+                        {formatLyricsOffset(appliedLyricsOffset)}
+                      </Text>
+                    ) : (
+                      <Ionicons name="time-outline" size={12} color="rgba(255, 255, 255, 0.65)" />
+                    )}
+                  </TouchableOpacity>
+                ) : null}
+
+                {hasLyricsContent ? (
                   <TouchableOpacity
                     style={[
                       styles.lyricsActionBtn,
@@ -2717,7 +2817,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                   return (
                     <TouchableOpacity
                       activeOpacity={0.7}
-                      onPress={() => player.seekTo(item.time)}
+                      onPress={() => player.seekTo(Math.max(0, item.time + appliedLyricsOffset))}
                       style={[styles.lyricRow, isActive && styles.lyricRowActive]}>
                       {isActive && item.words && item.words.length > 0 ? (
                         <Text
@@ -2727,7 +2827,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                             { textShadowColor: theme.glowColor },
                           ]}>
                           {item.words.map((word, wIdx) => {
-                            const isSung = progress.position >= word.time;
+                            const isSung = lyricPosition >= word.time;
                             const displayWord =
                               wIdx < item.words!.length - 1 &&
                               !word.text.endsWith(' ') &&
@@ -3970,6 +4070,81 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
           </Pressable>
         </Modal>
 
+        {/* Şarkı Sözü Ofseti Modalı */}
+        <Modal
+          visible={isLyricsOffsetOpen && !player.isRemote}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setIsLyricsOffsetOpen(false)}>
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => setIsLyricsOffsetOpen(false)}>
+            <Pressable
+              style={[styles.lyricsOffsetModalBox, { borderColor: theme.border }]}
+              onPress={(e) => e.stopPropagation()}>
+              <View style={styles.lyricsOffsetHeader}>
+                <View style={styles.lyricsOffsetTitleRow}>
+                  <Ionicons name="time-outline" size={20} color={theme.primary} />
+                  <Text style={styles.lyricsOffsetTitle}>{t('player.lyrics_offset')}</Text>
+                </View>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={t('player.lyrics_offset_close')}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  onPress={() => setIsLyricsOffsetOpen(false)}>
+                  <Ionicons name="close" size={22} color="#a1a1aa" />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.lyricsOffsetValue, { color: theme.primary }]}>
+                {formatLyricsOffset(lyricsOffset)}
+              </Text>
+              <Text style={styles.lyricsOffsetHint}>{t('player.lyrics_offset_hint')}</Text>
+              <Text style={styles.lyricsOffsetSignHint}>{t('player.lyrics_offset_sign_hint')}</Text>
+
+              <View style={styles.lyricsOffsetGrid}>
+                {[-1, -0.5, -0.1, 0.1, 0.5, 1].map((delta) => (
+                  <TouchableOpacity
+                    key={`offset-${delta}`}
+                    activeOpacity={0.7}
+                    onPress={() => adjustLyricsOffset(delta)}
+                    style={[
+                      styles.lyricsOffsetAdjustBtn,
+                      { backgroundColor: theme.surface, borderColor: theme.border },
+                    ]}>
+                    <Text style={[styles.lyricsOffsetAdjustText, { color: theme.textAccent }]}>
+                      {formatLyricsOffset(delta)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <TouchableOpacity
+                activeOpacity={0.7}
+                disabled={lyricsOffset === 0}
+                onPress={resetLyricsOffset}
+                style={[
+                  styles.lyricsOffsetResetBtn,
+                  { backgroundColor: theme.surface, borderColor: theme.border },
+                  lyricsOffset === 0 && styles.lyricsOffsetResetBtnDisabled,
+                ]}>
+                <Ionicons
+                  name="refresh"
+                  size={15}
+                  color={lyricsOffset === 0 ? 'rgba(255, 255, 255, 0.35)' : theme.primary}
+                />
+                <Text
+                  style={[
+                    styles.lyricsOffsetResetText,
+                    { color: lyricsOffset === 0 ? 'rgba(255, 255, 255, 0.35)' : theme.primary },
+                  ]}>
+                  {t('player.lyrics_offset_reset')}
+                </Text>
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
         {/* Seçenekler Modalı */}
         <Modal
           visible={isOptionsModalOpen}
@@ -4269,11 +4444,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
+    flexShrink: 1,
+    minWidth: 0,
   },
   lyricsSourceText: {
     color: 'rgba(255, 255, 255, 0.85)',
     fontSize: 11,
     fontWeight: '600',
+    flexShrink: 1,
   },
   lyricsActionBtn: {
     flexDirection: 'row',
@@ -4299,6 +4477,87 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     marginLeft: 3,
+  },
+  lyricsOffsetModalBox: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#18181b',
+    borderRadius: 22,
+    borderWidth: 1,
+    padding: 20,
+  },
+  lyricsOffsetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  lyricsOffsetTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  lyricsOffsetTitle: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+    marginLeft: 8,
+  },
+  lyricsOffsetValue: {
+    fontSize: 42,
+    fontWeight: '800',
+    letterSpacing: -1,
+    textAlign: 'center',
+    marginTop: 14,
+    fontVariant: ['tabular-nums'],
+  },
+  lyricsOffsetHint: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginTop: 6,
+  },
+  lyricsOffsetSignHint: {
+    color: '#a1a1aa',
+    fontSize: 11,
+    lineHeight: 16,
+    textAlign: 'center',
+    marginTop: 3,
+  },
+  lyricsOffsetGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 18,
+  },
+  lyricsOffsetAdjustBtn: {
+    width: '31%',
+    height: 46,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lyricsOffsetAdjustText: {
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  lyricsOffsetResetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 12,
+  },
+  lyricsOffsetResetBtnDisabled: {
+    opacity: 0.6,
+  },
+  lyricsOffsetResetText: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginLeft: 6,
   },
   lyricsListContent: {
     paddingVertical: 24,

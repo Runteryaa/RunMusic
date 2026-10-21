@@ -10,12 +10,13 @@
  *
  * Çalıştırma:
  *   npx tsc scripts/verify-persist-migration.ts --outDir .tmp-verify \
- *     --module commonjs --target es2020 --moduleResolution node --skipLibCheck
+ *     --module commonjs --target es2020 --moduleResolution bundler --skipLibCheck
  *   node .tmp-verify/scripts/verify-persist-migration.js
  */
 
 import {
   normalizeLyricsCache,
+  normalizeLyricsOffsets,
   findLyricsInCache,
   reducePersistedState,
   resetLegacyUnplayableMarks,
@@ -314,6 +315,7 @@ const fullPersistedState = {
     Array.from({ length: 200 }, (_, i) => [`asset-${i}`, `file:///art/${i}.jpg`])
   ),
   metadataMap: { 'asset-0': { title: 'T', artist: 'A', album: 'Al', artwork: 'x' } },
+  lyricsOffsets: { 'asset-0': 0.7, 'asset-1': -0.4 },
   lyricsCache: legacyCache as Record<string, LyricsCacheEntry>,
 };
 
@@ -345,6 +347,10 @@ check(
 check(
   'meta veriler (metadataMap) korundu',
   JSON.stringify(reduced.metadataMap) === JSON.stringify(fullPersistedState.metadataMap)
+);
+check(
+  'şarkı sözü ofsetleri (lyricsOffsets) korundu',
+  JSON.stringify(reduced.lyricsOffsets) === JSON.stringify(fullPersistedState.lyricsOffsets)
 );
 
 section('8) Küçük kayıtlar hiç kırpılmıyor');
@@ -620,6 +626,56 @@ check(
     hiddenTrackIds: ['manual-only'],
     unplayableTrackIds: [],
   }).hiddenTrackIds[0] === 'manual-only'
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+section('18) v12 -> v13 migrasyonu ve şarkı sözü ofsetleri');
+
+const offsetsFromV12 = normalizeLyricsOffsets(undefined);
+check(
+  'eski kayıtlarda lyricsOffsets boş nesne olur',
+  Object.keys(offsetsFromV12).length === 0
+);
+
+const normalizedOffsets = normalizeLyricsOffsets({
+  'asset-1': 0.4,
+  'asset-2': -1.26,
+  'asset-zero': 0,
+  'asset-invalid': '0.5',
+  'asset-nan': NaN,
+  'asset-over': 90,
+  'asset-under': -90,
+  '': 1.5,
+  '   ': -0.5,
+});
+
+check(
+  'geçerli ofset korunuyor',
+  normalizedOffsets['asset-1'] === 0.4,
+  `değer=${normalizedOffsets['asset-1']}`
+);
+check(
+  'ofset 0.1 saniye hassasiyetine yuvarlanıyor',
+  normalizedOffsets['asset-2'] === -1.3,
+  `değer=${normalizedOffsets['asset-2']}`
+);
+check(
+  'sıfır ofset kaydı siliniyor',
+  !('asset-zero' in normalizedOffsets)
+);
+check(
+  'sayısal olmayan ofset yok sayılıyor',
+  !('asset-invalid' in normalizedOffsets) && !('asset-nan' in normalizedOffsets)
+);
+check(
+  'aşırı ofset ±30 saniyeye sınırlandırılıyor',
+  normalizedOffsets['asset-over'] === 30 && normalizedOffsets['asset-under'] === -30,
+  `üst=${normalizedOffsets['asset-over']} alt=${normalizedOffsets['asset-under']}`
+);
+check(
+  'boş anahtarlar yok sayılıyor',
+  !('' in normalizedOffsets) && !('   ' in normalizedOffsets)
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
