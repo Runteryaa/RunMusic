@@ -98,7 +98,13 @@ export default function AudioEffectsScreen() {
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backBtn}
-          onPress={() => router.back()}
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace('/settings');
+            }
+          }}
           hitSlop={12}
           accessibilityRole="button">
           <Ionicons name="arrow-back" size={24} color="#ffffff" />
