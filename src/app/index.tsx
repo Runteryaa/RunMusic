@@ -778,10 +778,11 @@ export default function LibraryScreen() {
 
       if (useRemoteConnectStore.getState().isRemoteConnected()) {
         remoteSyncManager.sendClientCommand({
-          type: 'COMMAND_PLAY_LIBRARY_TRACK',
+          type: 'COMMAND_QUEUE_ADD',
           trackId: asset.id,
           title,
           artist: meta?.artist || undefined,
+          position: 'end',
         });
         showToast(`"${title}" ${t('library.added_to_queue')}`);
         return;
@@ -802,10 +803,11 @@ export default function LibraryScreen() {
 
       if (useRemoteConnectStore.getState().isRemoteConnected()) {
         remoteSyncManager.sendClientCommand({
-          type: 'COMMAND_PLAY_LIBRARY_TRACK',
+          type: 'COMMAND_QUEUE_ADD',
           trackId: asset.id,
           title,
           artist: meta?.artist || undefined,
+          position: 'next',
         });
         showToast(`"${title}" ${t('library.play_next_added')}`);
         return;

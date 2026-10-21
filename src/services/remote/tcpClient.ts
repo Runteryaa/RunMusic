@@ -80,7 +80,12 @@ class TCPClient {
     clientDeviceName: string;
     token?: string;
   }): void {
+    // `disconnect()` clears the callback table. Preserve it here, otherwise a
+    // connection started with `setCallbacks()` followed by `connect()` never
+    // reports pairing/connection messages back to the remote manager.
+    const callbacks = this.callbacks;
     this.disconnect();
+    this.callbacks = callbacks;
     this.isExplicitDisconnect = false;
 
     this.hostIp = params.hostIp;

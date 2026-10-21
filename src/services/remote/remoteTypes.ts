@@ -210,6 +210,14 @@ export interface CommandPlayLibraryTrackMessage {
   artist?: string;
 }
 
+export interface CommandQueueAddMessage {
+  type: 'COMMAND_QUEUE_ADD';
+  trackId: string;
+  title?: string;
+  artist?: string;
+  position: 'next' | 'end';
+}
+
 export interface CommandSelectLyricsMessage {
   type: 'COMMAND_SELECT_LYRICS';
   trackId: string;
@@ -269,6 +277,7 @@ export type RemoteMessage =
   | CommandQueueRemoveMessage
   | CommandPlayTrackMessage
   | CommandPlayLibraryTrackMessage
+  | CommandQueueAddMessage
   | CommandSelectLyricsMessage
   | RequestArtworkMessage
   | ArtworkResponseMessage

@@ -10,6 +10,7 @@ import Animated, {
   withDelay,
   withSequence,
 } from 'react-native-reanimated';
+import { useIsAppActive } from '../../hooks/useIsAppActive';
 
 interface MarqueeTextProps {
   text: string;
@@ -30,8 +31,10 @@ export const MarqueeText: React.FC<MarqueeTextProps> = ({
   const [textWidth, setTextWidth] = useState(0);
 
   const translateX = useSharedValue(0);
+  const isAppActive = useIsAppActive();
 
-  const shouldAnimate = textWidth > containerWidth && containerWidth > 0;
+  // Do not keep infinite marquee loops running while the app is backgrounded.
+  const shouldAnimate = isAppActive && textWidth > containerWidth && containerWidth > 0;
 
   useEffect(() => {
     if (shouldAnimate) {

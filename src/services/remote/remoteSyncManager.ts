@@ -12,8 +12,10 @@ import { useStore } from '../../store/useStore';
 import { useThemeStore } from '../../store/useThemeStore';
 import { getArtworkAsync } from '../../../modules/audio-artwork/src';
 import {
+  addToQueue,
   skipToPreviousTrack,
   moveUpNext,
+  playNext,
   playQueueTrack,
   removeQueueItem,
   setShuffle,
@@ -50,6 +52,7 @@ import type {
   LibraryResultMessage,
   CommandSelectLyricsMessage,
   CommandPlayTrackMessage,
+  CommandQueueAddMessage,
   DiscoveredHost,
   TrustedClient,
 } from './remoteTypes';
@@ -581,6 +584,10 @@ class RemoteSyncManager {
         this.playHostLibraryTrack(msg.trackId, msg.title, msg.artist);
         break;
 
+      case 'COMMAND_QUEUE_ADD':
+        this.queueHostLibraryTrack(msg);
+        break;
+
       case 'LIBRARY_QUERY':
         this.handleLibraryQuery(msg, clientSocket, wsClientId);
         break;
@@ -709,6 +716,50 @@ class RemoteSyncManager {
       }
     } catch (e) {
       console.warn('[RemoteSyncManager] handlePlayTrackCommand error:', e);
+    }
+  }
+
+  private async queueHostLibraryTrack(msg: CommandQueueAddMessage): Promise<void> {
+    try {
+      const store = useStore.getState();
+      const assets = store.allAssets.length > 0 ? store.allAssets : store.library;
+      const metadataMap = store.metadataMap;
+      const artworkMap = store.artworkMap;
+
+      let asset = assets.find((a) => a.id === msg.trackId || a.uri === msg.trackId);
+      if (!asset && msg.title) {
+        const normTitle = msg.title.trim().toLowerCase();
+        const normArtist = (msg.artist || '').trim().toLowerCase();
+        asset = assets.find((a) => {
+          const meta = metadataMap[a.id];
+          const aTitle = (meta?.title || a.filename || '').trim().toLowerCase();
+          const aArtist = (meta?.artist || '').trim().toLowerCase();
+          return aTitle === normTitle && (!normArtist || aArtist === normArtist);
+        });
+      }
+
+      if (!asset) {
+        console.warn('[RemoteSyncManager] queueHostLibraryTrack: Track not found on host:', msg.trackId);
+        return;
+      }
+
+      const track: QueueTrack = {
+        id: asset.id,
+        url: asset.uri,
+        title: metadataMap[asset.id]?.title || asset.filename,
+        artist: metadataMap[asset.id]?.artist || 'Unknown Artist',
+        artwork: metadataMap[asset.id]?.artwork || artworkMap[asset.id] || undefined,
+        duration: asset.duration,
+      };
+
+      if (msg.position === 'next') {
+        await playNext(track);
+      } else {
+        await addToQueue(track);
+      }
+      this.broadcastQueueSync();
+    } catch (e) {
+      console.warn('[RemoteSyncManager] queueHostLibraryTrack error:', e);
     }
   }
 

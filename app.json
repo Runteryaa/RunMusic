@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "runmusic",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
     "platforms": [
       "android",
       "ios"

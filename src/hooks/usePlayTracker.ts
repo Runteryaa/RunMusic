@@ -5,11 +5,21 @@ import { recordPlay, addListeningTime } from '../services/statsDatabase';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import { useStore } from '../store/useStore';
 import { useDownloadStore } from '../store/useDownloadStore';
+import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 
 export function usePlayTracker() {
   const activeTrack = useActiveTrack();
   const progress = useProgress(1000);
   const { playing } = useIsPlaying();
+
+  // In client mode TrackPlayer holds a silent "remote_<id>" shadow track only
+  // to keep the notification alive. It must never be written to listening
+  // stats, history or the local queue snapshot.
+  const isRemoteConnected = useRemoteConnectStore(
+    (s) => s.mode === 'client' && s.connectionStatus === 'connected'
+  );
+  const isShadowTrack = String(activeTrack?.id ?? '').startsWith('remote_');
+  const shouldSkipTracking = isRemoteConnected || isShadowTrack;
   
   // Hangi şarkının (trackId) dinlenme kaydının çoktan alındığını takip eder.
   const trackedSessionIdRef = useRef<string | null>(null);
@@ -18,6 +28,11 @@ export function usePlayTracker() {
   const sessionStartTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (shouldSkipTracking) {
+      trackedSessionIdRef.current = null;
+      return;
+    }
+
     if (!activeTrack?.id) return;
     
     // Eğer yeni bir şarkıya geçildiyse referansı sıfırla
@@ -43,9 +58,14 @@ export function usePlayTracker() {
       recordPlay(activeTrack.id, 0, { title, artist, artwork });
       trackedSessionIdRef.current = activeTrack.id;
     }
-  }, [progress.position, activeTrack]);
+  }, [progress.position, activeTrack, shouldSkipTracking]);
 
   useEffect(() => {
+    if (shouldSkipTracking) {
+      sessionStartTimeRef.current = null;
+      return;
+    }
+
     // Exact listening time accumulator
     if (playing) {
       sessionStartTimeRef.current = Date.now();
@@ -71,13 +91,13 @@ export function usePlayTracker() {
         sessionStartTimeRef.current = Date.now(); // Eğer playing hala true ise sıfırdan başlasın
       }
     };
-  }, [playing, activeTrack?.id]);
+  }, [playing, activeTrack?.id, shouldSkipTracking]);
 
   const positionBucket = Math.floor(progress.position / 10);
 
   // Çalma konumu ve parça durumunu periyodik ve duraklatmada kaydet
   useEffect(() => {
-    if (!activeTrack) return;
+    if (shouldSkipTracking || !activeTrack) return;
     const trackId = String(activeTrack.id ?? activeTrack.url ?? '');
     const trackData = {
       id: trackId,
@@ -119,10 +139,12 @@ export function usePlayTracker() {
         }
       }).catch(() => {});
     }
-  }, [playing, positionBucket, activeTrack, progress.position]);
+  }, [playing, positionBucket, activeTrack, progress.position, shouldSkipTracking]);
 
   // Uygulama arka plana geçtiğinde veya kapatıldığında son durumu anında kaydet
   useEffect(() => {
+    if (shouldSkipTracking) return;
+
     const sub = AppState.addEventListener('change', (nextState) => {
       if (nextState !== 'active' && activeTrack && progress.position > 0) {
         TrackPlayer.getActiveTrackIndex().then((idx) => {
@@ -149,5 +171,5 @@ export function usePlayTracker() {
       }
     });
     return () => sub.remove();
-  }, [activeTrack, progress.position]);
+  }, [activeTrack, progress.position, shouldSkipTracking]);
 }

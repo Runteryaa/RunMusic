@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -138,8 +138,11 @@ const initialRemotePlaybackState: RemotePlaybackState = {
 };
 
 let interpolationIntervalId: ReturnType<typeof setInterval> | null = null;
+let isAppForeground = AppState.currentState === 'active';
 
 function ensureInterpolationRunning(get: () => RemoteConnectStoreState, set: (fn: (state: RemoteConnectStoreState) => Partial<RemoteConnectStoreState>) => void) {
+  // Position interpolation is purely UI work; freeze it while backgrounded.
+  if (!isAppForeground) return;
   if (interpolationIntervalId !== null) return;
 
   interpolationIntervalId = setInterval(() => {
@@ -512,3 +515,23 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
     }
   )
 );
+
+AppState.addEventListener('change', (nextState) => {
+  isAppForeground = nextState === 'active';
+  if (!isAppForeground) {
+    stopInterpolation();
+    return;
+  }
+
+  const state = useRemoteConnectStore.getState();
+  if (
+    state.mode === 'client' &&
+    state.connectionStatus === 'connected' &&
+    state.remoteState.isPlaying
+  ) {
+    ensureInterpolationRunning(
+      () => useRemoteConnectStore.getState(),
+      (fn) => useRemoteConnectStore.setState(fn)
+    );
+  }
+});

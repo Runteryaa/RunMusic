@@ -121,10 +121,12 @@ class BlePeripheralService {
       offset = end;
     }
 
-    // Enqueue each chunk sequentially (Host Notification Pacing)
-    for (const chunk of chunks) {
-      const base64Chunk = chunk.toString('base64');
-      this.enqueueSend(async () => {
+    // Enqueue the whole message as one task. Enqueueing chunks individually
+    // allowed the backlog cap below to drop chunks from the middle of an
+    // NDJSON message, permanently corrupting the client parser.
+    this.enqueueSend(async () => {
+      for (const chunk of chunks) {
+        const base64Chunk = chunk.toString('base64');
         try {
           const sendPromise = RunMusicBlePeripheralModule?.sendNotification(targetUuid, base64Chunk);
           const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), 80));
@@ -134,14 +136,15 @@ class BlePeripheralService {
         } catch (err) {
           console.warn('[BlePeripheralService] Notification chunk failed:', err);
         }
-      });
-    }
+      }
+    });
   }
 
   private enqueueSend(task: () => Promise<void>): void {
-    // Media controls only need latest state; drop backlog if congested
-    if (this.sendQueue.length > 15) {
-      this.sendQueue = this.sendQueue.slice(-5);
+    // Media controls only need latest state; drop whole stale messages if
+    // congested. Never retain only a tail because that could split a message.
+    if (this.sendQueue.length >= 15) {
+      this.sendQueue.splice(0, this.sendQueue.length - 14);
     }
     this.sendQueue.push(task);
     if (!this.isProcessingQueue) {

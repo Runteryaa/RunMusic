@@ -155,7 +155,10 @@ export default async function playbackService() {
   // Parça değiştiğinde (otomatik geçiş, next/prev, remote vb.) konumu ve aktif indeksi anında kaydet.
   // Bu sayede uygulama kapatılıp açıldığında karışık (shuffled) veya düz kuyruk kaldığı yerden devam eder.
   TrackPlayer.addEventListener(Event.PlaybackActiveTrackChanged, async (event) => {
-    if (useRemoteConnectStore.getState().isRemoteConnected()) {
+    if (
+      useRemoteConnectStore.getState().isRemoteConnected() ||
+      String(event.track?.id ?? '').startsWith('remote_')
+    ) {
       return; // Uzak bağlantı gölge parçası yerel geçmişe veya son çalınanlara kaydedilmez
     }
     if (getIsMutatingQueue()) {

@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Buffer } from 'buffer';
 import type { RemoteTrackSummary } from './remoteTypes';
 import { useThemeStore } from '../../store/useThemeStore';
+import { useStore } from '../../store/useStore';
 import { restoreQueueIfNeeded, setupTrackPlayerIfNeeded, getTrackPlayerOptions } from '../playerBootstrap';
 
 let MusicWidgetModule: any = null;
@@ -18,6 +19,7 @@ class RemoteMediaNotificationService {
   private currentTrackId: string | null = null;
   private currentArtworkUri: string | null = null;
   private isShadowActive = false;
+  private previousRepeatMode: RepeatMode | null = null;
   private taskQueue: (() => Promise<void>)[] = [];
   private isProcessingTask = false;
 
@@ -124,6 +126,11 @@ class RemoteMediaNotificationService {
         await setupTrackPlayerIfNeeded();
 
         const wasShadowActive = this.isShadowActive;
+        if (!wasShadowActive) {
+          this.previousRepeatMode = await TrackPlayer.getRepeatMode().catch(
+            () => useStore.getState().repeatMode
+          );
+        }
         this.isShadowActive = true;
         this.currentTrackId = track.id;
         if (artworkUri !== undefined) {
@@ -289,6 +296,14 @@ class RemoteMediaNotificationService {
 
       await TrackPlayer.reset();
       await TrackPlayer.setVolume(1);
+
+      // The shadow track forced RepeatMode.Track. Restore the user's local
+      // repeat mode and notification options before bringing the queue back.
+      await TrackPlayer.setRepeatMode(
+        this.previousRepeatMode ?? useStore.getState().repeatMode
+      ).catch(() => {});
+      this.previousRepeatMode = null;
+      await TrackPlayer.updateOptions(getTrackPlayerOptions()).catch(() => {});
 
       // Clean up temporary wav files
       try {

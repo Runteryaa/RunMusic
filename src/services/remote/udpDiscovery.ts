@@ -64,6 +64,7 @@ class UDPDiscoveryService {
   private isSocketBound = false;
   private beaconIntervalId: ReturnType<typeof setInterval> | null = null;
   private cleanupIntervalId: ReturnType<typeof setInterval> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   private isHostBeaconDesired = false;
   private savedDeviceId: string | null = null;
@@ -76,12 +77,59 @@ class UDPDiscoveryService {
   private discoveredHosts: Map<string, DiscoveredHost> = new Map();
   private listeners: Set<DiscoveredHostsListener> = new Set();
 
+  private clearRetryTimer(): void {
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+  }
+
+  private scheduleRetry(): void {
+    if (this.retryTimer) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (this.isHostBeaconDesired || this.listeners.size > 0) {
+        this.ensureSocket();
+      }
+    }, 1500);
+  }
+
+  private syncCleanupInterval(): void {
+    const shouldRun = Boolean(this.socket) && this.listeners.size > 0;
+    if (shouldRun && !this.cleanupIntervalId) {
+      this.cleanupIntervalId = setInterval(() => {
+        this.purgeExpiredHosts();
+      }, 2000);
+    } else if (!shouldRun && this.cleanupIntervalId) {
+      clearInterval(this.cleanupIntervalId);
+      this.cleanupIntervalId = null;
+    }
+  }
+
+  /**
+   * Releases the UDP socket, multicast lock and periodic timers once neither
+   * host beacon nor client discovery needs them. Without this the socket kept
+   * the Wi-Fi radio and a 2-second timer alive for the whole app lifetime.
+   */
+  private maybeTeardown(): void {
+    if (this.isHostBeaconDesired || this.listeners.size > 0) {
+      this.syncCleanupInterval();
+      return;
+    }
+
+    this.clearRetryTimer();
+    this.closeSocket();
+    this.discoveredHosts.clear();
+  }
+
   /**
    * Ensures the single unified UDP socket on RUNMUSIC_BEACON_PORT (8944)
    * is bound, broadcast enabled, and multicast group joined.
    */
   private ensureSocket(): void {
     if (this.socket) return;
+
+    this.clearRetryTimer();
 
     try {
       acquireWifiMulticastLock();
@@ -94,11 +142,9 @@ class UDPDiscoveryService {
         this.closeSocket();
 
         // Self-heal: retry binding if either host beacon or listeners are still active
-        setTimeout(() => {
-          if (this.isHostBeaconDesired || this.listeners.size > 0) {
-            this.ensureSocket();
-          }
-        }, 1500);
+        if (this.isHostBeaconDesired || this.listeners.size > 0) {
+          this.scheduleRetry();
+        }
       });
 
       socket.on(
@@ -131,19 +177,25 @@ class UDPDiscoveryService {
         if (this.isHostBeaconDesired && this.latestBeaconPayload) {
           this.broadcastBeaconPayload(this.latestBeaconPayload);
         }
-      });
 
-      if (!this.cleanupIntervalId) {
-        this.cleanupIntervalId = setInterval(() => {
-          this.purgeExpiredHosts();
-        }, 2000);
-      }
+        this.syncCleanupInterval();
+      });
     } catch (err) {
       console.error('[UDPDiscovery] Failed to create socket:', err);
+      // `createSocket` may throw after the multicast lock was acquired.
+      this.closeSocket();
+      if (this.isHostBeaconDesired || this.listeners.size > 0) {
+        this.scheduleRetry();
+      }
     }
   }
 
   private closeSocket(): void {
+    if (this.cleanupIntervalId) {
+      clearInterval(this.cleanupIntervalId);
+      this.cleanupIntervalId = null;
+    }
+
     if (this.socket) {
       try {
         this.socket.dropMembership(RUNMUSIC_MULTICAST_GROUP);
@@ -156,8 +208,8 @@ class UDPDiscoveryService {
         // ignore
       }
       this.socket = null;
-      this.isSocketBound = false;
     }
+    this.isSocketBound = false;
     releaseWifiMulticastLock();
   }
 
@@ -214,10 +266,7 @@ class UDPDiscoveryService {
       this.beaconIntervalId = null;
     }
 
-    // Only close socket if no client listeners are using it
-    if (this.listeners.size === 0) {
-      this.closeSocket();
-    }
+    this.maybeTeardown();
   }
 
   /**
@@ -230,6 +279,7 @@ class UDPDiscoveryService {
     }
 
     this.ensureSocket();
+    this.syncCleanupInterval();
 
     if (this.isSocketBound) {
       this.sendProbe();
@@ -239,6 +289,7 @@ class UDPDiscoveryService {
       if (onHostsChanged) {
         this.listeners.delete(onHostsChanged);
       }
+      this.maybeTeardown();
     };
   }
 
@@ -247,6 +298,7 @@ class UDPDiscoveryService {
    */
   public stopClientListener(): void {
     this.listeners.clear();
+    this.maybeTeardown();
   }
 
   /**

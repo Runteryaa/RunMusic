@@ -418,10 +418,25 @@ export const useStore = create<AppState>()(
 
       library: [],
       setLibrary: (assets) =>
-        set((state) => ({
-          allAssets: assets,
-          library: assets.filter((a) => !state.hiddenTrackIds.includes(a.id)),
-        })),
+        set((state) => {
+          const merged = new Map<string, MediaLibrary.Asset>();
+          for (const asset of assets) {
+            merged.set(asset.id, asset);
+          }
+          // Incremental updates (downloads, duration fixes, cache hydration)
+          // often contain only visible library entries. Preserve hidden assets
+          // from the previous full set so "unhide" can actually restore them.
+          for (const asset of state.allAssets) {
+            if (state.hiddenTrackIds.includes(asset.id) && !merged.has(asset.id)) {
+              merged.set(asset.id, asset);
+            }
+          }
+          const allAssets = Array.from(merged.values());
+          return {
+            allAssets,
+            library: allAssets.filter((a) => !state.hiddenTrackIds.includes(a.id)),
+          };
+        }),
       isScanning: false,
       setIsScanning: (isScanning) => set({ isScanning }),
 

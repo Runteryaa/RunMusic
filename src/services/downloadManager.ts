@@ -8,6 +8,19 @@ import type { DownloadTask } from '../types/download';
 
 const activeDownloads = new Map<string, FileSystem.DownloadResumable>();
 
+/**
+ * Incremental library updates must start from `allAssets`; `library` only
+ * contains visible tracks and using it would silently drop hidden entries.
+ */
+function getAllLibraryAssets(): MediaLibrary.Asset[] {
+  const { allAssets, library } = useStore.getState();
+  return allAssets.length > 0 ? allAssets : library;
+}
+
+function isTaskCancelled(taskId: string): boolean {
+  return useDownloadStore.getState().tasks.find((t) => t.id === taskId)?.status === 'cancelled';
+}
+
 function sanitizeFileName(name: string): string {
   return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
 }
@@ -91,6 +104,8 @@ export async function startDownload(params: StartDownloadParams): Promise<{ down
 async function executeDownload(task: DownloadTask): Promise<void> {
   const downloadDir = `${FileSystem.documentDirectory || ''}downloads/`;
 
+  if (isTaskCancelled(task.id)) return;
+
   try {
     const dirInfo = await FileSystem.getInfoAsync(downloadDir);
     if (!dirInfo.exists) {
@@ -133,6 +148,13 @@ async function executeDownload(task: DownloadTask): Promise<void> {
       throw new Error(t('downloads.download_failed'));
     }
 
+    // Cancellation can land while downloadAsync() is resolving. Do not let a
+    // cancelled task continue into MediaLibrary/library updates.
+    if (isTaskCancelled(task.id)) {
+      await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+      return;
+    }
+
     // Kullanıcı deneyimi: mp4 uzantılı indirmeleri doğrudan .mp3 uzantısına taşı
     let finalFileUri = task.localFileUri!;
     let finalFileName = task.fileName;
@@ -168,6 +190,16 @@ async function executeDownload(task: DownloadTask): Promise<void> {
       }
     }
 
+    // Another cancellation check after MediaLibrary registration; a cancelled
+    // task must not be marked completed or added to the library.
+    if (isTaskCancelled(task.id)) {
+      if (mediaAssetId) {
+        await MediaLibrary.deleteAssetsAsync([mediaAssetId]).catch(() => {});
+      }
+      await FileSystem.deleteAsync(finalFileUri, { idempotent: true }).catch(() => {});
+      return;
+    }
+
     useDownloadStore.getState().updateTask(task.id, {
       status: 'completed',
       progress: 1,
@@ -178,13 +210,14 @@ async function executeDownload(task: DownloadTask): Promise<void> {
     });
 
     // Eğer genel kütüphaneye eklendiyse veya hedef public ise kütüphaneye ve store'a hemen kaydet
-    if (task.storageTarget === 'public' || mediaAssetId) {
+    if ((task.storageTarget === 'public' || mediaAssetId) && !isTaskCancelled(task.id)) {
       await addDownloadToLibrary(task.id).catch((e) => {
         console.warn('[downloadManager] Otomatik kütüphane ekleme hatası:', e);
       });
     }
   } catch (error: any) {
     activeDownloads.delete(task.id);
+    if (isTaskCancelled(task.id)) return;
     const errMsg = error?.message || t('downloads.generic_error');
     useDownloadStore.getState().updateTask(task.id, {
       status: 'failed',
@@ -197,6 +230,12 @@ async function executeDownload(task: DownloadTask): Promise<void> {
  * Devam eden indirmeyi iptal eder.
  */
 export async function cancelDownload(downloadId: string): Promise<void> {
+  // Mark first so an in-flight download that resolves during cancellation
+  // observes the cancelled state and does not resurrect itself.
+  useDownloadStore.getState().updateTask(downloadId, {
+    status: 'cancelled',
+  });
+
   const resumable = activeDownloads.get(downloadId);
   if (resumable) {
     try {
@@ -211,10 +250,6 @@ export async function cancelDownload(downloadId: string): Promise<void> {
   if (task && task.localFileUri) {
     FileSystem.deleteAsync(task.localFileUri, { idempotent: true }).catch(() => {});
   }
-
-  useDownloadStore.getState().updateTask(downloadId, {
-    status: 'cancelled',
-  });
 }
 
 /**
@@ -226,6 +261,7 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
   if (!task || !task.localFileUri) {
     throw new Error(t('downloads.file_not_found'));
   }
+  if (task.status === 'cancelled') return false;
 
   const fileInfo = await FileSystem.getInfoAsync(task.localFileUri);
   if (!fileInfo.exists) {
@@ -271,6 +307,14 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
     }
   }
 
+  if (isTaskCancelled(downloadId)) {
+    if (createdAsset?.id) {
+      await MediaLibrary.deleteAssetsAsync([createdAsset.id]).catch(() => {});
+    }
+    await FileSystem.deleteAsync(targetFileUri, { idempotent: true }).catch(() => {});
+    return false;
+  }
+
   // Cihaz MediaStore varlığı oluşturulamasa dahi parçayı doğrudan RunMusic kütüphanesine ekle
   const finalAsset: MediaLibrary.Asset = (createdAsset && createdAsset.id) ? {
     ...createdAsset,
@@ -290,13 +334,13 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
   };
 
   // RunMusic ana kütüphanesine varlığı anında ekle ve önbelleğe kaydet (listenin en başına)
-  const currentLib = useStore.getState().library;
-  const filteredLib = currentLib.filter(
+  const currentAssets = getAllLibraryAssets();
+  const filteredAssets = currentAssets.filter(
     (a) => a.id !== finalAsset.id && a.uri !== finalAsset.uri && a.id !== `local_${downloadId}`
   );
-  const updatedLib = [finalAsset, ...filteredLib];
-  useStore.getState().setLibrary(updatedLib);
-  saveCachedLibrary(updatedLib).catch(() => {});
+  const updatedAssets = [finalAsset, ...filteredAssets];
+  useStore.getState().setLibrary(updatedAssets);
+  saveCachedLibrary(updatedAssets).catch(() => {});
 
   // Şarkı bilgilerini metadataMap ve artworkMap'e yaz ki kütüphanede sanatçı, başlık ve kapak anında görünsün
   if (task.title || task.artist || task.artwork) {
@@ -338,13 +382,10 @@ export async function addDownloadToLibrary(downloadId: string): Promise<boolean>
  */
 export async function syncCompletedDownloadsWithLibrary(): Promise<MediaLibrary.Asset[]> {
   const downloadTasks = useDownloadStore.getState().tasks;
-  const currentLib = useStore.getState().library;
-  const currentLibIds = new Set(currentLib.map((a) => a.id));
-  const currentLibUris = new Set(currentLib.map((a) => a.uri));
 
   // Yalnızca tamamlanmış ve yerel dosya yolu olan görevler
   const completedTasks = downloadTasks.filter((t) => t.status === 'completed' && t.localFileUri);
-  if (completedTasks.length === 0) return currentLib;
+  if (completedTasks.length === 0) return useStore.getState().library;
 
   // Dosya varlık denetimini sıralı değil PARALEL olarak çalıştır (gecikmeyi sıfırlar)
   const checkedResults = await Promise.all(
@@ -358,6 +399,12 @@ export async function syncCompletedDownloadsWithLibrary(): Promise<MediaLibrary.
     })
   );
 
+  // Re-read the store after the async file checks. A full media scan may have
+  // completed meanwhile; merging into a stale snapshot would overwrite it.
+  const currentAssets = getAllLibraryAssets();
+  const currentAssetIds = new Set(currentAssets.map((a) => a.id));
+  const currentAssetUris = new Set(currentAssets.map((a) => a.uri));
+
   const validTasks = checkedResults.filter((t): t is DownloadTask => t !== null);
   const newAssetsToAdd: MediaLibrary.Asset[] = [];
   const metaBatch: Record<string, any> = {};
@@ -365,9 +412,9 @@ export async function syncCompletedDownloadsWithLibrary(): Promise<MediaLibrary.
   for (const task of validTasks) {
     const assetId = task.mediaLibraryAssetId || `local_${task.id}`;
     const alreadyInLib =
-      currentLibIds.has(assetId) ||
-      currentLibUris.has(task.localFileUri!) ||
-      (task.mediaLibraryAssetId ? currentLibIds.has(task.mediaLibraryAssetId) : false);
+      currentAssetIds.has(assetId) ||
+      currentAssetUris.has(task.localFileUri!) ||
+      (task.mediaLibraryAssetId ? currentAssetIds.has(task.mediaLibraryAssetId) : false);
 
     const asset: MediaLibrary.Asset = {
       id: assetId,
@@ -383,8 +430,8 @@ export async function syncCompletedDownloadsWithLibrary(): Promise<MediaLibrary.
 
     if (!alreadyInLib) {
       newAssetsToAdd.push(asset);
-      currentLibIds.add(assetId);
-      currentLibUris.add(task.localFileUri!);
+      currentAssetIds.add(assetId);
+      currentAssetUris.add(task.localFileUri!);
     }
 
     // Metadata ve Artwork kayıtlarını toplu güncellemek üzere biriktir
@@ -411,13 +458,18 @@ export async function syncCompletedDownloadsWithLibrary(): Promise<MediaLibrary.
   }
 
   if (newAssetsToAdd.length > 0) {
-    const updatedLib = [...newAssetsToAdd, ...currentLib];
-    useStore.getState().setLibrary(updatedLib);
-    saveCachedLibrary(updatedLib).catch(() => {});
-    return updatedLib;
+    // Re-read once more before committing so a scan/download that finished
+    // during the metadata work is not lost.
+    const latestAssets = getAllLibraryAssets();
+    const latestIds = new Set(latestAssets.map((a) => a.id));
+    const assetsToPrepend = newAssetsToAdd.filter((asset) => !latestIds.has(asset.id));
+    const updatedAssets = [...assetsToPrepend, ...latestAssets];
+    useStore.getState().setLibrary(updatedAssets);
+    saveCachedLibrary(updatedAssets).catch(() => {});
+    return useStore.getState().library;
   }
 
-  return currentLib;
+  return useStore.getState().library;
 }
 
 /**
@@ -434,16 +486,16 @@ export async function deleteDownloadedFile(downloadId: string): Promise<void> {
   }
 
   // Kütüphaneden de kaldır
-  const currentLib = useStore.getState().library;
-  const filteredLib = currentLib.filter(
+  const currentAssets = getAllLibraryAssets();
+  const filteredAssets = currentAssets.filter(
     (a) =>
       a.id !== task?.mediaLibraryAssetId &&
       a.id !== `local_${downloadId}` &&
       (!task?.localFileUri || a.uri !== task.localFileUri)
   );
-  if (filteredLib.length !== currentLib.length) {
-    useStore.getState().setLibrary(filteredLib);
-    saveCachedLibrary(filteredLib).catch(() => {});
+  if (filteredAssets.length !== currentAssets.length) {
+    useStore.getState().setLibrary(filteredAssets);
+    saveCachedLibrary(filteredAssets).catch(() => {});
   }
 
   useDownloadStore.getState().removeTask(downloadId);
