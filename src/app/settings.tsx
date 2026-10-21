@@ -729,19 +729,9 @@ export default function SettingsScreen() {
             syncAppKilledPlaybackBehavior(v);
           }}
         />
-      </Section>
-
-      {/* ── SES EFEKTLERİ ─────────────────────────────────────────────────── */}
-      <Section
-        icon="options-outline"
-        title={t('settings.audio_effects_section')}
-        subtitle={t('settings.audio_effects_subtitle')}
-        theme={theme}
-        defaultOpen>
         <ActionRow
           theme={theme}
           label={t('settings.audio_effects_title')}
-          hint={t('settings.audio_effects_hint')}
           value={
             preferences.audioEffects.equalizerEnabled ||
             preferences.audioEffects.replayGainMode !== 'off'
