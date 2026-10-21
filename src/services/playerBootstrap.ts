@@ -12,6 +12,7 @@ import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { handlePlaybackError } from './queueController';
+import { initAudioEffects } from './audioEffectsService';
 
 let MusicWidgetModule: any = null;
 try {
@@ -146,6 +147,8 @@ export async function setupTrackPlayerIfNeeded(): Promise<boolean> {
     attachGlobalPlayerEventListeners();
 
     isPlayerInitialized = true;
+    // Kayıtlı EQ / preamp / ReplayGain ayarlarını oynatıcıya bağla.
+    initAudioEffects();
     return true;
   } catch (e) {
     console.warn('[playerBootstrap] setup error:', e);

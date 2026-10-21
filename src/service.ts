@@ -21,6 +21,7 @@ import { useThemeStore } from './store/useThemeStore';
 import { useRemoteConnectStore } from './store/useRemoteConnectStore';
 import { useOptimisticPlayerStore } from './store/useOptimisticPlayerStore';
 import { remoteSyncManager } from './services/remote/remoteSyncManager';
+import { syncReplayGainForTrack } from './services/audioEffectsService';
 
 let MusicWidgetModule: any = null;
 try {
@@ -186,6 +187,9 @@ export default async function playbackService() {
         clearSessionFailedTracks();
         recordAttemptedTrack(event.track, event.index);
         replenishUpcomingQueueIfNeeded().catch(() => {});
+        // Parça değişiminde ReplayGain etiketlerini oku ve kazancı uygula.
+        // Hata durumunda çalma akışını etkilememesi için ateşle-ve-unut.
+        syncReplayGainForTrack(event.track).catch(() => {});
         const rawId = String(event.track.id ?? '').trim();
         const rawUrl = String(event.track.url ?? '').trim();
         const allAssets = useStore.getState().allAssets;

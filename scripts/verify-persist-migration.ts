@@ -25,6 +25,11 @@ import {
   type LyricsCacheEntry,
 } from '../src/services/persistSanitize';
 import type { LyricsResult } from '../src/services/lyricsService';
+import {
+  DEFAULT_AUDIO_EFFECTS,
+  computeReplayGainDb,
+  normalizeAudioEffects,
+} from '../src/services/audioEffectsSettings';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Küçük test altyapısı
@@ -307,6 +312,15 @@ section('7) Boyut taşmasında kullanıcı tercihleri korunuyor');
 
 const fullPersistedState = {
   settings: { minLengthSec: 30, maxLengthSec: 600, minSizeMB: 1, maxSizeMB: 50 },
+  preferences: {
+    audioEffects: {
+      equalizerEnabled: true,
+      equalizerBands: [3, -2, 0, 4, -1],
+      replayGainMode: 'album',
+      preampDb: -2.5,
+      preventClipping: true,
+    },
+  },
   isShuffle: true,
   repeatMode: 2,
   hiddenTrackIds: ['asset-3', 'asset-7'],
@@ -351,6 +365,11 @@ check(
 check(
   'şarkı sözü ofsetleri (lyricsOffsets) korundu',
   JSON.stringify(reduced.lyricsOffsets) === JSON.stringify(fullPersistedState.lyricsOffsets)
+);
+check(
+  'ses efektleri (preferences.audioEffects) korundu',
+  JSON.stringify(reduced.preferences?.audioEffects) ===
+    JSON.stringify(fullPersistedState.preferences.audioEffects)
 );
 
 section('8) Küçük kayıtlar hiç kırpılmıyor');
@@ -679,6 +698,89 @@ check(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+section('19) v13 -> v14 migrasyonu ve ses efektleri (EQ + ReplayGain)');
+
+const defaultsV14 = normalizeAudioEffects(undefined);
+check(
+  'eski kayıtlarda ekolayzer kapalı başlar',
+  defaultsV14.equalizerEnabled === false
+);
+check(
+  'eski kayıtlarda ReplayGain kapalı başlar',
+  defaultsV14.replayGainMode === 'off'
+);
+check(
+  'eski kayıtlarda beş bant sıfırlanır',
+  JSON.stringify(defaultsV14.equalizerBands) === JSON.stringify([0, 0, 0, 0, 0])
+);
+check(
+  'eski kayıtlarda preamp 0 dB ve kırpma koruması açık',
+  defaultsV14.preampDb === 0 && defaultsV14.preventClipping === true
+);
+
+const customV14 = normalizeAudioEffects({
+  equalizerEnabled: true,
+  equalizerBands: [99, -99, 4.26, -3.14, 'bozuk'],
+  replayGainMode: 'album',
+  preampDb: 42,
+  preventClipping: false,
+});
+check(
+  'kullanıcının geçerli EQ/ReplayGain tercihleri korunuyor',
+  customV14.equalizerEnabled === true &&
+    customV14.replayGainMode === 'album' &&
+    customV14.preventClipping === false
+);
+check(
+  'bant kazançları ±12 dB aralığına sıkıştırılıyor',
+  JSON.stringify(customV14.equalizerBands) === JSON.stringify([12, -12, 4.3, -3.1, 0]),
+  JSON.stringify(customV14.equalizerBands)
+);
+check(
+  'preamp ±12/+6 dB aralığına sıkıştırılıyor',
+  customV14.preampDb === 6,
+  `preamp=${customV14.preampDb}`
+);
+check(
+  'bozuk mod değeri off olarak temizleniyor',
+  normalizeAudioEffects({ replayGainMode: 'bozuk' }).replayGainMode === 'off'
+);
+check(
+  'normalizasyon idempotent',
+  JSON.stringify(normalizeAudioEffects(customV14)) === JSON.stringify(customV14)
+);
+
+const rgTags = {
+  trackGainDb: -7.2,
+  trackPeak: 0.98,
+  albumGainDb: 3,
+  albumPeak: 1.02,
+};
+const rgTrack = computeReplayGainDb(rgTags, {
+  ...DEFAULT_AUDIO_EFFECTS,
+  replayGainMode: 'track',
+  preventClipping: true,
+});
+const rgAlbum = computeReplayGainDb(rgTags, {
+  ...DEFAULT_AUDIO_EFFECTS,
+  replayGainMode: 'album',
+  preventClipping: true,
+});
+check('track modu track gain değerini kullanıyor', rgTrack === -7.2, `gain=${rgTrack}`);
+check(
+  'album modu peak>1 ise kırpma koruması uyguluyor',
+  rgAlbum === -0.2,
+  `gain=${rgAlbum} (beklenen -0.17 -> -0.2)`
+);
+check(
+  'ReplayGain kapalıyken kazanç 0',
+  computeReplayGainDb(rgTags, { ...DEFAULT_AUDIO_EFFECTS, replayGainMode: 'off' }) === 0
+);
+check(
+  'etiket yoksa kazanç 0',
+  computeReplayGainDb(null, { ...DEFAULT_AUDIO_EFFECTS, replayGainMode: 'track' }) === 0
+);
 
 section('Sonuç');
 if (failures === 0) {

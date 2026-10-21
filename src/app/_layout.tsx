@@ -12,6 +12,7 @@ import playbackService from '../service';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { restoreQueueIfNeeded, syncAppKilledPlaybackBehavior, attachGlobalPlayerEventListeners } from '../services/playerBootstrap';
+import { refreshReplayGainForActiveTrack } from '../services/audioEffectsService';
 import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
@@ -175,6 +176,13 @@ function MainAppLayout() {
           />
           <Tabs.Screen
             name="statistics"
+            options={{
+              href: null,
+              headerShown: false,
+            }}
+          />
+          <Tabs.Screen
+            name="audio-effects"
             options={{
               href: null,
               headerShown: false,
@@ -364,6 +372,8 @@ export default function TabLayout() {
         // Açılışta tam kuyruğu, çalma konumunu ve durumunu geri yükle
         attachGlobalPlayerEventListeners();
         await restoreQueueIfNeeded();
+        // Kuyruk geri yüklendikten sonra aktif parçanın ReplayGain'ini uygula.
+        void refreshReplayGainForActiveTrack();
 
         // Widget veya deep link ile arka planda başlatıldıysa
         try {

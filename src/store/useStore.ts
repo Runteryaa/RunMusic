@@ -8,6 +8,11 @@ import {
   type LyricsSourcePreference,
 } from '../services/lyricsService';
 import type { SortOption } from '../services/librarySort';
+import {
+  DEFAULT_AUDIO_EFFECTS,
+  normalizeAudioEffects,
+  type AudioEffectsSettings,
+} from '../services/audioEffectsSettings';
 import { STORE_STORAGE_KEY, resilientStorage } from '../services/persistStorage';
 import {
   findLyricsInCache,
@@ -77,6 +82,8 @@ export interface AppPreferences {
   queueBufferTarget: number;
   /** Kütüphaneden yeni parça tamamlama eşiği (varsayılan: 10). */
   queueReplenishThreshold: number;
+  /** Kullanıcıya ait ekolayzer ve ReplayGain ayarları. */
+  audioEffects: AudioEffectsSettings;
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
@@ -97,6 +104,10 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   clearQueueOnTrackSelect: false,
   queueBufferTarget: 20,
   queueReplenishThreshold: 10,
+  audioEffects: {
+    ...DEFAULT_AUDIO_EFFECTS,
+    equalizerBands: [...DEFAULT_AUDIO_EFFECTS.equalizerBands],
+  },
 };
 
 export interface TrackMetadata {
@@ -122,6 +133,8 @@ interface AppState {
 
   preferences: AppPreferences;
   updatePreferences: (patch: Partial<AppPreferences>) => void;
+  setAudioEffects: (patch: Partial<AudioEffectsSettings>) => void;
+  resetAudioEffects: () => void;
   unlockTheme: (colorHex: string) => void;
   unlockDynamicColor: () => void;
   dismissDynamicColorBanner: () => void;
@@ -216,7 +229,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 13;
+const PERSIST_VERSION = 14;
 
 export const useStore = create<AppState>()(
   persist(
@@ -326,9 +339,29 @@ export const useStore = create<AppState>()(
       updateSettings: (newSettings) =>
         set((state) => ({ settings: { ...state.settings, ...newSettings } })),
 
-      preferences: { ...DEFAULT_PREFERENCES },
+      preferences: {
+        ...DEFAULT_PREFERENCES,
+        audioEffects: normalizeAudioEffects(DEFAULT_PREFERENCES.audioEffects),
+      },
       updatePreferences: (patch) =>
         set((state) => ({ preferences: { ...state.preferences, ...patch } })),
+      setAudioEffects: (patch) =>
+        set((state) => ({
+          preferences: {
+            ...state.preferences,
+            audioEffects: normalizeAudioEffects({
+              ...state.preferences.audioEffects,
+              ...patch,
+            }),
+          },
+        })),
+      resetAudioEffects: () =>
+        set((state) => ({
+          preferences: {
+            ...state.preferences,
+            audioEffects: normalizeAudioEffects(DEFAULT_AUDIO_EFFECTS),
+          },
+        })),
       unlockTheme: (colorHex) =>
         set((state) => {
           const current = state.preferences.unlockedThemes || ['#3b82f6'];
@@ -379,6 +412,7 @@ export const useStore = create<AppState>()(
             isDynamicColorUnlocked: state.preferences.isDynamicColorUnlocked ?? false,
             dynamicColorFromArtwork: state.preferences.isDynamicColorUnlocked ?? false,
             isDevModeActive: state.preferences.isDevModeActive ?? false,
+            audioEffects: normalizeAudioEffects(DEFAULT_AUDIO_EFFECTS),
           },
         })),
 
@@ -554,6 +588,9 @@ export const useStore = create<AppState>()(
               typeof incomingPrefs.queueReplenishThreshold === 'number' && incomingPrefs.queueReplenishThreshold > 0
                 ? incomingPrefs.queueReplenishThreshold
                 : DEFAULT_PREFERENCES.queueReplenishThreshold,
+            // v14: ekolayzer + ReplayGain. Eski kayıtlarda yok; güvenli
+            // varsayılanlarla doldurulur, mevcut değerler aralığa sıkıştırılır.
+            audioEffects: normalizeAudioEffects(incomingPrefs.audioEffects),
           },
           isSmartShuffle: Boolean(incoming.isSmartShuffle),
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),
@@ -569,7 +606,10 @@ export const useStore = create<AppState>()(
       },
       partialize: (state) => ({
         settings: state.settings,
-        preferences: state.preferences,
+        preferences: {
+          ...state.preferences,
+          audioEffects: normalizeAudioEffects(state.preferences.audioEffects),
+        },
         isShuffle: state.isShuffle,
         isSmartShuffle: state.isSmartShuffle,
         repeatMode: state.repeatMode,

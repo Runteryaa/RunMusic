@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
-index b2409a0..830c857 100644
+index b2409a0..b26ed4e 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 @@ -251,7 +251,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
@@ -146,7 +146,7 @@ index b2409a0..830c857 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          musicService.skipToPrevious()
-@@ -419,147 +420,155 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -419,147 +420,191 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
          }
  
          callback.resolve(null)
@@ -256,6 +256,42 @@ index b2409a0..830c857 100644
          callback.resolve(musicService.getVolume())
 -    }
 +    } }
++
++    @ReactMethod
++    fun setAudioEffects(data: ReadableMap?, callback: Promise) { scope.launch {
++        if (verifyServiceBoundOrReject(callback)) return@launch
++        if (data == null) {
++            callback.reject("invalid_parameter", "Audio effects payload is missing")
++            return@launch
++        }
++
++        try {
++            val equalizerEnabled =
++                data.hasKey("equalizerEnabled") && data.getBoolean("equalizerEnabled")
++
++            val bands = mutableListOf<Float>()
++            if (data.hasKey("bands")) {
++                val array = data.getArray("bands")
++                if (array != null) {
++                    for (index in 0 until array.size()) {
++                        bands.add(array.getDouble(index).toFloat())
++                    }
++                }
++            }
++
++            val preampDb = if (data.hasKey("preampDb")) {
++                data.getDouble("preampDb").toFloat()
++            } else 0f
++            val replayGainDb = if (data.hasKey("replayGainDb")) {
++                data.getDouble("replayGainDb").toFloat()
++            } else 0f
++
++            musicService.setAudioEffects(equalizerEnabled, bands, preampDb, replayGainDb)
++            callback.resolve(null)
++        } catch (exception: Exception) {
++            rejectWithException(callback, exception)
++        }
++    } }
  
      @ReactMethod
 -    fun setRate(rate: Float, callback: Promise) = scope.launch {
@@ -343,7 +379,7 @@ index b2409a0..830c857 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          try {
-@@ -569,61 +578,76 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -569,61 +614,76 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
          } catch (exception: Exception) {
              rejectWithException(callback, exception)
          }
@@ -438,8 +474,283 @@ index b2409a0..830c857 100644
 +        }
      }
  }
+diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/AudioEffectsManager.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/AudioEffectsManager.kt
+new file mode 100644
+index 0000000..7622d5c
+--- /dev/null
++++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/AudioEffectsManager.kt
+@@ -0,0 +1,269 @@
++package com.doublesymmetry.trackplayer.service
++
++import android.media.audiofx.Equalizer
++import android.media.audiofx.LoudnessEnhancer
++import com.doublesymmetry.kotlinaudio.players.QueuedAudioPlayer
++import com.google.android.exoplayer2.ExoPlayer
++import com.google.android.exoplayer2.Player
++import timber.log.Timber
++import java.lang.reflect.Modifier
++import kotlin.math.abs
++import kotlin.math.min
++import kotlin.math.pow
++
++/**
++ * RunMusic eklentisi: per-app (audio session) ekolayzer + ReplayGain.
++ *
++ * KotlinAudio'nun `exoPlayer` alanı `protected` olduğu için reflection ile
++ * erişilir. R8/minify kapalı olduğundan alan adı korunur. Audio session
++ * oluşturulduğunda ve her değiştiğinde efektler yeniden bağlanır.
++ *
++ * Ses seviyesi iki katmana ayrılır:
++ *  - `userVolume`: JS `TrackPlayer.setVolume` / uyku zamanlayıcısı
++ *  - `gainMultiplier`: ReplayGain + preamp zayıflatması
++ *
++ * Böylece uyku zamanlayıcısı `getVolume()` ile taban seviyeyi görür ve
++ * ReplayGain kazancını yanlışlıkla sıfırlamaz.
++ */
++class AudioEffectsManager(
++    private val audioPlayer: QueuedAudioPlayer
++) {
++    companion object {
++        private val FIXED_BAND_FREQUENCIES_HZ = intArrayOf(60, 230, 910, 3600, 14000)
++        private const val MIN_GAIN_DB = -24f
++        private const val MAX_GAIN_DB = 12f
++    }
++
++    private var exoPlayer: ExoPlayer? = null
++    private var playerListener: Player.Listener? = null
++    private var equalizer: Equalizer? = null
++    private var loudnessEnhancer: LoudnessEnhancer? = null
++    private var boundSessionId = 0
++
++    private var equalizerEnabled = false
++    private var bandGainsDb: List<Float> = List(FIXED_BAND_FREQUENCIES_HZ.size) { 0f }
++    private var preampDb = 0f
++    private var replayGainDb = 0f
++    private var userVolume = 1f
++
++    init {
++        bindPlayer()
++    }
++
++    /**
++     * JS köprüsünden gelen efekt ayarlarını uygular.
++     * Değerler zaten JS tarafında sınırlandırılır; yine de savunmacı davranılır.
++     */
++    fun setEffects(
++        enabled: Boolean,
++        bandGainsDb: List<Float>,
++        preampDb: Float,
++        replayGainDb: Float
++    ) {
++        this.equalizerEnabled = enabled
++        this.bandGainsDb = normalizeBands(bandGainsDb)
++        this.preampDb = clampGain(preampDb)
++        this.replayGainDb = clampGain(replayGainDb)
++        applyEqualizer()
++        applyGain()
++    }
++
++    /** JS `getVolume` / `setVolume` için taban kullanıcı sesi. */
++    fun setUserVolume(value: Float) {
++        userVolume = value.coerceIn(0f, 1f)
++        applyGain()
++    }
++
++    fun getUserVolume(): Float = userVolume
++
++    fun release() {
++        val listener = playerListener
++        val player = exoPlayer
++        if (listener != null && player != null) {
++            try {
++                player.removeListener(listener)
++            } catch (error: Throwable) {
++                Timber.w(error, "Failed to remove audio effects player listener")
++            }
++        }
++        playerListener = null
++        detachAudioEffects()
++        exoPlayer = null
++    }
++
++    private fun bindPlayer() {
++        val player = findExoPlayer(audioPlayer)
++        if (player == null) {
++            Timber.w("AudioEffectsManager could not find ExoPlayer; audio effects disabled")
++            return
++        }
++
++        exoPlayer = player
++        val listener = object : Player.Listener {
++            override fun onAudioSessionIdChanged(audioSessionId: Int) {
++                if (audioSessionId == boundSessionId) return
++                detachAudioEffects()
++                if (audioSessionId != 0) attachAudioEffects(audioSessionId)
++                applyGain()
++            }
++        }
++        playerListener = listener
++
++        try {
++            player.addListener(listener)
++        } catch (error: Throwable) {
++            Timber.w(error, "Failed to add audio effects player listener")
++        }
++
++        val sessionId = try {
++            player.audioSessionId
++        } catch (error: Throwable) {
++            0
++        }
++        if (sessionId != 0) attachAudioEffects(sessionId)
++    }
++
++    private fun attachAudioEffects(sessionId: Int) {
++        boundSessionId = sessionId
++
++        equalizer = try {
++            Equalizer(0, sessionId)
++        } catch (error: Throwable) {
++            Timber.w(error, "Failed to create Equalizer for session $sessionId")
++            null
++        }
++
++        loudnessEnhancer = try {
++            LoudnessEnhancer(sessionId)
++        } catch (error: Throwable) {
++            Timber.w(error, "Failed to create LoudnessEnhancer for session $sessionId")
++            null
++        }
++
++        applyEqualizer()
++        applyGain()
++    }
++
++    private fun detachAudioEffects() {
++        boundSessionId = 0
++
++        try {
++            equalizer?.enabled = false
++        } catch (_: Throwable) {
++        }
++        try {
++            equalizer?.release()
++        } catch (_: Throwable) {
++        }
++        equalizer = null
++
++        try {
++            loudnessEnhancer?.enabled = false
++        } catch (_: Throwable) {
++        }
++        try {
++            loudnessEnhancer?.release()
++        } catch (_: Throwable) {
++        }
++        loudnessEnhancer = null
++    }
++
++    private fun applyEqualizer() {
++        val effect = equalizer ?: return
++        try {
++            val deviceBandCount = effect.numberOfBands.toInt()
++            if (deviceBandCount <= 0) return
++
++            val levelRange = effect.bandLevelRange
++            val minLevelMb = levelRange[0].toInt()
++            val maxLevelMb = levelRange[1].toInt()
++
++            // Cihaz bantlarının merkez frekansları milliHertz cinsindendir.
++            val centerFrequenciesHz = IntArray(deviceBandCount) { index ->
++                effect.getCenterFreq(index.toShort()) / 1000
++            }
++
++            for (index in FIXED_BAND_FREQUENCIES_HZ.indices) {
++                val desiredHz = FIXED_BAND_FREQUENCIES_HZ[index]
++                var bestBand = 0
++                var bestDistance = Int.MAX_VALUE
++
++                for (band in 0 until deviceBandCount) {
++                    val distance = abs(centerFrequenciesHz[band] - desiredHz)
++                    if (distance < bestDistance) {
++                        bestDistance = distance
++                        bestBand = band
++                    }
++                }
++
++                val levelMb = (bandGainsDb[index] * 100f).toInt().coerceIn(minLevelMb, maxLevelMb)
++                effect.setBandLevel(bestBand.toShort(), levelMb.toShort())
++            }
++
++            effect.enabled = equalizerEnabled
++        } catch (error: Throwable) {
++            Timber.w(error, "Failed to apply equalizer settings")
++        }
++    }
++
++    private fun applyGain() {
++        val totalGainDb = clampGain(preampDb + replayGainDb)
++        val attenuationDb = min(0f, totalGainDb)
++        val multiplier = 10f.pow(attenuationDb / 20f)
++        val effectiveVolume = (userVolume * multiplier).coerceIn(0f, 1f)
++
++        try {
++            // KotlinAudio'nun `volume` setter'ı kendi audio-focus ducking
++            // çarpanını da uygular; bu yüzden ExoPlayer'a doğrudan yazmıyoruz.
++            audioPlayer.volume = effectiveVolume
++        } catch (error: Throwable) {
++            Timber.w(error, "Failed to set player volume")
++        }
++
++        val enhancer = loudnessEnhancer
++        if (enhancer != null) {
++            try {
++                if (totalGainDb > 0.01f) {
++                    // LoudnessEnhancer hedef kazancı milibel cinsindendir.
++                    enhancer.setTargetGain((totalGainDb * 100f).toInt())
++                    enhancer.enabled = true
++                } else {
++                    enhancer.enabled = false
++                }
++            } catch (error: Throwable) {
++                Timber.w(error, "Failed to apply LoudnessEnhancer gain")
++            }
++        }
++    }
++
++    private fun normalizeBands(input: List<Float>): List<Float> {
++        return List(FIXED_BAND_FREQUENCIES_HZ.size) { index ->
++            val value = input.getOrNull(index) ?: 0f
++            if (value.isFinite()) clampGain(value) else 0f
++        }
++    }
++
++    private fun clampGain(value: Float): Float {
++        if (!value.isFinite()) return 0f
++        return value.coerceIn(MIN_GAIN_DB, MAX_GAIN_DB)
++    }
++
++    private fun findExoPlayer(target: Any): ExoPlayer? {
++        var type: Class<*>? = target.javaClass
++        while (type != null && type != Any::class.java) {
++            for (field in type.declaredFields) {
++                if (Modifier.isStatic(field.modifiers)) continue
++                if (!Player::class.java.isAssignableFrom(field.type)) continue
++                try {
++                    field.isAccessible = true
++                    val value = field.get(target)
++                    if (value is ExoPlayer) return value
++                } catch (error: Throwable) {
++                    Timber.w(error, "Failed to read ExoPlayer field ${field.name}")
++                }
++            }
++            type = type.superclass
++        }
++        return null
++    }
++}
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
-index afa6b0f..8a4d2cd 100644
+index afa6b0f..b808e1f 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
 @@ -30,8 +30,10 @@ import com.doublesymmetry.trackplayer.module.MusicEvents.Companion.METADATA_PAYL
@@ -454,7 +765,15 @@ index afa6b0f..8a4d2cd 100644
  import com.facebook.react.modules.core.DeviceEventManagerModule
  import com.google.android.exoplayer2.ui.R as ExoPlayerR
  import kotlinx.coroutines.*
-@@ -58,7 +60,7 @@ class MusicService : HeadlessJsTaskService() {
+@@ -43,6 +45,7 @@ import timber.log.Timber
+ @MainThread
+ class MusicService : HeadlessJsTaskService() {
+     private lateinit var player: QueuedAudioPlayer
++    private var audioEffectsManager: AudioEffectsManager? = null
+     private val binder = MusicBinder()
+     private val scope = MainScope()
+     private var progressUpdateJob: Job? = null
+@@ -58,7 +61,7 @@ class MusicService : HeadlessJsTaskService() {
          CONTINUE_PLAYBACK("continue-playback"), PAUSE_PLAYBACK("pause-playback"), STOP_PLAYBACK_AND_REMOVE_NOTIFICATION("stop-playback-and-remove-notification")
      }
  
@@ -463,8 +782,11 @@ index afa6b0f..8a4d2cd 100644
      private var stopForegroundGracePeriod: Int = DEFAULT_STOP_FOREGROUND_GRACE_PERIOD
  
      val tracks: List<Track>
-@@ -160,6 +162,13 @@ class MusicService : HeadlessJsTaskService() {
+@@ -158,8 +161,16 @@ class MusicService : HeadlessJsTaskService() {
+ 
+         player = QueuedAudioPlayer(this@MusicService, playerConfig, bufferConfig, cacheConfig)
          player.automaticallyUpdateNotificationMetadata = automaticallyUpdateNotificationMetadata
++        audioEffectsManager = AudioEffectsManager(player)
          observeEvents()
          setupForegrounding()
 +
@@ -477,7 +799,7 @@ index afa6b0f..8a4d2cd 100644
      }
  
      @MainThread
-@@ -167,7 +176,9 @@ class MusicService : HeadlessJsTaskService() {
+@@ -167,7 +178,9 @@ class MusicService : HeadlessJsTaskService() {
          latestOptions = options
          val androidOptions = options.getBundle(ANDROID_OPTIONS_KEY)
  
@@ -488,7 +810,36 @@ index afa6b0f..8a4d2cd 100644
  
          BundleUtils.getIntOrNull(androidOptions, STOP_FOREGROUND_GRACE_PERIOD_KEY)?.let { stopForegroundGracePeriod = it }
  
-@@ -461,9 +472,12 @@ class MusicService : HeadlessJsTaskService() {
+@@ -400,11 +413,26 @@ class MusicService : HeadlessJsTaskService() {
+     }
+ 
+     @MainThread
+-    fun getVolume(): Float = player.volume
++    fun getVolume(): Float = audioEffectsManager?.getUserVolume() ?: player.volume
+ 
+     @MainThread
+     fun setVolume(value: Float) {
+-        player.volume = value
++        val effects = audioEffectsManager
++        if (effects != null) {
++            effects.setUserVolume(value)
++        } else {
++            player.volume = value
++        }
++    }
++
++    @MainThread
++    fun setAudioEffects(
++        equalizerEnabled: Boolean,
++        bands: List<Float>,
++        preampDb: Float,
++        replayGainDb: Float
++    ) {
++        audioEffectsManager?.setEffects(equalizerEnabled, bands, preampDb, replayGainDb)
+     }
+ 
+     @MainThread
+@@ -461,9 +489,12 @@ class MusicService : HeadlessJsTaskService() {
          val b = Bundle()
          b.putDouble("lastPosition", oldPosition)
          if (tracks.isNotEmpty()) {
@@ -504,7 +855,7 @@ index afa6b0f..8a4d2cd 100644
                  b.putInt("lastIndex", previousIndex)
                  b.putBundle("lastTrack", tracks[previousIndex].originalItem)
              }
-@@ -739,9 +753,25 @@ class MusicService : HeadlessJsTaskService() {
+@@ -739,9 +770,25 @@ class MusicService : HeadlessJsTaskService() {
          return bundle
      }
  
@@ -531,7 +882,7 @@ index afa6b0f..8a4d2cd 100644
              ?.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
              ?.emit(event, data?.let { Arguments.fromBundle(it) })
      }
-@@ -751,7 +781,7 @@ class MusicService : HeadlessJsTaskService() {
+@@ -751,7 +798,7 @@ class MusicService : HeadlessJsTaskService() {
          val payload = Arguments.createArray()
          data.forEach { payload.pushMap(Arguments.fromBundle(it)) }
  
@@ -540,7 +891,7 @@ index afa6b0f..8a4d2cd 100644
              ?.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
              ?.emit(event, payload)
      }
-@@ -765,6 +795,38 @@ class MusicService : HeadlessJsTaskService() {
+@@ -765,6 +812,38 @@ class MusicService : HeadlessJsTaskService() {
          return binder
      }
  
@@ -579,7 +930,7 @@ index afa6b0f..8a4d2cd 100644
      @MainThread
      override fun onTaskRemoved(rootIntent: Intent?) {
          super.onTaskRemoved(rootIntent)
-@@ -774,17 +836,7 @@ class MusicService : HeadlessJsTaskService() {
+@@ -774,17 +853,7 @@ class MusicService : HeadlessJsTaskService() {
          when (appKilledPlaybackBehavior) {
              AppKilledPlaybackBehavior.PAUSE_PLAYBACK -> player.pause()
              AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION -> {
@@ -598,3 +949,12 @@ index afa6b0f..8a4d2cd 100644
                  exitProcess(0)
              }
              else -> {}
+@@ -799,6 +868,8 @@ class MusicService : HeadlessJsTaskService() {
+     @MainThread
+     override fun onDestroy() {
+         super.onDestroy()
++        audioEffectsManager?.release()
++        audioEffectsManager = null
+         if (::player.isInitialized) {
+             player.destroy()
+         }
