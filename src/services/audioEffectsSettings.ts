@@ -26,6 +26,13 @@ export const PREAMP_MAX_DB = 6;
 export const REPLAY_GAIN_MIN_DB = -24;
 export const REPLAY_GAIN_MAX_DB = 12;
 
+export interface EqualizerPreset {
+  id: string;
+  name: string;
+  /** Beş sabit bandın dB kazançları. */
+  bands: number[];
+}
+
 export interface AudioEffectsSettings {
   equalizerEnabled: boolean;
   /** Beş sabit bandın dB kazançları (EQUALIZER_BAND_FREQUENCIES sırasıyla). */
@@ -35,7 +42,24 @@ export interface AudioEffectsSettings {
   preampDb: number;
   /** ReplayGain peak değeri varsa kırpılmayı önlemek için kazancı sınırla. */
   preventClipping: boolean;
+  /** Kullanıcının kaydettiği ekolayzer presetleri. */
+  customPresets: EqualizerPreset[];
 }
+
+/** Hazır presetler. Etiketleri UI katmanı çevirir. */
+export const BUILT_IN_EQUALIZER_PRESETS: readonly {
+  id: 'flat' | 'bass' | 'vocal' | 'rock' | 'podcast';
+  bands: readonly number[];
+}[] = [
+  { id: 'flat', bands: [0, 0, 0, 0, 0] },
+  { id: 'bass', bands: [8, 5, 1, -1, -2] },
+  { id: 'vocal', bands: [-4, -2, 3, 5, 3] },
+  { id: 'rock', bands: [5, 3, -1, 4, 5] },
+  { id: 'podcast', bands: [-5, 0, 4, 4, -1] },
+];
+
+export const MAX_CUSTOM_PRESETS = 8;
+export const PRESET_NAME_MAX_LENGTH = 24;
 
 export const DEFAULT_AUDIO_EFFECTS: AudioEffectsSettings = {
   equalizerEnabled: false,
@@ -43,6 +67,7 @@ export const DEFAULT_AUDIO_EFFECTS: AudioEffectsSettings = {
   replayGainMode: 'off',
   preampDb: 0,
   preventClipping: true,
+  customPresets: [],
 };
 
 export function clampNumber(value: number, min: number, max: number): number {
@@ -65,6 +90,56 @@ export function normalizeEqualizerBands(input: unknown): number[] {
 
 export function normalizeReplayGainMode(input: unknown): ReplayGainMode {
   return input === 'track' || input === 'album' || input === 'off' ? input : 'off';
+}
+
+/** Preset adını kırpar, boşlukları sadeleştirir ve uzunluğu sınırlar. */
+export function normalizePresetName(input: unknown): string {
+  if (typeof input !== 'string') return '';
+  return input.replace(/\s+/g, ' ').trim().slice(0, PRESET_NAME_MAX_LENGTH);
+}
+
+/**
+ * Kaydedilmiş presetleri güvenli hale getirir. Bozuk kayıtlar atılır, kimlikler
+ * benzersizleştirilir, bantlar aralığa sıkıştırılır ve sayı sınırlanır.
+ */
+export function normalizeCustomPresets(input: unknown): EqualizerPreset[] {
+  if (!Array.isArray(input)) return [];
+
+  const seenIds = new Set<string>();
+  const result: EqualizerPreset[] = [];
+
+  for (const [index, item] of input.entries()) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+
+    const source = item as Record<string, unknown>;
+    const name = normalizePresetName(source.name);
+    if (!name) continue;
+
+    const rawId = typeof source.id === 'string' ? source.id.trim().slice(0, 64) : '';
+    const baseId = rawId || `custom-${index}`;
+    let id = baseId;
+    let suffix = 1;
+    while (seenIds.has(id)) {
+      id = `${baseId}-${suffix++}`;
+    }
+    seenIds.add(id);
+
+    result.push({
+      id,
+      name,
+      bands: normalizeEqualizerBands(source.bands),
+    });
+
+    if (result.length >= MAX_CUSTOM_PRESETS) break;
+  }
+
+  return result;
+}
+
+/** İki bant dizisinin aynı preset sayılacak kadar yakın olup olmadığı. */
+export function bandsMatch(a: readonly number[], b: readonly number[]): boolean {
+  if (a.length !== EQUALIZER_BAND_COUNT || b.length !== EQUALIZER_BAND_COUNT) return false;
+  return a.every((value, index) => Math.abs(value - b[index]) < 0.05);
 }
 
 /**
@@ -95,6 +170,7 @@ export function normalizeAudioEffects(input: unknown): AudioEffectsSettings {
       typeof source.preventClipping === 'boolean'
         ? source.preventClipping
         : DEFAULT_AUDIO_EFFECTS.preventClipping,
+    customPresets: normalizeCustomPresets(source.customPresets),
   };
 }
 
@@ -103,6 +179,10 @@ export function cloneAudioEffects(settings: AudioEffectsSettings): AudioEffectsS
   return {
     ...settings,
     equalizerBands: [...settings.equalizerBands],
+    customPresets: settings.customPresets.map((preset) => ({
+      ...preset,
+      bands: [...preset.bands],
+    })),
   };
 }
 

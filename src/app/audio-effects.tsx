@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
+  KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -16,11 +19,17 @@ import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useTranslation } from '../services/i18n';
 import {
+  BUILT_IN_EQUALIZER_PRESETS,
   EQUALIZER_BAND_FREQUENCIES,
   EQUALIZER_MAX_DB,
   EQUALIZER_MIN_DB,
+  MAX_CUSTOM_PRESETS,
   PREAMP_MAX_DB,
   PREAMP_MIN_DB,
+  PRESET_NAME_MAX_LENGTH,
+  bandsMatch,
+  normalizePresetName,
+  type EqualizerPreset,
   type ReplayGainMode,
 } from '../services/audioEffectsSettings';
 import { isNativeAudioEffectsAvailable } from '../services/audioEffectsService';
@@ -61,6 +70,47 @@ export default function AudioEffectsScreen() {
   const equalizerSupported = Platform.OS === 'android' && isNativeAudioEffectsAvailable();
   const nativeUnavailable = Platform.OS === 'android' && !isNativeAudioEffectsAvailable();
   const iosFallback = Platform.OS === 'ios';
+
+  const [presetModalVisible, setPresetModalVisible] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  const customPresets = audioEffects.customPresets;
+
+  const builtInPresets = useMemo(() => {
+    const labels: Record<string, string> = {
+      flat: t('audioEffects.preset_flat'),
+      bass: t('audioEffects.preset_bass'),
+      vocal: t('audioEffects.preset_vocal'),
+      rock: t('audioEffects.preset_rock'),
+      podcast: t('audioEffects.preset_podcast'),
+    };
+    return BUILT_IN_EQUALIZER_PRESETS.map((preset) => ({
+      ...preset,
+      label: labels[preset.id] ?? preset.id,
+    }));
+  }, [t]);
+
+  const allPresets = useMemo(
+    () => [
+      ...customPresets.map((preset) => ({
+        id: preset.id,
+        label: preset.name,
+        bands: preset.bands,
+        custom: true,
+      })),
+      ...builtInPresets.map((preset) => ({
+        id: preset.id,
+        label: preset.label,
+        bands: preset.bands,
+        custom: false as const,
+      })),
+    ],
+    [builtInPresets, customPresets]
+  );
+
+  const activePreset = useMemo(
+    () => allPresets.find((preset) => bandsMatch(draftBands, preset.bands)),
+    [allPresets, draftBands]
+  );
 
   const bandLabels = useMemo(
     () => [
@@ -117,6 +167,85 @@ export default function AudioEffectsScreen() {
   const resetEqualizer = useCallback(() => {
     setAudioEffects({ equalizerBands: EQUALIZER_BAND_FREQUENCIES.map(() => 0) });
   }, [setAudioEffects]);
+
+  const applyPreset = useCallback(
+    (bands: readonly number[]) => {
+      const next = [...bands];
+      draftBandsRef.current = next;
+      setDraftBands(next);
+      setAudioEffects({ equalizerBands: next, equalizerEnabled: true });
+    },
+    [setAudioEffects]
+  );
+
+  const openSavePreset = useCallback(() => {
+    setPresetName('');
+    setPresetModalVisible(true);
+  }, []);
+
+  const closeSavePreset = useCallback(() => {
+    setPresetModalVisible(false);
+    setPresetName('');
+  }, []);
+
+  const savePreset = useCallback(() => {
+    const name = normalizePresetName(presetName);
+    if (!name) return;
+
+    const existingIndex = customPresets.findIndex(
+      (preset) => preset.name.toLowerCase() === name.toLowerCase()
+    );
+
+    let nextPresets: EqualizerPreset[];
+    if (existingIndex >= 0) {
+      nextPresets = customPresets.map((preset, index) =>
+        index === existingIndex
+          ? { ...preset, name, bands: [...draftBandsRef.current] }
+          : preset
+      );
+    } else {
+      if (customPresets.length >= MAX_CUSTOM_PRESETS) {
+        Alert.alert(
+          t('audioEffects.preset_limit_title'),
+          t('audioEffects.preset_limit_msg', { count: MAX_CUSTOM_PRESETS })
+        );
+        return;
+      }
+      nextPresets = [
+        ...customPresets,
+        {
+          id: `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          name,
+          bands: [...draftBandsRef.current],
+        },
+      ];
+    }
+
+    setAudioEffects({ customPresets: nextPresets });
+    closeSavePreset();
+  }, [closeSavePreset, customPresets, presetName, setAudioEffects, t]);
+
+  const confirmDeletePreset = useCallback(
+    (preset: EqualizerPreset) => {
+      Alert.alert(
+        t('audioEffects.preset_delete_title'),
+        t('audioEffects.preset_delete_msg', { name: preset.name }),
+        [
+          { text: t('common.cancel'), style: 'cancel' },
+          {
+            text: t('common.delete'),
+            style: 'destructive',
+            onPress: () => {
+              setAudioEffects({
+                customPresets: customPresets.filter((item) => item.id !== preset.id),
+              });
+            },
+          },
+        ]
+      );
+    },
+    [customPresets, setAudioEffects, t]
+  );
 
   const confirmResetAll = useCallback(() => {
     Alert.alert(
@@ -193,6 +322,86 @@ export default function AudioEffectsScreen() {
               thumbColor="#ffffff"
             />
           </View>
+
+          <View style={styles.presetHeader}>
+            <Text style={styles.rowLabel}>{t('audioEffects.presets')}</Text>
+            <TouchableOpacity
+              style={[styles.savePresetBtn, !equalizerSupported && styles.disabledBtn]}
+              onPress={openSavePreset}
+              disabled={!equalizerSupported}
+              activeOpacity={0.7}
+              accessibilityRole="button">
+              <Ionicons
+                name="add"
+                size={14}
+                color={equalizerSupported ? theme.primary : '#52525b'}
+              />
+              <Text
+                style={[
+                  styles.savePresetBtnText,
+                  { color: equalizerSupported ? theme.primary : '#52525b' },
+                ]}>
+                {t('audioEffects.save_preset')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.rowHint}>
+            {t('audioEffects.active_preset', {
+              name: activePreset ? activePreset.label : t('audioEffects.preset_custom'),
+            })}
+          </Text>
+          <View style={styles.chipsWrap}>
+            {builtInPresets.map((preset) => {
+              const active = activePreset?.id === preset.id;
+              return (
+                <TouchableOpacity
+                  key={preset.id}
+                  activeOpacity={0.7}
+                  disabled={!equalizerSupported}
+                  onPress={() => applyPreset(preset.bands)}
+                  style={[
+                    styles.chip,
+                    active && { backgroundColor: theme.primary, borderColor: theme.primary },
+                    !equalizerSupported && styles.disabledChip,
+                  ]}>
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                    {preset.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            {customPresets.map((preset) => {
+              const active = activePreset?.id === preset.id;
+              return (
+                <TouchableOpacity
+                  key={preset.id}
+                  activeOpacity={0.7}
+                  disabled={!equalizerSupported}
+                  onPress={() => applyPreset(preset.bands)}
+                  onLongPress={() => confirmDeletePreset(preset)}
+                  delayLongPress={450}
+                  style={[
+                    styles.chip,
+                    styles.customChip,
+                    active && { backgroundColor: theme.primary, borderColor: theme.primary },
+                    !equalizerSupported && styles.disabledChip,
+                  ]}>
+                  <Ionicons
+                    name="bookmark-outline"
+                    size={12}
+                    color={active ? '#ffffff' : '#a1a1aa'}
+                    style={{ marginRight: 5 }}
+                  />
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                    {preset.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {customPresets.length > 0 ? (
+            <Text style={styles.presetHint}>{t('audioEffects.preset_delete_hint')}</Text>
+          ) : null}
 
           <View style={styles.sliders}>
             {bandLabels.map((label, index) => {
@@ -314,6 +523,54 @@ export default function AudioEffectsScreen() {
           <Text style={styles.resetBtnText}>{t('audioEffects.reset_all')}</Text>
         </TouchableOpacity>
       </ScrollView>
+
+      <Modal
+        visible={presetModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeSavePreset}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{t('audioEffects.save_preset_title')}</Text>
+            <TextInput
+              value={presetName}
+              onChangeText={setPresetName}
+              placeholder={t('audioEffects.preset_name_placeholder')}
+              placeholderTextColor="#71717a"
+              style={styles.modalInput}
+              maxLength={PRESET_NAME_MAX_LENGTH}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={savePreset}
+              selectionColor={theme.primary}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalBtn}
+                onPress={closeSavePreset}
+                activeOpacity={0.7}
+                accessibilityRole="button">
+                <Text style={styles.modalBtnText}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalBtn,
+                  styles.modalSaveBtn,
+                  { backgroundColor: theme.primary },
+                  !presetName.trim() && styles.disabledBtn,
+                ]}
+                onPress={savePreset}
+                disabled={!presetName.trim()}
+                activeOpacity={0.7}
+                accessibilityRole="button">
+                <Text style={styles.modalSaveBtnText}>{t('audioEffects.save_preset')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -524,6 +781,100 @@ const styles = StyleSheet.create({
   },
   chipTextActive: {
     color: '#ffffff',
+  },
+  customChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  disabledChip: {
+    opacity: 0.5,
+  },
+  presetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
+  savePresetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#27272a',
+  },
+  savePresetBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  presetHint: {
+    color: '#71717a',
+    fontSize: 10,
+    lineHeight: 15,
+    marginTop: 8,
+  },
+  disabledBtn: {
+    opacity: 0.5,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#18181b',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    padding: 18,
+  },
+  modalTitle: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+  modalInput: {
+    height: 46,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    backgroundColor: '#121212',
+    color: '#ffffff',
+    paddingHorizontal: 12,
+    fontSize: 14,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 16,
+  },
+  modalBtn: {
+    paddingHorizontal: 14,
+    height: 38,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#27272a',
+  },
+  modalBtnText: {
+    color: '#d4d4d8',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modalSaveBtn: {
+    paddingHorizontal: 16,
+  },
+  modalSaveBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
   },
   resetBtn: {
     flexDirection: 'row',

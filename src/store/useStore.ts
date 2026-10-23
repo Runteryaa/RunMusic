@@ -229,7 +229,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 14;
+const PERSIST_VERSION = 15;
 
 export const useStore = create<AppState>()(
   persist(
@@ -359,7 +359,12 @@ export const useStore = create<AppState>()(
         set((state) => ({
           preferences: {
             ...state.preferences,
-            audioEffects: normalizeAudioEffects(DEFAULT_AUDIO_EFFECTS),
+            // Reset clears the active EQ/ReplayGain configuration but keeps
+            // user-created presets so a reset is not destructive.
+            audioEffects: normalizeAudioEffects({
+              ...DEFAULT_AUDIO_EFFECTS,
+              customPresets: state.preferences.audioEffects?.customPresets ?? [],
+            }),
           },
         })),
       unlockTheme: (colorHex) =>
@@ -588,8 +593,9 @@ export const useStore = create<AppState>()(
               typeof incomingPrefs.queueReplenishThreshold === 'number' && incomingPrefs.queueReplenishThreshold > 0
                 ? incomingPrefs.queueReplenishThreshold
                 : DEFAULT_PREFERENCES.queueReplenishThreshold,
-            // v14: ekolayzer + ReplayGain. Eski kayıtlarda yok; güvenli
-            // varsayılanlarla doldurulur, mevcut değerler aralığa sıkıştırılır.
+            // v14: ekolayzer + ReplayGain. v15: kullanıcı presetleri.
+            // Eski kayıtlarda yok; güvenli varsayılanlarla doldurulur,
+            // mevcut değerler aralığa sıkıştırılır.
             audioEffects: normalizeAudioEffects(incomingPrefs.audioEffects),
           },
           isSmartShuffle: Boolean(incoming.isSmartShuffle),

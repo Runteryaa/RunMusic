@@ -27,8 +27,11 @@ import {
 import type { LyricsResult } from '../src/services/lyricsService';
 import {
   DEFAULT_AUDIO_EFFECTS,
+  MAX_CUSTOM_PRESETS,
+  bandsMatch,
   computeReplayGainDb,
   normalizeAudioEffects,
+  normalizeCustomPresets,
 } from '../src/services/audioEffectsSettings';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -319,6 +322,7 @@ const fullPersistedState = {
       replayGainMode: 'album',
       preampDb: -2.5,
       preventClipping: true,
+      customPresets: [{ id: 'custom-1', name: 'Gece', bands: [1, 0, 0, 2, -1] }],
     },
   },
   isShuffle: true,
@@ -780,6 +784,77 @@ check(
 check(
   'etiket yoksa kazanç 0',
   computeReplayGainDb(null, { ...DEFAULT_AUDIO_EFFECTS, replayGainMode: 'track' }) === 0
+);
+
+section('20) v14 -> v15 migrasyonu ve kullanıcı ekolayzer presetleri');
+
+const defaultsV15 = normalizeAudioEffects(undefined);
+check(
+  'eski kayıtlarda özel preset listesi boş başlıyor',
+  Array.isArray(defaultsV15.customPresets) && defaultsV15.customPresets.length === 0
+);
+
+const cleanedPresets = normalizeCustomPresets([
+  { id: 'a', name: '  Gece   Modu  ', bands: [99, -99, 4.26, -3.14, 'bozuk'] },
+  { id: 'a', name: 'Aynı Kimlik', bands: [1, 2, 3, 4, 5] },
+  { name: 'Kimliksiz', bands: [1, 1, 1, 1, 1] },
+  { id: 'bad', name: '   ', bands: [1, 2, 3, 4, 5] },
+  null,
+  'bozuk',
+]);
+check(
+  'geçerli presetler korunuyor, adsız/bozuk kayıtlar atılıyor',
+  cleanedPresets.length === 3,
+  `count=${cleanedPresets.length}`
+);
+check(
+  'preset adı kırpılıyor ve boşluklar sadeleşiyor',
+  cleanedPresets[0].name === 'Gece Modu',
+  cleanedPresets[0].name
+);
+check(
+  'preset bantları aralığa sıkıştırılıp eksikler sıfırlanıyor',
+  JSON.stringify(cleanedPresets[0].bands) === JSON.stringify([12, -12, 4.3, -3.1, 0]),
+  JSON.stringify(cleanedPresets[0].bands)
+);
+check(
+  'çift kimlikler benzersizleştiriliyor',
+  cleanedPresets[1].id !== cleanedPresets[0].id && !!cleanedPresets[1].id
+);
+check(
+  'kimliksiz preset atılmıyor, kimlik üretiliyor',
+  cleanedPresets[2].name === 'Kimliksiz' && cleanedPresets[2].id.length > 0
+);
+
+const manyPresets = normalizeCustomPresets(
+  Array.from({ length: MAX_CUSTOM_PRESETS + 5 }, (_, i) => ({
+    id: `p-${i}`,
+    name: `P${i}`,
+    bands: [0, 0, 0, 0, 0],
+  }))
+);
+check(
+  `en fazla ${MAX_CUSTOM_PRESETS} özel preset saklanıyor`,
+  manyPresets.length === MAX_CUSTOM_PRESETS,
+  `count=${manyPresets.length}`
+);
+check(
+  'preset normalizasyonu idempotent',
+  JSON.stringify(normalizeCustomPresets(cleanedPresets)) === JSON.stringify(cleanedPresets)
+);
+check(
+  'normalizeAudioEffects özel presetleri koruyor',
+  JSON.stringify(
+    normalizeAudioEffects({ ...customV14, customPresets: cleanedPresets }).customPresets
+  ) === JSON.stringify(cleanedPresets)
+);
+check(
+  'bandsMatch küçük yuvarlama farklarını eşleştiriyor',
+  bandsMatch([3, -2, 0, 4, -1], [3.02, -2.01, 0, 4, -1]) === true
+);
+check(
+  'bandsMatch belirgin farkları ayırıyor',
+  bandsMatch([3, -2, 0, 4, -1], [3.5, -2, 0, 4, -1]) === false
 );
 
 section('Sonuç');
