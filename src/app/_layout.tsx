@@ -1,8 +1,9 @@
 import { Tabs, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Linking from 'expo-linking';
+import * as SystemUI from 'expo-system-ui';
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Alert } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import TrackPlayer, { State, useActiveTrack } from 'react-native-track-player';
@@ -17,11 +18,9 @@ import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
 import { initSleepTimerService } from '../store/useSleepTimerStore';
-import { initStatsDB } from '../services/statsDatabase';
 import { useTranslation, t } from '../services/i18n';
 import { initAdService } from '../services/adService';
 import * as Font from 'expo-font';
-import { getCachedLibrary } from '../services/libraryStorage';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import { PairChallengeModal } from '../components/PairChallengeModal';
@@ -41,12 +40,47 @@ try {
 }
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+// Splash kapandığı anda pencerenin arka planı da aynı renk olsun; aksi halde
+// Android'de kısa bir siyah kare görünebiliyor.
+SystemUI.setBackgroundColorAsync('#121212').catch(() => {});
 
 // Register background service & install custom in-app alert handler
 TrackPlayer.registerPlaybackService(() => playbackService);
 installGlobalAlert();
 
-function MainAppLayout() {
+/**
+ * Zustand persist hidrasyonunu kısa bir süre bekler. Ayar/tema/kuyruk
+ * tercihleri ilk karede doğru olsun diye yapılır; yine de bir aksilikte
+ * açılışı süresiz kilitlememek için üst sınır vardır.
+ */
+function waitForStoreHydration(timeoutMs: number): Promise<void> {
+  if (useStore.getState().isHydrated || useStore.persist.hasHydrated?.()) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let unsubscribe: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      unsubscribe?.();
+      resolve();
+    };
+
+    timer = setTimeout(finish, timeoutMs);
+    try {
+      unsubscribe = useStore.persist.onFinishHydration(finish);
+    } catch {
+      finish();
+    }
+  });
+}
+
+function MainAppLayout({ onFirstLayout }: { onFirstLayout: () => void }) {
   useWidgetUpdater();
   const { t } = useTranslation();
   const isDeviceSelectorOpen = usePlayerUIStore((s) => s.isDeviceSelectorOpen);
@@ -128,7 +162,9 @@ function MainAppLayout() {
   }, [effectiveArtworkUri, activeTrackId, updateThemeFromArtwork, dynamicColorFromArtwork, presetThemeColor]);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#121212' }}>
+    <GestureHandlerRootView
+      style={{ flex: 1, backgroundColor: '#121212' }}
+      onLayout={onFirstLayout}>
       <View style={{ flex: 1, backgroundColor: '#121212' }}>
         <Tabs
           screenOptions={{
@@ -315,7 +351,20 @@ async function handleWidgetLaunchUrl(url: string | null) {
 }
 
 export default function TabLayout() {
-  const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const [isAppReady, setIsAppReady] = useState(false);
+  const splashHiddenRef = useRef(false);
+
+  /**
+   * Splash'i ancak gerçek arayüzün ilk karesi çizildikten sonra kaldır.
+   * Böylece splash ile içerik arasında siyah bir boşluk oluşmaz.
+   */
+  const hideSplashAfterFirstLayout = useCallback(() => {
+    if (splashHiddenRef.current) return;
+    splashHiddenRef.current = true;
+    requestAnimationFrame(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    });
+  }, []);
 
   useEffect(() => {
     const sub = Linking.addEventListener('url', (event) => {
@@ -328,81 +377,72 @@ export default function TabLayout() {
 
   useEffect(() => {
     let isMounted = true;
-    let didFinish = false;
 
-    const finalizeStartup = () => {
-      if (didFinish) return;
-      didFinish = true;
-      if (isMounted) {
-        setIsPlayerReady(true);
-      }
-      SplashScreen.hideAsync().catch(() => {});
-    };
-
-    // Failsafe: 2.5 saniye içinde ne olursa olsun splash ekranını kaldır ve arayüzü aç
+    // Güvenlik ağı: beklenmedik bir hata arayüzün kurulmasını engellese bile
+    // uygulama sonsuza kadar splash ekranında kalmasın.
     const failsafeTimer = setTimeout(() => {
-      finalizeStartup();
-    }, 2500);
+      if (!isMounted) return;
+      setIsAppReady(true);
+      hideSplashAfterFirstLayout();
+    }, 6000);
 
     async function setup() {
-      try {
-        try {
-          await Font.loadAsync(Ionicons.font);
-        } catch (fontErr) {
-          console.warn('Font load notice:', fontErr);
-        }
+      // İlk kare için sadece kalıcı ayarların hazır olması yeterli. Ağır işler
+      // (kuyruk, istatistik DB'si, reklamlar, font) arayüz çizildikten sonra.
+      await waitForStoreHydration(500);
 
-        try {
-          const cached = await getCachedLibrary();
-          if (cached && cached.length > 0 && useStore.getState().library.length === 0) {
-            useStore.getState().setLibrary(cached);
-          }
-        } catch (cacheErr) {
-          console.warn('Library cache pre-hydrate notice:', cacheErr);
-        }
+      if (!isMounted) return;
+      setIsAppReady(true);
 
-        try {
-          await initStatsDB();
-          initSleepTimerService();
-          initAdService().catch((adErr) => console.warn('Ad service init notice:', adErr));
-        } catch (dbErr) {
-          console.warn('Stats DB init error:', dbErr);
-        }
+      // State güncellemesinin render edilip ilk kareyi çizmesine izin ver.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (!isMounted) return;
 
-        // Açılışta tam kuyruğu, çalma konumunu ve durumunu geri yükle
-        attachGlobalPlayerEventListeners();
-        await restoreQueueIfNeeded();
-        // Kuyruk geri yüklendikten sonra aktif parçanın ReplayGain'ini uygula.
-        void refreshReplayGainForActiveTrack();
+      // Kritik olmayan başlangıç işleri; hiçbiri splash'i bloklamaz.
+      Font.loadAsync(Ionicons.font).catch((fontErr) => {
+        console.warn('Font load notice:', fontErr);
+      });
+      initSleepTimerService();
+      initAdService().catch((adErr) => console.warn('Ad service init notice:', adErr));
+      attachGlobalPlayerEventListeners();
 
-        // Widget veya deep link ile arka planda başlatıldıysa
-        try {
-          const initialUrl = await Linking.getInitialURL();
-          if (initialUrl) {
-            await handleAppDeepLink(initialUrl);
-          }
-        } catch (linkErr) {
+      // Kuyruğu arka planda geri yükle; arayüz hazır olduğu için splash beklemez.
+      restoreQueueIfNeeded()
+        .then(() => {
+          // Kuyruk geri yüklendikten sonra aktif parçanın ReplayGain'ini uygula.
+          void refreshReplayGainForActiveTrack();
+        })
+        .catch((restoreErr) => {
+          console.warn('Queue restore notice:', restoreErr);
+        });
+
+      // Widget veya deep link ile arka planda başlatıldıysa. Widget eylemleri
+      // kuyruk geri yüklemesini kendi içinde bekler.
+      Linking.getInitialURL()
+        .then((initialUrl) => {
+          if (initialUrl) return handleAppDeepLink(initialUrl);
+        })
+        .catch((linkErr) => {
           console.warn('Initial URL handle notice:', linkErr);
-        }
-      } catch (e) {
-        console.warn('Startup setup error', e);
-      } finally {
-        clearTimeout(failsafeTimer);
-        finalizeStartup();
-      }
+        });
     }
 
-    setup();
+    setup().catch((e) => {
+      console.warn('Startup setup error', e);
+      if (isMounted) {
+        setIsAppReady(true);
+      }
+    });
 
     return () => {
       isMounted = false;
       clearTimeout(failsafeTimer);
     };
-  }, []);
+  }, [hideSplashAfterFirstLayout]);
 
-  if (!isPlayerReady) {
+  if (!isAppReady) {
     return <View style={{ flex: 1, backgroundColor: '#121212' }} />;
   }
 
-  return <MainAppLayout />;
+  return <MainAppLayout onFirstLayout={hideSplashAfterFirstLayout} />;
 }

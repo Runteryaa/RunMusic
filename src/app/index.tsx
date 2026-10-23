@@ -137,18 +137,28 @@ export default function LibraryScreen() {
   const getTrackDisplayInfo = useCallback(
     (asset: MediaLibrary.Asset) => {
       const meta = metadataMap[asset.id] || metadataMap[asset.uri];
+      const metaTitle = meta?.title?.trim() || '';
+      const rawMetaArtist = meta?.artist?.trim() || '';
+      const metaArtist =
+        rawMetaArtist && rawMetaArtist !== 'Local Audio' && rawMetaArtist !== 'Bilinmeyen Sanatçı'
+          ? rawMetaArtist
+          : '';
+
+      // Başlık ve sanatçı etiketten geliyorsa dosya adını ayrıştırmaya gerek
+      // yok. Bu, büyük kütüphanelerde açılıştaki en pahalı adımı atlar.
+      if (metaTitle && metaArtist) {
+        return { title: cleanDisplayTitle(metaTitle, metaArtist), artist: metaArtist };
+      }
+
       const keywords = getSearchKeywords(asset.filename);
-      const artist =
-        (meta?.artist?.trim() && meta.artist !== 'Local Audio' && meta.artist !== 'Bilinmeyen Sanatçı'
-          ? meta.artist.trim()
-          : '') ||
-        (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
+      const keywordArtist =
+        keywords.expectedArtist &&
+        keywords.expectedArtist !== 'Local Audio' &&
+        keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
           ? keywords.expectedArtist
-          : '');
-      const rawTitle =
-        (meta?.title?.trim() ? meta.title.trim() : '') ||
-        keywords.expectedTrack ||
-        asset.filename;
+          : '';
+      const artist = metaArtist || keywordArtist;
+      const rawTitle = metaTitle || keywords.expectedTrack || asset.filename;
       const title = cleanDisplayTitle(rawTitle, artist);
       return { title, artist };
     },
@@ -484,27 +494,43 @@ export default function LibraryScreen() {
   // İlk açılışta önbellekten anında oku (0ms), ardından kütüphaneyi arka planda tara ve güncelle
   useEffect(() => {
     let isMounted = true;
+    let scanTimer: ReturnType<typeof setTimeout> | null = null;
+
     (async () => {
+      let hasCachedLibrary = false;
+
       if (useStore.getState().library.length === 0) {
         try {
           const cached = await getCachedLibrary();
           if (isMounted && cached && cached.length > 0) {
             setLibrary(cached);
             setHasScannedOnce(true);
+            hasCachedLibrary = true;
           }
         } catch (err) {
           console.warn('Initial cached library load error:', err);
         }
       } else {
         setHasScannedOnce(true);
+        hasCachedLibrary = true;
       }
-      if (isMounted) {
+
+      if (!isMounted) return;
+
+      // Önbellekteki liste önce çizilsin; tarama hemen JS thread'ini meşgul
+      // etmesin. Önbellek yoksa ilk kurulum için hemen taramaya başla.
+      if (hasCachedLibrary) {
+        scanTimer = setTimeout(() => {
+          if (isMounted) scanMedia();
+        }, 400);
+      } else {
         scanMedia();
       }
     })();
 
     return () => {
       isMounted = false;
+      if (scanTimer) clearTimeout(scanTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -553,8 +579,9 @@ export default function LibraryScreen() {
       if (!cached) {
         const info = getTrackDisplayInfo(asset);
         const sortKey = (info.title || '').toLocaleLowerCase('tr');
-        const searchTarget = normalizeSearchText(`${info.title} ${info.artist} ${asset.filename}`);
-        cached = { title: info.title, artist: info.artist, sortKey, searchTarget };
+        // Arama hedefi yalnızca kullanıcı arama yaptığında hesaplanır;
+        // açılışta tüm kütüphane için Unicode normalizasyonu yapmayı önler.
+        cached = { title: info.title, artist: info.artist, sortKey, searchTarget: '' };
 
         if (TRACK_INFO_CACHE.size >= MAX_TRACK_INFO_CACHE) {
           const iter = TRACK_INFO_CACHE.keys();
@@ -568,6 +595,7 @@ export default function LibraryScreen() {
       }
       return {
         asset,
+        cacheKey,
         info: { title: cached.title, artist: cached.artist },
         sortKey: cached.sortKey,
         searchTarget: cached.searchTarget,
@@ -618,9 +646,23 @@ export default function LibraryScreen() {
     const terms = q.split(' ').filter(Boolean);
 
     return fullSortedListWithInfo.filter((item) => {
-      if (item.searchTarget.includes(q)) return true;
+      // Arama hedefini ilk aramada hesapla ve bilgi önbelleğinde sakla;
+      // sonraki aramalar anında çalışsın. Render edilen öğeyi değiştirmeyiz.
+      let searchTarget = item.searchTarget;
+      if (!searchTarget) {
+        const cached = TRACK_INFO_CACHE.get(item.cacheKey);
+        searchTarget = cached?.searchTarget || '';
+        if (!searchTarget) {
+          searchTarget = normalizeSearchText(
+            `${item.info.title} ${item.info.artist} ${item.asset.filename}`
+          );
+          if (cached) cached.searchTarget = searchTarget;
+        }
+      }
+
+      if (searchTarget.includes(q)) return true;
       if (terms.length <= 1) return false;
-      return terms.every((term) => item.searchTarget.includes(term));
+      return terms.every((term) => searchTarget.includes(term));
     });
   }, [fullSortedListWithInfo, searchQuery]);
 

@@ -126,11 +126,11 @@ export async function setupTrackPlayerIfNeeded(): Promise<boolean> {
     }
 
     if (Platform.OS === 'android' && Platform.Version >= 33) {
-      try {
-        await PermissionsAndroid.request('android.permission.POST_NOTIFICATIONS' as any);
-      } catch {
+      // İzin diyaloğu oynatıcının kurulmasını bekletmesin. Medya bildirimi
+      // POST_NOTIFICATIONS verilmese de gösterilebilir; sonucu beklemeye gerek yok.
+      PermissionsAndroid.request('android.permission.POST_NOTIFICATIONS' as any).catch(() => {
         // ignore
-      }
+      });
     }
 
     try {
@@ -158,7 +158,29 @@ export async function setupTrackPlayerIfNeeded(): Promise<boolean> {
   }
 }
 
-export async function restoreQueueIfNeeded(): Promise<boolean> {
+let restoreQueuePromise: Promise<boolean> | null = null;
+
+/**
+ * Aynı anda birden fazla yerden (arayüz, widget servisi, derin bağlantı)
+ * çağrıldığında kuyruğu iki kez kurmaya çalışmayı engeller.
+ */
+export function restoreQueueIfNeeded(): Promise<boolean> {
+  if (!restoreQueuePromise) {
+    restoreQueuePromise = doRestoreQueueIfNeeded()
+      .then((restored) => {
+        // Boş/başarısız sonuçta sonraki çağrı yeniden deneyebilsin.
+        if (!restored) restoreQueuePromise = null;
+        return restored;
+      })
+      .catch((err) => {
+        restoreQueuePromise = null;
+        throw err;
+      });
+  }
+  return restoreQueuePromise;
+}
+
+async function doRestoreQueueIfNeeded(): Promise<boolean> {
   await setupTrackPlayerIfNeeded();
 
   try {
@@ -194,6 +216,17 @@ export async function restoreQueueIfNeeded(): Promise<boolean> {
     const restoreQueue = useStore.getState().preferences?.restoreQueueOnLaunch ?? true;
 
     if (restoreQueue && snapshot && snapshot.queue && snapshot.queue.length > 0) {
+      // Kullanıcı biz yüklerken bir parçaya dokunduysa eski kuyruğu geri
+      // getirip onun seçimini ezmeyelim.
+      const queueBeforeRestore = await TrackPlayer.getQueue().catch(() => []);
+      const playbackBeforeRestore = await TrackPlayer.getPlaybackState().catch(() => null);
+      const isPlayingBeforeRestore =
+        playbackBeforeRestore?.state === State.Playing ||
+        playbackBeforeRestore?.state === State.Buffering;
+      if (queueBeforeRestore.length > 0 || isPlayingBeforeRestore) {
+        return true;
+      }
+
       await TrackPlayer.setQueue(toPlayableTracks(snapshot.queue as Track[]));
 
       let targetIndex = -1;
