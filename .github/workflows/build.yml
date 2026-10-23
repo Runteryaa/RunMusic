@@ -98,18 +98,25 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EAS_SKIP_AUTO_FINGERPRINT: 1
 
+      - name: 🔢 Set Android versionCode from CI run
+        env:
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+        run: |
+          node -e "const fs=require('fs');const p='app.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.expo.android.versionCode=Number(process.env.ANDROID_VERSION_CODE);fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');"
+          grep -A1 '"versionCode"' app.json
+
       - name: 🛠 Prebuild Android
         run: |
           node ./scripts/patch-ble-plx.js
           npx expo prebuild --platform android
 
-      - name: 🔧 Configure Build (Disable New Arch & Speed up with arm64-v8a only)
+      - name: 🔧 Configure Build (Disable New Arch & Build ARMv7 + ARM64)
         run: |
           sed -i 's/newArchEnabled=true/newArchEnabled=false/' android/gradle.properties
           grep -q 'newArchEnabled' android/gradle.properties || echo 'newArchEnabled=false' >> android/gradle.properties
 
-          sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
-          grep -q 'reactNativeArchitectures' android/gradle.properties || echo 'reactNativeArchitectures=arm64-v8a' >> android/gradle.properties
+          sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a,armeabi-v7a/' android/gradle.properties
+          grep -q 'reactNativeArchitectures' android/gradle.properties || echo 'reactNativeArchitectures=arm64-v8a,armeabi-v7a' >> android/gradle.properties
 
           # Remove any ndk.dir from local.properties so AGP can use side-by-side NDKs
           sed -i '/ndk\.dir/d' android/local.properties 2>/dev/null || true
@@ -134,7 +141,7 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --build-cache --parallel -PreactNativeArchitectures=arm64-v8a -x lintVitalRelease
+          ./gradlew assembleRelease --no-daemon --build-cache --parallel -PreactNativeArchitectures=arm64-v8a,armeabi-v7a -x lintVitalRelease
 
       - name: 📤 Upload APK Artifact
         uses: actions/upload-artifact@v4
