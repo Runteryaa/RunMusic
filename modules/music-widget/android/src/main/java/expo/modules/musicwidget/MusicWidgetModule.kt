@@ -159,9 +159,10 @@ class MusicWidgetModule : Module() {
     if (artworkUri.startsWith("content://")) {
       val uri = Uri.parse(artworkUri)
       val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-      context.contentResolver.openInputStream(uri)?.use { stream ->
+      val boundsStream = context.contentResolver.openInputStream(uri) ?: return null
+      boundsStream.use { stream ->
         BitmapFactory.decodeStream(stream, null, bounds)
-      } ?: return null
+      }
       if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
       val options = BitmapFactory.Options().apply {
