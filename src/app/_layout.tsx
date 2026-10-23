@@ -21,6 +21,7 @@ import { initSleepTimerService } from '../store/useSleepTimerStore';
 import { useTranslation, t } from '../services/i18n';
 import { initAdService } from '../services/adService';
 import * as Font from 'expo-font';
+import { getCachedLibrary } from '../services/libraryStorage';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import { PairChallengeModal } from '../components/PairChallengeModal';
@@ -361,8 +362,12 @@ export default function TabLayout() {
   const hideSplashAfterFirstLayout = useCallback(() => {
     if (splashHiddenRef.current) return;
     splashHiddenRef.current = true;
+    // İki kare bekle: ilk karede liste layout'u tamamlanır, ikinci karede
+    // gerçekten ekrana çizilmiş olur. Splash ancak ondan sonra kapanır.
     requestAnimationFrame(() => {
-      SplashScreen.hideAsync().catch(() => {});
+      requestAnimationFrame(() => {
+        SplashScreen.hideAsync().catch(() => {});
+      });
     });
   }, []);
 
@@ -384,12 +389,33 @@ export default function TabLayout() {
       if (!isMounted) return;
       setIsAppReady(true);
       hideSplashAfterFirstLayout();
-    }, 6000);
+    }, 10000);
 
     async function setup() {
-      // İlk kare için sadece kalıcı ayarların hazır olması yeterli. Ağır işler
-      // (kuyruk, istatistik DB'si, reklamlar, font) arayüz çizildikten sonra.
+      // Splash kapandığında kütüphane ekranı boş kalmasın: kalıcı ayarların
+      // yanında önbellekteki kütüphaneyi de ilk kareden önce yükle. Tarama
+      // (rescan) yine arka planda çalışır; kullanıcı eski listeyi anında görür.
       await waitForStoreHydration(500);
+
+      if (!isMounted) return;
+
+      try {
+        if (useStore.getState().library.length === 0) {
+          let cacheTimeout: ReturnType<typeof setTimeout> | undefined;
+          const cached = await Promise.race([
+            getCachedLibrary(),
+            new Promise<null>((resolve) => {
+              cacheTimeout = setTimeout(() => resolve(null), 3000);
+            }),
+          ]);
+          if (cacheTimeout) clearTimeout(cacheTimeout);
+          if (isMounted && cached && cached.length > 0) {
+            useStore.getState().setLibrary(cached);
+          }
+        }
+      } catch (cacheErr) {
+        console.warn('Library cache pre-hydrate notice:', cacheErr);
+      }
 
       if (!isMounted) return;
       setIsAppReady(true);
