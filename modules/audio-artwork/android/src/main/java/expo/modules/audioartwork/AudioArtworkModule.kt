@@ -284,8 +284,14 @@ class AudioArtworkModule : Module() {
           idLong
         )
         val bitmap = context.contentResolver.loadThumbnail(trackContentUri, Size(512, 512), null)
-        FileOutputStream(cachedFile).use { out ->
-          bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+        try {
+          FileOutputStream(cachedFile).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+          }
+        } finally {
+          // The thumbnail is only needed for the JPEG write. Keeping it alive
+          // until GC leaks ~1 MB per track on low-memory devices.
+          bitmap.recycle()
         }
         return "file://${cachedFile.absolutePath}"
       } catch (_: Exception) {}
@@ -379,11 +385,17 @@ class AudioArtworkModule : Module() {
 
       if (bitmap == null) return null
 
-      val width = bitmap.width
-      val height = bitmap.height
-      val pixels = IntArray(width * height)
-      bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-      bitmap.recycle()
+      // Always release the decoded bitmap, including when the pixel buffer
+      // allocation itself throws (e.g. under memory pressure).
+      val pixels = try {
+        val width = bitmap.width
+        val height = bitmap.height
+        val buffer = IntArray(width * height)
+        bitmap.getPixels(buffer, 0, width, 0, 0, width, height)
+        buffer
+      } finally {
+        bitmap.recycle()
+      }
 
       if (pixels.isEmpty()) return null
 

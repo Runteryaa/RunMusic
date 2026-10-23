@@ -83,11 +83,21 @@ import {
   type QueueSections,
   type QueueTrackLike,
 } from '../services/queueController';
-import { QueueUpNextList, type UpNextItem } from './QueueUpNextList';
+import { UpNextRow, type UpNextItem } from './QueueUpNextList';
 import { Swipeable } from 'react-native-gesture-handler';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
+
+/**
+ * Queue rows are flattened so the single FlatList can virtualize both the
+ * regular queue and the manually queued "up next" items. Rendering the up-next
+ * list with .map() creates a Swipeable/Animated tree for every queued track at
+ * once, which is a major memory spike for large queues.
+ */
+type QueueDisplayRow =
+  | QueueRow<Track>
+  | { kind: 'upnext-item'; key: string; item: UpNextItem; upNextIndex: number };
 
 /** Söz ofsetini işaretli, tek ondalıklı saniye olarak gösterir. */
 function formatLyricsOffset(value: number): string {
@@ -114,7 +124,9 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   const theme = useThemeStore((s) => s.theme);
   const player = useActivePlayer();
-  const progress = useActiveProgress();
+  // The fullscreen tree is retained after its first open to avoid a Fabric
+  // mount/unmount leak. Throttle progress polling while it is collapsed.
+  const progress = useActiveProgress(isFullscreenPlayerOpen);
   const localActiveTrack = useActiveTrack();
   const activeTrack = player.activeTrack;
   const playing = player.isPlaying;
@@ -367,7 +379,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
-    if (isSleepTimerActive) {
+    if (isSleepTimerActive && isFullscreenPlayerOpen) {
       const updateRemaining = () => {
         if (sleepTimerDurationOption === 'track') {
           setSleepTimerRemaining(t('player.after_track'));
@@ -385,7 +397,13 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isSleepTimerActive, sleepTimerEndTime, sleepTimerDurationOption, t]);
+  }, [
+    isSleepTimerActive,
+    isFullscreenPlayerOpen,
+    sleepTimerEndTime,
+    sleepTimerDurationOption,
+    t,
+  ]);
 
   const [queue, setQueue] = useState<Track[]>([]);
   const [activeIndex, setActiveIndex] = useState<number>(0);
@@ -505,19 +523,19 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   // Oynatıcı açıkken veya aktif parça değiştiğinde kuyruğu ve bölümleri önceden hazırla (pre-warm)
   useEffect(() => {
-    if (activeTrack || isFullscreenPlayerOpen) {
-      refreshQueue();
-      refreshQueueSections();
-    }
+    if (!isFullscreenPlayerOpen) return;
+    refreshQueue();
+    refreshQueueSections();
   }, [activeTrack, isFullscreenPlayerOpen, refreshQueue, refreshQueueSections]);
 
   // Kuyruk modu açıkken veya aktif parça / kuyruk / modlar değiştiğinde bölümleri tazele.
   useEffect(() => {
-    if (isQueueMode) {
+    if (isFullscreenPlayerOpen && isQueueMode) {
       refreshQueueSections();
       refreshQueue();
     }
   }, [
+    isFullscreenPlayerOpen,
     isQueueMode,
     activeTrack?.id,
     isShuffle,
@@ -851,6 +869,21 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     [player.isRemote, metadataMap, artworkMap, allAssets, refreshQueue, refreshQueueSections]
   );
 
+  const handleUpNextItemPress = useCallback(
+    (item: UpNextItem, idx: number) => {
+      const target =
+        effectiveQueueSections?.upNext?.find(
+          (e) =>
+            item.trackId &&
+            (e.track.id === item.trackId || trackKey(e.track) === item.trackId)
+        ) || effectiveQueueSections?.upNext[idx];
+      const trackId = item.trackId || target?.track?.id || undefined;
+      const queueIndex = target ? target.index : -1;
+      handleQueueItemPress(queueIndex, trackId, item.title, item.artist);
+    },
+    [effectiveQueueSections, handleQueueItemPress]
+  );
+
   const queueSectionLabels = useMemo(
     () => ({
       history: t('queue.history_section'),
@@ -862,24 +895,45 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   );
 
   // Saf fonksiyonla üretilir; React Compiler kendi memoizasyonunu uygular.
-  const queueRows = buildQueueRows(
-    effectiveQueueSections,
-    upNextItems.length,
-    isShuffle,
-    isSmartShuffle,
-    queueSectionLabels
-  );
+  // Up-next satırları ayrıca aynı FlatList'e serpiştirilir; böylece yüzlerce
+  // Swipeable/Animated satır aynı anda mount edilmez.
+  const queueRows: QueueDisplayRow[] = useMemo(() => {
+    const baseRows = buildQueueRows(
+      effectiveQueueSections,
+      upNextItems.length,
+      isShuffle,
+      isSmartShuffle,
+      queueSectionLabels
+    );
+    if (upNextItems.length === 0) return baseRows;
+
+    const rows: QueueDisplayRow[] = [];
+    for (const row of baseRows) {
+      rows.push(row);
+      if (row.kind === 'upnext') {
+        upNextItems.forEach((item, upNextIndex) => {
+          rows.push({
+            kind: 'upnext-item',
+            key: `upnext-${item.key}`,
+            item,
+            upNextIndex,
+          });
+        });
+      }
+    }
+    return rows;
+  }, [effectiveQueueSections, upNextItems, isShuffle, isSmartShuffle, queueSectionLabels]);
 
   const currentRowIndex = useMemo(
     () => queueRows.findIndex((row) => row.kind === 'current'),
     [queueRows]
   );
 
-  const queueListRef = useRef<FlatList<QueueRow<Track>>>(null);
+  const queueListRef = useRef<FlatList<QueueDisplayRow>>(null);
 
   // Kuyruk açılınca mevcut parçaya zıplamasız ve kaymasız doğrudan konumlan
   useEffect(() => {
-    if (!isQueueMode || currentRowIndex < 0) return;
+    if (!isFullscreenPlayerOpen || !isQueueMode || currentRowIndex < 0) return;
     const timer = setTimeout(() => {
       try {
         if (currentRowIndex >= 0 && currentRowIndex < queueRows.length) {
@@ -894,7 +948,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       }
     }, 0);
     return () => clearTimeout(timer);
-  }, [isQueueMode, currentRowIndex, queueRows.length]);
+  }, [isFullscreenPlayerOpen, isQueueMode, currentRowIndex, queueRows.length]);
 
   const handleScrollToIndexFailed = useCallback(
     (info: { index: number; averageItemLength: number }) => {
@@ -1003,7 +1057,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     );
   };
 
-  const renderQueueRow = ({ item }: { item: QueueRow<Track> }) => {
+  const renderQueueRow = ({ item }: { item: QueueDisplayRow }) => {
     switch (item.kind) {
       case 'section':
         return <Text style={styles.queueSectionTitle}>{item.title}</Text>;
@@ -1056,30 +1110,22 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                 <Text style={styles.clearUpNextText}>{t('queue.clear_up_next') || 'Temizle'}</Text>
               </TouchableOpacity>
             </View>
-            <QueueUpNextList
-              items={upNextItems}
-              accentColor={theme.primary}
-              onMove={handleMoveUpNext}
-              onRemove={handleRemoveUpNext}
-              onItemPress={(item, idx) => {
-                const target =
-                  effectiveQueueSections?.upNext?.find(
-                    (e) =>
-                      item.trackId &&
-                      (e.track.id === item.trackId || trackKey(e.track) === item.trackId)
-                  ) || effectiveQueueSections?.upNext[idx];
-                const trackId = item.trackId || target?.track?.id;
-                const index = target ? target.index : -1;
-                handleQueueItemPress(
-                  index,
-                  trackId,
-                  item.title,
-                  item.artist
-                );
-              }}
-            />
           </View>
         );
+
+      case 'upnext-item': {
+        return (
+          <UpNextRow
+            item={item.item}
+            index={item.upNextIndex}
+            count={upNextItems.length}
+            accentColor={theme.primary}
+            onCommit={handleMoveUpNext}
+            onRemove={handleRemoveUpNext}
+            onPress={handleUpNextItemPress}
+          />
+        );
+      }
 
       case 'context': {
         const info = resolveTrackDisplay(item.entry.track);
@@ -1545,7 +1591,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const lastFetchedRemoteLyricsKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!player.isRemote || !remoteLyrics || remoteHasContent) {
+    if (!isFullscreenPlayerOpen || !player.isRemote || !remoteLyrics || remoteHasContent) {
       return;
     }
 
@@ -1592,6 +1638,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       });
     }
   }, [
+    isFullscreenPlayerOpen,
     player.isRemote,
     remoteLyrics,
     remoteHasContent,
@@ -1672,6 +1719,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   };
 
   useEffect(() => {
+    if (!isFullscreenPlayerOpen) return;
     if (!player.isRemote && localActiveTrack && isHydrated) {
       const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
       const titleLower = displayTitle.toLowerCase();
@@ -1698,7 +1746,16 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player.isRemote, localActiveTrack?.id, localActiveTrack?.url, displayTitle, displayArtist, isHydrated, autoFetchLyrics]);
+  }, [
+    isFullscreenPlayerOpen,
+    player.isRemote,
+    localActiveTrack?.id,
+    localActiveTrack?.url,
+    displayTitle,
+    displayArtist,
+    isHydrated,
+    autoFetchLyrics,
+  ]);
 
   // Ofset, söz zaman çizelgesini kaydırır. Pozitif değer sözleri geciktirir,
   // bu yüzden karşılaştırmada ses konumundan ofset çıkarılır. Negatif değer
@@ -2225,6 +2282,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   );
 
   useEffect(() => {
+    if (!isFullscreenPlayerOpen) return;
     // "Hareketleri azalt" açıkken duraklatma ölçek animasyonu uygulanmaz.
     Animated.spring(artworkScale, {
       toValue: reduceMotion || playing ? 1 : 0.88,
@@ -2233,7 +2291,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       stiffness: 140,
       useNativeDriver: true,
     }).start();
-  }, [playing, artworkScale, reduceMotion]);
+  }, [isFullscreenPlayerOpen, playing, artworkScale, reduceMotion]);
 
   useEffect(() => {
     const isCover = !isLyricsMode && !isQueueMode && !isSleepTimerMode && !isConnectMode;

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
 import { Gesture, GestureDetector, Swipeable } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
@@ -19,51 +19,6 @@ export interface UpNextItem {
   trackUri?: string | null;
 }
 
-interface Props {
-  items: UpNextItem[];
-  accentColor: string;
-  onMove: (from: number, to: number) => void;
-  onRemove: (index: number) => void;
-  onItemPress?: (item: UpNextItem, index: number) => void;
-}
-
-/**
- * "Sırada" (manuel öncelikli kuyruk) listesi.
- *
- * Uygulamanın ve kuyruk ekranının tasarım standartlarıyla birebir uyumlu kartlar:
- *  - Yumuşak köşe yuvarlama (borderRadius: 12)
- *  - Saydam kart arka planı (theme.surface / rgba(255, 255, 255, 0.05))
- *  - Beyaz başlık, gri alt sanatçı metni
- *  - Dokunarak çalma (onItemPress)
- *  - Tutamaktan (≡) basılı tutup sürükleyerek yeniden sıralama
- *  - Sağa/sola kaydırarak silme (Swipeable)
- */
-export function QueueUpNextList({ items, accentColor, onMove, onRemove, onItemPress }: Props) {
-  const commit = useCallback(
-    (from: number, to: number) => {
-      if (from !== to) onMove(from, to);
-    },
-    [onMove]
-  );
-
-  return (
-    <View style={{ height: items.length * UPNEXT_ROW_HEIGHT }}>
-      {items.map((item, index) => (
-        <UpNextRow
-          key={item.key}
-          item={item}
-          index={index}
-          count={items.length}
-          accentColor={accentColor}
-          onCommit={commit}
-          onRemove={onRemove}
-          onPress={onItemPress}
-        />
-      ))}
-    </View>
-  );
-}
-
 interface RowProps {
   item: UpNextItem;
   index: number;
@@ -74,7 +29,22 @@ interface RowProps {
   onPress?: (item: UpNextItem, index: number) => void;
 }
 
-function UpNextRow({
+/**
+ * "Sırada" (manuel öncelikli kuyruk) satırı.
+ *
+ * Uygulamanın ve kuyruk ekranının tasarım standartlarıyla birebir uyumlu kartlar:
+ *  - Yumuşak köşe yuvarlama (borderRadius: 12)
+ *  - Saydam kart arka planı (theme.surface / rgba(255, 255, 255, 0.05))
+ *  - Beyaz başlık, gri alt sanatçı metni
+ *  - Dokunarak çalma (onPress)
+ *  - Tutamaktan (≡) basılı tutup sürükleyerek yeniden sıralama
+ *  - Sağa/sola kaydırarak silme (Swipeable)
+ *
+ * Bu satırlar FullscreenPlayerModal içindeki ana kuyruk FlatList'ine
+ * serpiştirilerek sanallaştırılır; tüm kuyruğu tek seferde .map() ile
+ * mount etmek büyük kuyruklarda ciddi bellek sıçramasına yol açıyordu.
+ */
+export function UpNextRow({
   item,
   index,
   count,

@@ -20,8 +20,12 @@ export interface ActiveProgress {
  *
  * Buttons, list items, and modals must NEVER import this hook;
  * they should import `useActivePlayer()` instead.
+ *
+ * @param enabled Set to false while the consuming screen is hidden/mounted but
+ *   not visible. Updates then drop to once a minute so a retained fullscreen
+ *   player does not keep re-rendering behind the mini player.
  */
-export function useActiveProgress(): ActiveProgress {
+export function useActiveProgress(enabled = true): ActiveProgress {
   const isRemote = useRemoteConnectStore(
     (s) => s.mode === 'client' && s.connectionStatus === 'connected'
   );
@@ -33,7 +37,8 @@ export function useActiveProgress(): ActiveProgress {
   // re-render the (large) fullscreen player 4 times per second. Besides
   // wasting CPU, that churn recreates legacy Animated interpolation nodes and
   // can exhaust the native animated node heap over long background sessions.
-  const updateInterval = isAppActive ? (isRemote ? 3000 : 250) : 30000;
+  // The same applies while the fullscreen player is collapsed.
+  const updateInterval = !enabled ? 60000 : isAppActive ? (isRemote ? 3000 : 250) : 30000;
   const localProgress = useProgress(updateInterval);
   const interpolatedRemotePosition = useRemoteConnectStore((s) => s.interpolatedPosition);
   const remoteDuration = useRemoteConnectStore(

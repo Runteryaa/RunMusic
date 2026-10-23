@@ -30,10 +30,13 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
   const { t } = useTranslation();
   const player = useActivePlayer();
-  const progress = useActiveProgress();
 
   const theme = useThemeStore((s) => s.theme);
   const openFullscreenPlayer = usePlayerUIStore((s) => s.openFullscreenPlayer);
+  const isFullscreenPlayerOpen = usePlayerUIStore((s) => s.isFullscreenPlayerOpen);
+  // The mini player is fully hidden behind the fullscreen sheet; polling it at
+  // 4 Hz only churns its three pages while the user is not looking at it.
+  const progress = useActiveProgress(!isFullscreenPlayerOpen);
   const metadataMap = useStore((s) => s.metadataMap);
   const artworkMap = useStore((s) => s.artworkMap);
 

@@ -39,26 +39,19 @@ export function ExpandingPlayer() {
   const expandVal = useSharedValue(0);
   const rnExpandAnim = useMemo(() => new RNAnimated.Value(0), []);
 
-  // The fullscreen player tree is large and subscribes to playback progress.
-  // Keeping it mounted while it is collapsed means it keeps re-rendering (and
-  // recreating native Animated nodes) in the background. Mount it on demand
-  // and keep it around only for the closing animation.
+  // The fullscreen player tree is large. Repeatedly mounting and unmounting it
+  // leaks native views/Animated nodes on RN 0.86 Fabric
+  // (react-native#57198), which eventually surfaces as an OutOfMemoryError
+  // after long sessions. Mount it on first open and then keep the tree alive;
+  // `useActiveProgress` stops its 4 Hz updates while the player is collapsed,
+  // so the idle tree is cheap. Closing is still only a GPU transform.
   const [shouldRenderFullscreen, setShouldRenderFullscreen] = useState(isFullscreenPlayerOpen);
 
   useEffect(() => {
     if (isFullscreenPlayerOpen) {
       setShouldRenderFullscreen(true);
-      return;
     }
-    if (!shouldRenderFullscreen) {
-      return;
-    }
-    const unmountTimer = setTimeout(
-      () => setShouldRenderFullscreen(false),
-      reduceMotion ? 0 : 320
-    );
-    return () => clearTimeout(unmountTimer);
-  }, [isFullscreenPlayerOpen, reduceMotion, shouldRenderFullscreen]);
+  }, [isFullscreenPlayerOpen]);
 
   // "Player açılınca sözleri göster" tercihi: yalnızca player AÇILIRKEN uygulanır
   useEffect(() => {
