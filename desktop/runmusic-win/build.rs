@@ -17,6 +17,31 @@ fn main() {
     }
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo"));
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+
+    if target_env == "msvc" {
+        let res = out_dir.join("runmusic_icon.res");
+        let output = Command::new("rc.exe")
+            .arg(format!("/fo{}", res.display()))
+            .arg("icon.rc")
+            .output();
+        match output {
+            Ok(result) if result.status.success() => {
+                println!("cargo:rustc-link-arg={}", res.display());
+                return;
+            }
+            Ok(result) => {
+                println!(
+                    "cargo:warning=rc.exe basarisiz: {}",
+                    String::from_utf8_lossy(&result.stderr).trim()
+                );
+            }
+            Err(e) => {
+                println!("cargo:warning=rc.exe calistirilamadi: {e}");
+            }
+        }
+    }
+
     let object = out_dir.join("runmusic_icon.o");
 
     let Some(windres) = find_windres() else {
