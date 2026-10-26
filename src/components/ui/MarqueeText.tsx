@@ -11,6 +11,7 @@ import Animated, {
   withSequence,
 } from 'react-native-reanimated';
 import { useIsAppActive } from '../../hooks/useIsAppActive';
+import { useComponentDiagnostics } from '../../hooks/useComponentDiagnostics';
 
 interface MarqueeTextProps {
   text: string;
@@ -27,6 +28,7 @@ export const MarqueeText: React.FC<MarqueeTextProps> = ({
   duration = 50, // ms per pixel
   gap = 30,
 }) => {
+  useComponentDiagnostics('MarqueeText');
   const [containerWidth, setContainerWidth] = useState(0);
   const [textWidth, setTextWidth] = useState(0);
 

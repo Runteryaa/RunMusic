@@ -22,7 +22,7 @@ export interface ActiveProgress {
  * they should import `useActivePlayer()` instead.
  *
  * @param enabled Set to false while the consuming screen is hidden/mounted but
- *   not visible. Updates then drop to once a minute so a retained fullscreen
+ *   not visible. Updates then drop to five minutes so a retained fullscreen
  *   player does not keep re-rendering behind the mini player.
  */
 export function useActiveProgress(enabled = true): ActiveProgress {
@@ -37,8 +37,15 @@ export function useActiveProgress(enabled = true): ActiveProgress {
   // re-render the (large) fullscreen player 4 times per second. Besides
   // wasting CPU, that churn recreates legacy Animated interpolation nodes and
   // can exhaust the native animated node heap over long background sessions.
-  // The same applies while the fullscreen player is collapsed.
-  const updateInterval = !enabled ? 60000 : isAppActive ? (isRemote ? 3000 : 250) : 30000;
+  // The player tree is also unmounted while backgrounded; the long interval is
+  // a second line of defence for any other progress consumer.
+  const updateInterval = !enabled
+    ? 300000
+    : isAppActive
+    ? isRemote
+      ? 3000
+      : 250
+    : 600000;
   const localProgress = useProgress(updateInterval);
   const interpolatedRemotePosition = useRemoteConnectStore((s) => s.interpolatedPosition);
   const remoteDuration = useRemoteConnectStore(

@@ -16,7 +16,8 @@ import { useThemeStore } from '../store/useThemeStore';
 import { MiniPlayer } from './MiniPlayer';
 import { FullscreenPlayerModal } from './FullscreenPlayerModal';
 import { ErrorBoundary } from './ErrorBoundary';
-import { usePlayTracker } from '../hooks/usePlayTracker';
+import { useIsAppBackgrounded } from '../hooks/useIsAppActive';
+import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MINI_HEIGHT = 62;
@@ -25,7 +26,8 @@ const MINI_RADIUS = 12;
 const COLLAPSED_Y = SCREEN_HEIGHT - MINI_BOTTOM - MINI_HEIGHT;
 
 export function ExpandingPlayer() {
-  usePlayTracker();
+  useComponentDiagnostics('ExpandingPlayer');
+  const isAppBackgrounded = useIsAppBackgrounded();
   const localActiveTrack = useActiveTrack();
   const isRemote = useRemoteConnectStore(
     (s) => s.mode === 'client' && s.connectionStatus === 'connected'
@@ -42,9 +44,10 @@ export function ExpandingPlayer() {
   // The fullscreen player tree is large. Repeatedly mounting and unmounting it
   // leaks native views/Animated nodes on RN 0.86 Fabric
   // (react-native#57198), which eventually surfaces as an OutOfMemoryError
-  // after long sessions. Mount it on first open and then keep the tree alive;
-  // `useActiveProgress` stops its 4 Hz updates while the player is collapsed,
-  // so the idle tree is cheap. Closing is still only a GPU transform.
+  // after long sessions. In the foreground: mount it on first open and keep it
+  // alive while collapsed (`useActiveProgress` stops its 4 Hz updates). In the
+  // background the whole player subtree is dropped once; keeping it alive for
+  // hours of track/progress updates is the bigger leak.
   const [shouldRenderFullscreen, setShouldRenderFullscreen] = useState(isFullscreenPlayerOpen);
 
   useEffect(() => {
@@ -65,7 +68,9 @@ export function ExpandingPlayer() {
 
   useEffect(() => {
     const toValue = isFullscreenPlayerOpen ? 1 : 0;
-    const duration = reduceMotion ? 0 : isFullscreenPlayerOpen ? 280 : 240;
+    // If the app is backgrounded mid-animation its views are about to be
+    // unmounted; snap the value so the player cannot return half-open.
+    const duration = isAppBackgrounded ? 0 : reduceMotion ? 0 : isFullscreenPlayerOpen ? 280 : 240;
     const easing = Easing.bezier(0.25, 0.1, 0.25, 1);
     const rnEasing = RNEasing.bezier(0.25, 0.1, 0.25, 1);
 
@@ -80,7 +85,7 @@ export function ExpandingPlayer() {
       easing: rnEasing,
       useNativeDriver: true,
     }).start();
-  }, [isFullscreenPlayerOpen, expandVal, rnExpandAnim, reduceMotion]);
+  }, [isFullscreenPlayerOpen, isAppBackgrounded, expandVal, rnExpandAnim, reduceMotion]);
 
   // MiniPlayer: Altta sabit durur, açılırken hızlıca ve pürüzsüzce kaybolur
   const miniAnimatedStyle = useAnimatedStyle(() => {
@@ -135,6 +140,14 @@ export function ExpandingPlayer() {
       transform: [{ translateY }, { scaleX }],
     };
   });
+
+  // Playback, stats and the widget updater live in root-level side-effect
+  // components. The player UI has no visible surface while backgrounded, so
+  // drop its entire subtree (mini + fullscreen + all Animated nodes) instead
+  // of letting track/progress updates keep rendering it for hours.
+  if (isAppBackgrounded) {
+    return null;
+  }
 
   if (!activeTrack && !isRemote) {
     return null;

@@ -84,7 +84,8 @@ import {
   type QueueTrackLike,
 } from '../services/queueController';
 import { UpNextRow, type UpNextItem } from './QueueUpNextList';
-import { Swipeable } from 'react-native-gesture-handler';
+import { useIsAppActive } from '../hooks/useIsAppActive';
+import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
@@ -92,8 +93,8 @@ const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
 /**
  * Queue rows are flattened so the single FlatList can virtualize both the
  * regular queue and the manually queued "up next" items. Rendering the up-next
- * list with .map() creates a Swipeable/Animated tree for every queued track at
- * once, which is a major memory spike for large queues.
+ * list with .map() creates an Animated tree for every queued track at once,
+ * which is a major memory spike for large queues.
  */
 type QueueDisplayRow =
   | QueueRow<Track>
@@ -107,8 +108,10 @@ function formatLyricsOffset(value: number): string {
 
 
 function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
+  useComponentDiagnostics('FullscreenPlayer');
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
+  const isAppActive = useIsAppActive();
   const {
     isFullscreenPlayerOpen,
     closeFullscreenPlayer,
@@ -379,7 +382,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
-    if (isSleepTimerActive && isFullscreenPlayerOpen) {
+    if (isSleepTimerActive && isFullscreenPlayerOpen && isAppActive) {
       const updateRemaining = () => {
         if (sleepTimerDurationOption === 'track') {
           setSleepTimerRemaining(t('player.after_track'));
@@ -400,6 +403,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   }, [
     isSleepTimerActive,
     isFullscreenPlayerOpen,
+    isAppActive,
     sleepTimerEndTime,
     sleepTimerDurationOption,
     t,
@@ -523,20 +527,21 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   // Oynatıcı açıkken veya aktif parça değiştiğinde kuyruğu ve bölümleri önceden hazırla (pre-warm)
   useEffect(() => {
-    if (!isFullscreenPlayerOpen) return;
+    if (!isFullscreenPlayerOpen || !isAppActive) return;
     refreshQueue();
     refreshQueueSections();
-  }, [activeTrack, isFullscreenPlayerOpen, refreshQueue, refreshQueueSections]);
+  }, [activeTrack, isFullscreenPlayerOpen, isAppActive, refreshQueue, refreshQueueSections]);
 
   // Kuyruk modu açıkken veya aktif parça / kuyruk / modlar değiştiğinde bölümleri tazele.
   useEffect(() => {
-    if (isFullscreenPlayerOpen && isQueueMode) {
+    if (isFullscreenPlayerOpen && isQueueMode && isAppActive) {
       refreshQueueSections();
       refreshQueue();
     }
   }, [
     isFullscreenPlayerOpen,
     isQueueMode,
+    isAppActive,
     activeTrack?.id,
     isShuffle,
     isSmartShuffle,
@@ -896,7 +901,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   // Saf fonksiyonla üretilir; React Compiler kendi memoizasyonunu uygular.
   // Up-next satırları ayrıca aynı FlatList'e serpiştirilir; böylece yüzlerce
-  // Swipeable/Animated satır aynı anda mount edilmez.
+  // Animated satır aynı anda mount edilmez.
   const queueRows: QueueDisplayRow[] = useMemo(() => {
     const baseRows = buildQueueRows(
       effectiveQueueSections,
@@ -933,7 +938,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   // Kuyruk açılınca mevcut parçaya zıplamasız ve kaymasız doğrudan konumlan
   useEffect(() => {
-    if (!isFullscreenPlayerOpen || !isQueueMode || currentRowIndex < 0) return;
+    if (!isFullscreenPlayerOpen || !isQueueMode || !isAppActive || currentRowIndex < 0) return;
     const timer = setTimeout(() => {
       try {
         if (currentRowIndex >= 0 && currentRowIndex < queueRows.length) {
@@ -948,7 +953,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       }
     }, 0);
     return () => clearTimeout(timer);
-  }, [isFullscreenPlayerOpen, isQueueMode, currentRowIndex, queueRows.length]);
+  }, [isFullscreenPlayerOpen, isQueueMode, isAppActive, currentRowIndex, queueRows.length]);
 
   const handleScrollToIndexFailed = useCallback(
     (info: { index: number; averageItemLength: number }) => {
@@ -1042,16 +1047,30 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
         {isCurrent ? (
           <Ionicons name="volume-high" size={20} color={theme.primary} />
         ) : isContext ? (
-          <TouchableOpacity
-            style={styles.queueQuickPromoteBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            activeOpacity={0.7}
-            onPress={(e) => {
-              e.stopPropagation();
-              handlePromoteToUpNext(entry.index, info.trackId || entry.track.id);
-            }}>
-            <Ionicons name="arrow-up-circle-outline" size={22} color="rgba(255,255,255,0.45)" />
-          </TouchableOpacity>
+          <View style={styles.queueQuickActions}>
+            <TouchableOpacity
+              style={styles.queueQuickPromoteBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.7}
+              onPress={(e) => {
+                e.stopPropagation();
+                handlePromoteToUpNext(entry.index, info.trackId || entry.track.id);
+              }}>
+              <Ionicons name="arrow-up-circle-outline" size={22} color="rgba(255,255,255,0.45)" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.queueQuickRemoveBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.delete')}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleRemoveFromContext(entry.index, info.trackId || entry.track.id);
+              }}>
+              <Ionicons name="trash-outline" size={19} color="rgba(255,255,255,0.45)" />
+            </TouchableOpacity>
+          </View>
         ) : null}
       </TouchableOpacity>
     );
@@ -1119,7 +1138,6 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
             item={item.item}
             index={item.upNextIndex}
             count={upNextItems.length}
-            accentColor={theme.primary}
             onCommit={handleMoveUpNext}
             onRemove={handleRemoveUpNext}
             onPress={handleUpNextItemPress}
@@ -1127,46 +1145,9 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
         );
       }
 
-      case 'context': {
-        const info = resolveTrackDisplay(item.entry.track);
-        return (
-          <Swipeable
-            friction={1}
-            leftThreshold={130}
-            rightThreshold={130}
-            overshootLeft={false}
-            overshootRight={false}
-            activeOffsetX={[-20, 20]}
-            failOffsetY={[-15, 15]}
-            onSwipeableOpen={(direction, swipeable) => {
-              swipeable?.close?.();
-              if (direction === 'left') {
-                handlePromoteToUpNext(item.entry.index, info.trackId || item.entry.track.id);
-              } else if (direction === 'right') {
-                handleRemoveFromContext(item.entry.index, info.trackId || item.entry.track.id);
-              }
-            }}
-            renderLeftActions={() => (
-              <TouchableOpacity
-                style={[styles.queuePromoteAction, { backgroundColor: theme.primary }]}
-                activeOpacity={0.8}
-                onPress={() => handlePromoteToUpNext(item.entry.index, info.trackId || item.entry.track.id)}>
-                <Ionicons name="arrow-up-circle-outline" size={22} color="#ffffff" />
-                <Text style={styles.queuePromoteText}>{t('queue.promote_to_up_next') || 'Öne Al'}</Text>
-              </TouchableOpacity>
-            )}
-            renderRightActions={() => (
-              <TouchableOpacity
-                style={[styles.queueRemoveAction, { backgroundColor: '#ef4444' }]}
-                activeOpacity={0.8}
-                onPress={() => handleRemoveFromContext(item.entry.index, info.trackId || item.entry.track.id)}>
-                <Ionicons name="trash-outline" size={20} color="#ffffff" />
-              </TouchableOpacity>
-            )}>
-            {renderQueueTrackRow(item.entry, false, false, undefined, true)}
-          </Swipeable>
-        );
-      }
+      case 'context':
+        // Quick promote/remove actions live inside the row; no Swipeable tree.
+        return renderQueueTrackRow(item.entry, false, false, undefined, true);
 
       default:
         return null;
@@ -1792,6 +1773,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   useEffect(() => {
     if (
+      isAppActive &&
       isFullscreenPlayerOpen &&
       isLyricsMode &&
       !isLyricsAutoScrollPaused &&
@@ -1809,7 +1791,14 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
         // Fallback
       }
     }
-  }, [activeLineIndex, isFullscreenPlayerOpen, isLyricsMode, isLyricsAutoScrollPaused, parsedLines.length]);
+  }, [
+    activeLineIndex,
+    isAppActive,
+    isFullscreenPlayerOpen,
+    isLyricsMode,
+    isLyricsAutoScrollPaused,
+    parsedLines.length,
+  ]);
 
   // Progress 4Hz geldiği için konumu son tick'ten bu yana geçen süreyle
   // besliyoruz; böylece düz metin sözler 60fps'te tek bir akış hâlinde kayar.
@@ -1827,6 +1816,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   // animasyonsuz kaydırıyoruz.
   useEffect(() => {
     if (
+      !isAppActive ||
       !isFullscreenPlayerOpen ||
       !isLyricsMode ||
       isLyricsAutoScrollPaused ||
@@ -1881,6 +1871,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     return () => cancelAnimationFrame(frameId);
   }, [
     duration,
+    isAppActive,
     isFullscreenPlayerOpen,
     isLyricsMode,
     isLyricsAutoScrollPaused,
@@ -5190,26 +5181,6 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 6,
   },
-  queueRemoveAction: {
-    width: 72,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    marginVertical: 2,
-  },
-  queuePromoteAction: {
-    width: 72,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    marginVertical: 2,
-  },
-  queuePromoteText: {
-    color: '#ffffff',
-    fontSize: 10,
-    fontWeight: '700',
-    marginTop: 2,
-  },
   upNextSectionWrapper: {
     marginVertical: 4,
   },
@@ -5246,9 +5217,15 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '600',
   },
+  queueQuickActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   queueQuickPromoteBtn: {
     padding: 6,
-    marginLeft: 6,
+  },
+  queueQuickRemoveBtn: {
+    padding: 6,
   },
   queueItem: {
     flexDirection: 'row',

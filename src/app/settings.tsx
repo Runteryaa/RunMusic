@@ -21,6 +21,7 @@ import Constants from 'expo-constants';
 import { useStore, DEFAULT_PREFERENCES } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
+import { MemoryDiagnosticsCard } from '../components/MemoryDiagnosticsCard';
 import { saveCachedLibrary } from '../services/libraryStorage';
 import { cleanDisplayTitle, type LyricsSourcePreference } from '../services/lyricsService';
 import { getSortOptionLabel, type SortOption } from '../services/librarySort';
@@ -1098,6 +1099,20 @@ export default function SettingsScreen() {
           onPress={handleResetSettings}
         />
       </Section>
+
+      {preferences.isDevModeActive ? (
+        <Section
+          icon="pulse-outline"
+          title={resolvedLanguage === 'tr' ? 'Bellek Tanılama' : 'Memory Diagnostics'}
+          subtitle={
+            resolvedLanguage === 'tr'
+              ? 'Arka plan çökme günlüğü'
+              : 'Background crash log'
+          }
+          theme={theme}>
+          <MemoryDiagnosticsCard theme={theme} language={resolvedLanguage} />
+        </Section>
+      ) : null}
 
       {/* ── HAKKINDA ──────────────────────────────────────────────────────── */}
       <Section

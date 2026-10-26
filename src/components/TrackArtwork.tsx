@@ -1,12 +1,11 @@
-import { useState, useEffect } from 'react';
-import { StyleSheet } from 'react-native';
+import React, { memo, useState, useEffect } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
-
-import Animated from 'react-native-reanimated';
+import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 
 interface TrackArtworkProps {
   uri?: string | null;
@@ -16,10 +15,9 @@ interface TrackArtworkProps {
   borderRadius?: number;
   iconSize?: number;
   shadow?: boolean;
-  sharedTransitionTag?: string;
 }
 
-export function TrackArtwork({
+export const TrackArtwork = memo(function TrackArtwork({
   uri,
   trackId,
   trackUri,
@@ -27,25 +25,30 @@ export function TrackArtwork({
   borderRadius = 10,
   iconSize = 20,
   shadow = false,
-  sharedTransitionTag,
 }: TrackArtworkProps) {
+  useComponentDiagnostics('TrackArtwork');
   const [hasError, setHasError] = useState(false);
-  const theme = useThemeStore((state) => state.theme);
-  const artworkMap = useStore((state) => state.artworkMap);
-  const metadataMap = useStore((state) => state.metadataMap);
-  const allAssets = useStore((state) => state.allAssets);
+  const themePrimary = useThemeStore((state) => state.theme.primary);
   const setArtwork = useStore((state) => state.setArtwork);
 
-  const canonicalId = trackId
-    ? allAssets.find((a) => a.id === trackId || a.uri === trackId)?.id || trackId
-    : null;
+  // Subscribe to a single artwork string instead of the whole artwork/metadata
+  // maps. A metadata scan that adds artwork for one track must not re-render
+  // every visible row in the library or queue. When the caller already supplied
+  // a URI this selector intentionally stays undefined.
+  const storeArtwork = useStore((state) => {
+    if (uri) return undefined;
+    if (trackId) {
+      const direct =
+        state.metadataMap[trackId]?.artwork || state.artworkMap[trackId];
+      if (direct) return direct;
+    }
+    if (trackUri) {
+      return state.metadataMap[trackUri]?.artwork || state.artworkMap[trackUri];
+    }
+    return undefined;
+  });
 
-  // If direct uri provided and not errored, use it; otherwise check store by canonicalId/trackId/trackUri
-  const effectiveUri =
-    uri ||
-    (canonicalId ? (metadataMap[canonicalId]?.artwork || artworkMap[canonicalId]) : undefined) ||
-    (trackId ? (metadataMap[trackId]?.artwork || artworkMap[trackId]) : undefined) ||
-    (trackUri ? (metadataMap[trackUri]?.artwork || artworkMap[trackUri]) : undefined);
+  const effectiveUri = uri || storeArtwork;
 
   useEffect(() => {
     setHasError(false);
@@ -75,7 +78,7 @@ export function TrackArtwork({
 
   if (effectiveUri && !hasError) {
     return (
-      <Animated.View style={containerStyle} sharedTransitionTag={sharedTransitionTag}>
+      <View style={containerStyle}>
         <Image
           source={{ uri: effectiveUri }}
           style={{ width: size, height: size, borderRadius }}
@@ -88,16 +91,16 @@ export function TrackArtwork({
           recyclingKey={effectiveUri}
           onError={() => setHasError(true)}
         />
-      </Animated.View>
+      </View>
     );
   }
 
   return (
-    <Animated.View style={containerStyle} sharedTransitionTag={sharedTransitionTag}>
-      <Ionicons name="musical-notes" size={iconSize} color={theme.primary} />
-    </Animated.View>
+    <View style={containerStyle}>
+      <Ionicons name="musical-notes" size={iconSize} color={themePrimary} />
+    </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {

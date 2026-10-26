@@ -17,7 +17,6 @@ import {
 import * as MediaLibrary from 'expo-media-library/legacy';
 import * as FileSystem from 'expo-file-system';
 import TrackPlayer, { useActiveTrack } from 'react-native-track-player';
-import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../store/useStore';
@@ -27,6 +26,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { useActivePlayer } from '../hooks/useActivePlayer';
+import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import type { RemoteTrackSummary } from '../services/remote/remoteTypes';
 import { TrackArtwork } from '../components/TrackArtwork';
@@ -65,6 +65,7 @@ const TRACK_INFO_CACHE = new Map<
 const MAX_TRACK_INFO_CACHE = 3000;
 
 export default function LibraryScreen() {
+  useComponentDiagnostics('LibraryScreen');
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
   const theme = useThemeStore((s) => s.theme);
@@ -923,45 +924,23 @@ export default function LibraryScreen() {
 
   const renderItem = ({
     item,
-    index,
   }: {
     item: { asset: MediaLibrary.Asset; info: { title: string; artist: string } };
-    index: number;
   }) => {
     const { asset, info } = item;
     const isPlayingCurrent =
       activeTrack && (activeTrack.id === asset.id || activeTrack.url === asset.uri);
 
-    const renderLeftActions = () => (
-      <View style={[styles.swipeLeftActionBox, { backgroundColor: theme.primary }]}>
-        <Ionicons name="list" size={20} color="#ffffff" style={{ marginRight: 6 }} />
-        <Text style={styles.swipeLeftActionText}>{t('library.add_to_queue')}</Text>
-      </View>
-    );
-
     return (
       <View key={`track-row-${asset.id}`}>
-        <Swipeable
-          renderLeftActions={renderLeftActions}
-          friction={1}
-          leftThreshold={130}
-          overshootLeft={false}
-          activeOffsetX={[-20, 20]}
-          failOffsetY={[-15, 15]}
-          onSwipeableOpen={(direction, swipeable) => {
-            swipeable?.close?.();
-            if (direction === 'left') {
-              handleAddToQueue(asset);
-            }
-          }}>
-          <View
-            style={[
-              styles.trackItem,
-              isPlayingCurrent && [
-                styles.trackItemPlaying,
-                { borderColor: theme.border, backgroundColor: theme.surface },
-              ],
-            ]}>
+        <View
+          style={[
+            styles.trackItem,
+            isPlayingCurrent && [
+              styles.trackItemPlaying,
+              { borderColor: theme.border, backgroundColor: theme.surface },
+            ],
+          ]}>
             <TouchableOpacity
               style={styles.trackMainContent}
               activeOpacity={0.7}
@@ -1021,50 +1000,25 @@ export default function LibraryScreen() {
               <Ionicons name="ellipsis-vertical" size={18} color="#a1a1aa" />
             </TouchableOpacity>
           </View>
-        </Swipeable>
-        {/* Her 15 şarkıda bir araya zararsız banner reklam (son şarkı hariç) */}
-        {(index + 1) % 15 === 0 && index !== displayedList.length - 1 ? (
-          <AdBanner style={{ marginVertical: 6 }} />
-        ) : null}
       </View>
     );
   };
 
-  const renderRemoteItem = ({ item, index }: { item: RemoteTrackSummary; index: number }) => {
+  const renderRemoteItem = ({ item }: { item: RemoteTrackSummary }) => {
     const isPlayingCurrent =
       (activeTrack && activeTrack.id === item.id) ||
       (player.activeTrack && player.activeTrack.id === item.id);
 
-    const renderLeftActions = () => (
-      <View style={[styles.swipeLeftActionBox, { backgroundColor: theme.primary }]}>
-        <Ionicons name="list" size={20} color="#ffffff" style={{ marginRight: 6 }} />
-        <Text style={styles.swipeLeftActionText}>{t('library.add_to_queue')}</Text>
-      </View>
-    );
-
     return (
       <View key={`remote-row-${item.id}`}>
-        <Swipeable
-          renderLeftActions={renderLeftActions}
-          friction={1}
-          leftThreshold={130}
-          overshootLeft={false}
-          activeOffsetX={[-20, 20]}
-          failOffsetY={[-15, 15]}
-          onSwipeableOpen={(direction, swipeable) => {
-            swipeable?.close?.();
-            if (direction === 'left') {
-              handleRemoteAddToQueue(item);
-            }
-          }}>
-          <View
-            style={[
-              styles.trackItem,
-              isPlayingCurrent && [
-                styles.trackItemPlaying,
-                { borderColor: theme.border, backgroundColor: theme.surface },
-              ],
-            ]}>
+        <View
+          style={[
+            styles.trackItem,
+            isPlayingCurrent && [
+              styles.trackItemPlaying,
+              { borderColor: theme.border, backgroundColor: theme.surface },
+            ],
+          ]}>
             <TouchableOpacity
               style={styles.trackMainContent}
               activeOpacity={0.7}
@@ -1106,11 +1060,13 @@ export default function LibraryScreen() {
                 </Text>
               </View>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.trackMoreBtn}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              onPress={() => handleRemoteAddToQueue(item)}>
+              <Ionicons name="list" size={18} color="#a1a1aa" />
+            </TouchableOpacity>
           </View>
-        </Swipeable>
-        {(index + 1) % 15 === 0 && index !== remoteDisplayedList.length - 1 ? (
-          <AdBanner style={{ marginVertical: 6 }} />
-        ) : null}
       </View>
     );
   };
@@ -1227,11 +1183,6 @@ export default function LibraryScreen() {
               <AdBanner style={{ marginBottom: 8 }} />
             ) : null}
           </>
-        }
-        ListFooterComponent={
-          (isShowingRemoteLibrary ? remoteDisplayedList.length : displayedList.length) >= 20 ? (
-            <AdBanner style={{ marginTop: 8, marginBottom: 16 }} />
-          ) : null
         }
         initialNumToRender={15}
         maxToRenderPerBatch={10}
@@ -1591,21 +1542,6 @@ const styles = StyleSheet.create({
   },
   trackMoreBtn: {
     padding: 8,
-  },
-  swipeLeftActionBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#27272a',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    borderRadius: 14,
-    marginBottom: 8,
-    marginRight: 6,
-  },
-  swipeLeftActionText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '700',
   },
   centerBox: {
     alignItems: 'center',

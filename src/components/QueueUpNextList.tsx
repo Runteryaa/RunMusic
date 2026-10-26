@@ -1,10 +1,11 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
-import { Gesture, GestureDetector, Swipeable } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { TrackArtwork } from './TrackArtwork';
 import { useTranslation } from '../services/i18n';
+import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 
 /** Sürükleme matematiği sabit satır yüksekliğine dayanır; stil ile eşleşmeli. */
 export const UPNEXT_ROW_HEIGHT = 62;
@@ -23,7 +24,6 @@ interface RowProps {
   item: UpNextItem;
   index: number;
   count: number;
-  accentColor: string;
   onCommit: (from: number, to: number) => void;
   onRemove: (index: number) => void;
   onPress?: (item: UpNextItem, index: number) => void;
@@ -38,7 +38,7 @@ interface RowProps {
  *  - Beyaz başlık, gri alt sanatçı metni
  *  - Dokunarak çalma (onPress)
  *  - Tutamaktan (≡) basılı tutup sürükleyerek yeniden sıralama
- *  - Sağa/sola kaydırarak silme (Swipeable)
+ *  - Sağdaki çöp kutusuyla silme
  *
  * Bu satırlar FullscreenPlayerModal içindeki ana kuyruk FlatList'ine
  * serpiştirilerek sanallaştırılır; tüm kuyruğu tek seferde .map() ile
@@ -48,11 +48,11 @@ export function UpNextRow({
   item,
   index,
   count,
-  accentColor,
   onCommit,
   onRemove,
   onPress,
 }: RowProps) {
+  useComponentDiagnostics('UpNextRow');
   const { t } = useTranslation();
   const dragY = useSharedValue(0);
   const isDragging = useSharedValue(false);
@@ -90,84 +90,67 @@ export function UpNextRow({
     opacity: isDragging.value ? 0.95 : 1,
   }));
 
-  const renderRightActions = () => (
-    <TouchableOpacity
-      style={styles.removeAction}
-      activeOpacity={0.8}
-      onPress={() => onRemove(index)}>
-      <Ionicons name="trash-outline" size={20} color="#ffffff" />
-    </TouchableOpacity>
-  );
-
   const isExtensionTrack =
     item.trackId?.startsWith('ext_') ||
     (typeof item.trackUri === 'string' && item.trackUri.startsWith('http'));
 
   return (
     <Animated.View style={[styles.rowWrapper, animatedStyle]}>
-      <Swipeable
-        renderRightActions={renderRightActions}
-        friction={1}
-        rightThreshold={130}
-        overshootRight={false}
-        activeOffsetX={[-20, 20]}
-        failOffsetY={[-15, 15]}
-        onSwipeableOpen={(direction, swipeable) => {
-          swipeable?.close?.();
-          if (direction === 'right') {
-            onRemove(index);
-          }
-        }}>
-        <View style={styles.cardContainer}>
-          {/* Sol: Sürükleme Tutamağı */}
-          <GestureDetector gesture={pan}>
-            <View style={styles.dragHandle} hitSlop={{ top: 10, bottom: 10, left: 10, right: 8 }}>
-              <Ionicons name="reorder-two-outline" size={20} color="rgba(255,255,255,0.4)" />
-            </View>
-          </GestureDetector>
+      <View style={styles.cardContainer}>
+        {/* Sol: Sürükleme Tutamağı */}
+        <GestureDetector gesture={pan}>
+          <View style={styles.dragHandle} hitSlop={{ top: 10, bottom: 10, left: 10, right: 8 }}>
+            <Ionicons name="reorder-two-outline" size={20} color="rgba(255,255,255,0.4)" />
+          </View>
+        </GestureDetector>
 
-          {/* Ana İçerik: Dokunarak Çalma */}
-          <TouchableOpacity
-            style={styles.mainContent}
-            activeOpacity={0.7}
-            onPress={() => onPress?.(item, index)}>
-            <TrackArtwork
-              uri={item.artwork}
-              trackId={item.trackId}
-              trackUri={item.trackUri}
-              size={40}
-              borderRadius={6}
-              iconSize={18}
-            />
+        {/* Ana İçerik: Dokunarak Çalma */}
+        <TouchableOpacity
+          style={styles.mainContent}
+          activeOpacity={0.7}
+          onPress={() => onPress?.(item, index)}>
+          <TrackArtwork
+            uri={item.artwork}
+            trackId={item.trackId}
+            trackUri={item.trackUri}
+            size={40}
+            borderRadius={6}
+            iconSize={18}
+          />
 
-            <View style={styles.textBox}>
-              <Text style={styles.title} numberOfLines={1}>
-                {item.title}
+          <View style={styles.textBox}>
+            <Text style={styles.title} numberOfLines={1}>
+              {item.title}
+            </Text>
+            <View style={styles.artistContainer}>
+              {isExtensionTrack ? (
+                <View style={styles.extBadge}>
+                  <Ionicons
+                    name="globe-outline"
+                    size={10}
+                    color="rgba(255,255,255,0.7)"
+                    style={{ marginRight: 3 }}
+                  />
+                  <Text style={styles.extBadgeText}>{t('common.extension')}</Text>
+                </View>
+              ) : null}
+              <Text style={styles.artist} numberOfLines={1}>
+                {item.artist || t('common.unknown_artist')}
               </Text>
-              <View style={styles.artistContainer}>
-                {isExtensionTrack ? (
-                  <View style={styles.extBadge}>
-                    <Ionicons
-                      name="globe-outline"
-                      size={10}
-                      color="rgba(255,255,255,0.7)"
-                      style={{ marginRight: 3 }}
-                    />
-                    <Text style={styles.extBadgeText}>{t('common.extension')}</Text>
-                  </View>
-                ) : null}
-                <Text style={styles.artist} numberOfLines={1}>
-                  {item.artist || t('common.unknown_artist')}
-                </Text>
-              </View>
             </View>
+          </View>
+        </TouchableOpacity>
 
-            <View style={styles.rightSlot}>
-              <Ionicons name="play" size={13} color="rgba(255,255,255,0.25)" />
-            </View>
-          </TouchableOpacity>
-        </View>
-      </Swipeable>
+        <TouchableOpacity
+          style={styles.removeBtn}
+          activeOpacity={0.7}
+          hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          onPress={() => onRemove(index)}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.delete')}>
+          <Ionicons name="trash-outline" size={18} color="rgba(255,255,255,0.45)" />
+        </TouchableOpacity>
+      </View>
     </Animated.View>
   );
 }
@@ -234,16 +217,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     flex: 1,
   },
-  rightSlot: {
-    paddingLeft: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  removeAction: {
-    width: 68,
-    height: UPNEXT_ROW_HEIGHT - 4,
-    backgroundColor: '#ef4444',
-    borderRadius: 12,
+  removeBtn: {
+    paddingHorizontal: 6,
+    paddingVertical: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },

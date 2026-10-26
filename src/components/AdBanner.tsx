@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, Text, StyleProp, ViewStyle } from 'react-native';
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { AD_UNIT_IDS } from '../services/adService';
 import { useThemeStore } from '../store/useThemeStore';
 import { useStore } from '../store/useStore';
+import { useIsAppActive } from '../hooks/useIsAppActive';
+import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
+import { recordEvent } from '../services/memoryDiagnostics';
 
 interface AdBannerProps {
   style?: StyleProp<ViewStyle>;
@@ -11,12 +14,23 @@ interface AdBannerProps {
 }
 
 export function AdBanner({ style, size = BannerAdSize.ANCHORED_ADAPTIVE_BANNER }: AdBannerProps) {
+  useComponentDiagnostics('AdBanner');
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
   const theme = useThemeStore((s) => s.theme);
   const isDevModeActive = useStore((s) => s.preferences.isDevModeActive);
+  const isAppActive = useIsAppActive();
 
-  if (isDevModeActive || hasError) {
+  // Releasing the native ad view while backgrounded stops AdMob refreshes and
+  // any ad-related native allocations during long playback sessions.
+  useEffect(() => {
+    if (!isAppActive) {
+      setIsLoaded(false);
+      setHasError(false);
+    }
+  }, [isAppActive]);
+
+  if (isDevModeActive || hasError || !isAppActive) {
     return null;
   }
 
@@ -42,11 +56,16 @@ export function AdBanner({ style, size = BannerAdSize.ANCHORED_ADAPTIVE_BANNER }
         onAdLoaded={() => {
           setIsLoaded(true);
           setHasError(false);
+          recordEvent('ad_loaded');
         }}
         onAdFailedToLoad={(error) => {
           console.log('[AdBanner] Ad failed to load:', error);
           setHasError(true);
           setIsLoaded(false);
+          recordEvent(
+            'ad_failed',
+            String((error as { code?: string | number; message?: string })?.code ?? error)
+          );
         }}
       />
     </View>

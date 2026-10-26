@@ -17,6 +17,9 @@ import { refreshReplayGainForActiveTrack } from '../services/audioEffectsService
 import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
+import { usePlayTracker } from '../hooks/usePlayTracker';
+import { useMemoryDiagnostics } from '../hooks/useMemoryDiagnostics';
+import { useIsAppActive } from '../hooks/useIsAppActive';
 import { initSleepTimerService } from '../store/useSleepTimerStore';
 import { useTranslation, t } from '../services/i18n';
 import { initAdService } from '../services/adService';
@@ -81,18 +84,28 @@ function waitForStoreHydration(timeoutMs: number): Promise<void> {
   });
 }
 
-function MainAppLayout({ onFirstLayout }: { onFirstLayout: () => void }) {
+/**
+ * Playback tracking and widget updates must keep running when the UI is
+ * backgrounded. Keeping them in a null component prevents track/progress
+ * updates from re-rendering the whole navigator.
+ */
+function PlayerSideEffects() {
   useWidgetUpdater();
-  const { t } = useTranslation();
-  const isDeviceSelectorOpen = usePlayerUIStore((s) => s.isDeviceSelectorOpen);
-  const closeDeviceSelector = usePlayerUIStore((s) => s.closeDeviceSelector);
-  
+  usePlayTracker();
+  useMemoryDiagnostics();
+  return null;
+}
+
+/**
+ * Theme/artwork sync is pure foreground work. Mount it only while active so a
+ * track change received in the background cannot mutate the theme and force
+ * every mounted screen to re-render.
+ */
+function ActiveTrackThemeSync() {
   const activeTrack = useActiveTrack();
-  const theme = useThemeStore((s) => s.theme);
   const updateThemeFromArtwork = useThemeStore((s) => s.updateThemeFromArtwork);
   const dynamicColorFromArtwork = useStore((s) => s.preferences.dynamicColorFromArtwork);
   const presetThemeColor = useStore((s) => s.preferences.presetThemeColor);
-  const keepPlayingWhenAppKilled = useStore((s) => s.preferences.keepPlayingWhenAppKilled);
   const setArtwork = useStore((s) => s.setArtwork);
   const activeTrackId = activeTrack?.id;
   const storeArtwork = useStore((s) =>
@@ -101,36 +114,6 @@ function MainAppLayout({ onFirstLayout }: { onFirstLayout: () => void }) {
 
   const artworkUri =
     storeArtwork || (typeof activeTrack?.artwork === 'string' ? activeTrack.artwork : undefined);
-
-  // Uygulama kapatılınca çalma davranışını native servise senkronize et
-  useEffect(() => {
-    syncAppKilledPlaybackBehavior(keepPlayingWhenAppKilled);
-  }, [keepPlayingWhenAppKilled]);
-
-  // Kök uygulama kapatıldığında (unmount) kullanıcı tercihi kapalıysa müziği tamamen durdur
-  useEffect(() => {
-    return () => {
-      const keepPlaying = useStore.getState().preferences?.keepPlayingWhenAppKilled ?? true;
-      if (!keepPlaying) {
-        TrackPlayer.stop().catch(() => {});
-        TrackPlayer.reset().catch(() => {});
-      }
-    };
-  }, []);
-
-  const isRemoteServiceEnabled = useRemoteConnectStore((s) => s.isServiceEnabled);
-  useEffect(() => {
-    if (isRemoteServiceEnabled) {
-      remoteSyncManager.startHostService().catch((err) => {
-        console.warn('Failed to start remote host service:', err);
-      });
-    } else {
-      remoteSyncManager.stopHostService();
-      if (useRemoteConnectStore.getState().mode === 'client') {
-        remoteSyncManager.disconnectClient();
-      }
-    }
-  }, [isRemoteServiceEnabled]);
 
   const isRemoteMode = useRemoteConnectStore((s) => s.mode === 'client');
   const remoteArtworkUri = useRemoteConnectStore((s) => s.remoteState.artworkUri);
@@ -162,11 +145,55 @@ function MainAppLayout({ onFirstLayout }: { onFirstLayout: () => void }) {
     }
   }, [effectiveArtworkUri, activeTrackId, updateThemeFromArtwork, dynamicColorFromArtwork, presetThemeColor]);
 
+  return null;
+}
+
+function MainAppLayout({ onFirstLayout }: { onFirstLayout: () => void }) {
+  const { t } = useTranslation();
+  const isDeviceSelectorOpen = usePlayerUIStore((s) => s.isDeviceSelectorOpen);
+  const closeDeviceSelector = usePlayerUIStore((s) => s.closeDeviceSelector);
+  const isAppActive = useIsAppActive();
+
+  const theme = useThemeStore((s) => s.theme);
+  const keepPlayingWhenAppKilled = useStore((s) => s.preferences.keepPlayingWhenAppKilled);
+
+  // Uygulama kapatılınca çalma davranışını native servise senkronize et
+  useEffect(() => {
+    syncAppKilledPlaybackBehavior(keepPlayingWhenAppKilled);
+  }, [keepPlayingWhenAppKilled]);
+
+  // Kök uygulama kapatıldığında (unmount) kullanıcı tercihi kapalıysa müziği tamamen durdur
+  useEffect(() => {
+    return () => {
+      const keepPlaying = useStore.getState().preferences?.keepPlayingWhenAppKilled ?? true;
+      if (!keepPlaying) {
+        TrackPlayer.stop().catch(() => {});
+        TrackPlayer.reset().catch(() => {});
+      }
+    };
+  }, []);
+
+  const isRemoteServiceEnabled = useRemoteConnectStore((s) => s.isServiceEnabled);
+  useEffect(() => {
+    if (isRemoteServiceEnabled) {
+      remoteSyncManager.startHostService().catch((err) => {
+        console.warn('Failed to start remote host service:', err);
+      });
+    } else {
+      remoteSyncManager.stopHostService();
+      if (useRemoteConnectStore.getState().mode === 'client') {
+        remoteSyncManager.disconnectClient();
+      }
+    }
+  }, [isRemoteServiceEnabled]);
+
   return (
     <GestureHandlerRootView
       style={{ flex: 1, backgroundColor: '#121212' }}
       onLayout={onFirstLayout}>
       <View style={{ flex: 1, backgroundColor: '#121212' }}>
+        <PlayerSideEffects />
+        {isAppActive ? <ActiveTrackThemeSync /> : null}
         <Tabs
           screenOptions={{
             headerShown: true,

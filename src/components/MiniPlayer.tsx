@@ -24,10 +24,12 @@ import { MarqueeText } from './ui/MarqueeText';
 import { cleanYouTubeTitle, cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import { useTranslation } from '../services/i18n';
+import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
+  useComponentDiagnostics('MiniPlayer');
   const { t } = useTranslation();
   const player = useActivePlayer();
 
