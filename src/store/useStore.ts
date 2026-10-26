@@ -181,6 +181,13 @@ interface AppState {
    */
   lyricsOffsets: Record<string, number>;
   setLyricsOffset: (trackId: string, offsetSeconds: number) => void;
+  /**
+   * Aynı anda birden fazla anahtarı (kanonik kimlik + kuyruk kimliği + URL)
+   * tek bir store güncellemesiyle yazar. Ofset butonuna her basışta ayrı ayrı
+   * `setLyricsOffset` çağırmak, tüm fullscreen ağacını ve persist yazımını
+   * anahtar sayısı kadar tetikliyordu.
+   */
+  setLyricsOffsets: (trackIds: string[], offsetSeconds: number) => void;
 
   /**
    * Manuel "Sırada" (Up Next) kuyruğu: parça kimlikleri, çalınma sırasına göre.
@@ -311,6 +318,37 @@ export const useStore = create<AppState>()(
           }
           if (current === value) return state;
           return { lyricsOffsets: { ...state.lyricsOffsets, [key]: value } };
+        });
+      },
+      setLyricsOffsets: (trackIds, offsetSeconds) => {
+        const keys = Array.from(
+          new Set(
+            (Array.isArray(trackIds) ? trackIds : [])
+              .map((trackId) => String(trackId || '').trim())
+              .filter(Boolean)
+          )
+        );
+        if (keys.length === 0) return;
+
+        const value = normalizeLyricsOffsetValue(offsetSeconds);
+        set((state) => {
+          const next = { ...state.lyricsOffsets };
+          let changed = false;
+
+          for (const key of keys) {
+            const current = next[key];
+            if (value === 0) {
+              if (current !== undefined) {
+                delete next[key];
+                changed = true;
+              }
+            } else if (current !== value) {
+              next[key] = value;
+              changed = true;
+            }
+          }
+
+          return changed ? { lyricsOffsets: next } : state;
         });
       },
 

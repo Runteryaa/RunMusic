@@ -47,7 +47,12 @@ export function useActiveProgress(enabled = true): ActiveProgress {
       : 250
     : 600000;
   const localProgress = useProgress(updateInterval);
-  const interpolatedRemotePosition = useRemoteConnectStore((s) => s.interpolatedPosition);
+  // `enabled=false` must also silence the remote interpolation stream. The
+  // remote store updates `interpolatedPosition` continuously; subscribing to it
+  // while the player is hidden would keep this hook re-rendering anyway.
+  const interpolatedRemotePosition = useRemoteConnectStore((s) =>
+    enabled ? s.interpolatedPosition : 0
+  );
   const remoteDuration = useRemoteConnectStore(
     (s) => s.remoteState.activeTrack?.duration ?? 0
   );

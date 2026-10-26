@@ -21,7 +21,7 @@ interface MarqueeTextProps {
   gap?: number;
 }
 
-export const MarqueeText: React.FC<MarqueeTextProps> = ({
+const MarqueeTextImpl: React.FC<MarqueeTextProps> = ({
   text,
   style,
   containerStyle,
@@ -103,3 +103,12 @@ const styles = StyleSheet.create({
     width: '100%',
   },
 });
+
+/**
+ * The player screens re-render for progress/state changes, but the marquee
+ * text itself only depends on its own text/styles. Without this memo boundary
+ * every progress tick re-rendered all six mini-player and two fullscreen
+ * marquee instances (tens of thousands of renders per session).
+ */
+export const MarqueeText = React.memo(MarqueeTextImpl);
+MarqueeText.displayName = 'MarqueeText';

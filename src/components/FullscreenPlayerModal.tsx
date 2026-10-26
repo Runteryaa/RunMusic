@@ -29,13 +29,14 @@ import TrackPlayer, {
 import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
+import type { ThemeColors } from '../services/colorThemeService';
 import { useSleepTimerStore } from '../store/useSleepTimerStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useExtensionStore } from '../store/useExtensionStore';
 import { startDownload } from '../services/downloadManager';
-import { useActivePlayer } from '../hooks/useActivePlayer';
+import { useActivePlayer, type ActivePlayerState } from '../hooks/useActivePlayer';
 import { useActiveProgress } from '../hooks/useActiveProgress';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import { wsRoomClient } from '../services/remote/wsRoomClient';
@@ -107,6 +108,655 @@ function formatLyricsOffset(value: number): string {
   return `${normalized > 0 ? '+' : ''}${normalized.toFixed(1)}s`;
 }
 
+function formatTime(secs: number): string {
+  if (isNaN(secs) || secs < 0) return '0:00';
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Isolated 4 Hz scrubber. The old fullscreen component polled progress at the
+ * root and re-rendered its entire (very large) tree four times per second.
+ */
+function PlayerScrubber({
+  active,
+  player,
+  theme,
+}: {
+  active: boolean;
+  player: ActivePlayerState;
+  theme: ThemeColors;
+}) {
+  const progress = useActiveProgress(active);
+  const [barWidth, setBarWidth] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragTime, setDragTime] = useState(0);
+
+  const duration =
+    progress.duration > 0 ? progress.duration : player.activeTrack?.duration || 0;
+  const currentPosition = isDragging ? dragTime : progress.position;
+  const progressPercent =
+    duration > 0 ? Math.min(1, Math.max(0, currentPosition / duration)) : 0;
+
+  const handleTouchCalc = (e: GestureResponderEvent) => {
+    if (barWidth <= 0 || duration <= 0) return 0;
+    const x = Math.max(0, Math.min(barWidth, e.nativeEvent.pageX - 24));
+    return (x / barWidth) * duration;
+  };
+
+  const handleSeekGrant = (e: GestureResponderEvent) => {
+    setIsDragging(true);
+    setDragTime(handleTouchCalc(e));
+  };
+
+  const handleSeekMove = (e: GestureResponderEvent) => {
+    if (!isDragging || duration <= 0) return;
+    setDragTime(handleTouchCalc(e));
+  };
+
+  const handleSeekRelease = async (e: GestureResponderEvent) => {
+    if (duration <= 0) {
+      setIsDragging(false);
+      return;
+    }
+    const target = handleTouchCalc(e);
+    setIsDragging(false);
+    await player.seekTo(target);
+  };
+
+  return (
+    <View style={styles.scrubberBox}>
+      <View
+        style={styles.progressTouchContainer}
+        onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
+        onStartShouldSetResponder={() => true}
+        onMoveShouldSetResponder={() => true}
+        onResponderGrant={handleSeekGrant}
+        onResponderMove={handleSeekMove}
+        onResponderRelease={handleSeekRelease}>
+        <View
+          pointerEvents="none"
+          style={[
+            styles.progressBarBackground,
+            {
+              height: isDragging ? 10 : 7,
+            },
+          ]}>
+          <View
+            style={[
+              styles.progressBarFill,
+              { backgroundColor: theme.primary, width: `${progressPercent * 100}%` },
+            ]}
+          />
+        </View>
+      </View>
+      <View style={styles.timeRow}>
+        <Text style={styles.timeText}>{formatTime(currentPosition)}</Text>
+        <Text style={styles.timeText}>
+          {duration > 0 ? formatTime(duration) : '0:00'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Progress-sensitive lyrics surface. It subscribes to `useActiveProgress`
+ * itself so the fullscreen player shell stays idle during playback. While the
+ * offset modal is open progress polling is suspended; only the offset update
+ * runs, which keeps repeated +/- taps responsive.
+ */
+function LyricsPanel({
+  isFullscreenPlayerOpen,
+  isLyricsMode,
+  isRemote,
+  localActiveTrack,
+  allAssets,
+  currentLyrics,
+  parsedLines,
+  isLoadingLyrics,
+  activeTrackKey,
+  player,
+  theme,
+  t,
+  onManualSearch,
+}: {
+  isFullscreenPlayerOpen: boolean;
+  isLyricsMode: boolean;
+  isRemote: boolean;
+  localActiveTrack: Track | null;
+  allAssets: MediaLibrary.Asset[];
+  currentLyrics: LyricsResult | null;
+  parsedLines: LyricLine[];
+  isLoadingLyrics: boolean;
+  activeTrackKey: string | null;
+  player: ActivePlayerState;
+  theme: ThemeColors;
+  t: (key: string, params?: Record<string, string | number>) => string;
+  onManualSearch: () => void;
+}) {
+  const isAppActive = useIsAppActive();
+  const [isAutoScrollPaused, setIsAutoScrollPaused] = useState(false);
+  const [isOffsetOpen, setIsOffsetOpen] = useState(false);
+
+  const progress = useActiveProgress(
+    isFullscreenPlayerOpen && isLyricsMode && !isOffsetOpen
+  );
+
+  const lyricsFlatListRef = useRef<FlatList<LyricLine>>(null);
+  const isUserScrollingRef = useRef(false);
+  const scrollTimeoutRef = useRef<any>(null);
+
+  const plainLyricsScrollRef = useRef<ScrollView>(null);
+  const plainContentHeightRef = useRef(0);
+  const plainScrollViewHeightRef = useRef(0);
+  const isPlainUserScrollingRef = useRef(false);
+  const plainScrollTimeoutRef = useRef<any>(null);
+  const plainProgressRef = useRef({ position: 0, at: 0, playing: false });
+
+  const lyricsOffsetKeys = useMemo(() => {
+    if (!localActiveTrack) return [] as string[];
+    const keys = [
+      resolveTrackId(localActiveTrack, allAssets),
+      String(localActiveTrack.id || ''),
+      String(localActiveTrack.url || ''),
+    ]
+      .map((key) => key.trim())
+      .filter(Boolean);
+    return Array.from(new Set(keys));
+  }, [localActiveTrack, allAssets]);
+  const lyricsOffsetKey = lyricsOffsetKeys[0] || '';
+
+  const lyricsOffsets = useStore((s) => s.lyricsOffsets);
+  const setLyricsOffsets = useStore((s) => s.setLyricsOffsets);
+
+  const lyricsOffset = useMemo(() => {
+    if (!localActiveTrack || isRemote) return 0;
+    for (const key of lyricsOffsetKeys) {
+      const value = lyricsOffsets[key];
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+    }
+    return 0;
+  }, [localActiveTrack, lyricsOffsetKeys, lyricsOffsets, isRemote]);
+  const appliedLyricsOffset = isRemote ? 0 : lyricsOffset;
+
+  const hasWordSync = useMemo(() => {
+    if (!currentLyrics) return false;
+    if (currentLyrics.hasWordSync) return true;
+    return parsedLines.some((l) => !!l.words && l.words.length > 0);
+  }, [currentLyrics, parsedLines]);
+  const hasLyricsContent = parsedLines.length > 0 || !!currentLyrics?.plainLyrics;
+
+  // Ofset, söz zaman çizelgesini kaydırır. Pozitif değer sözleri geciktirir,
+  // bu yüzden karşılaştırmada ses konumundan ofset çıkarılır.
+  const lyricPosition = progress.position - appliedLyricsOffset;
+
+  const activeLineIndex = useMemo(() => {
+    if (!parsedLines || parsedLines.length === 0) return -1;
+    for (let i = parsedLines.length - 1; i >= 0; i--) {
+      if (lyricPosition >= parsedLines[i].time) {
+        return i;
+      }
+    }
+    return -1;
+  }, [parsedLines, lyricPosition]);
+
+  const toggleAutoScroll = useCallback(() => {
+    setIsAutoScrollPaused((prev) => {
+      const next = !prev;
+      if (!next && activeLineIndex >= 0 && parsedLines.length > 0) {
+        try {
+          lyricsFlatListRef.current?.scrollToIndex({
+            index: activeLineIndex,
+            animated: true,
+            viewPosition: 0.35,
+          });
+        } catch {
+          // Fallback
+        }
+      }
+      return next;
+    });
+  }, [activeLineIndex, parsedLines.length]);
+
+  useEffect(() => {
+    if (
+      isAppActive &&
+      isFullscreenPlayerOpen &&
+      isLyricsMode &&
+      !isOffsetOpen &&
+      !isAutoScrollPaused &&
+      activeLineIndex >= 0 &&
+      parsedLines.length > 0 &&
+      !isUserScrollingRef.current
+    ) {
+      try {
+        lyricsFlatListRef.current?.scrollToIndex({
+          index: activeLineIndex,
+          animated: true,
+          viewPosition: 0.35,
+        });
+      } catch {
+        // Fallback
+      }
+    }
+  }, [
+    activeLineIndex,
+    isAppActive,
+    isFullscreenPlayerOpen,
+    isLyricsMode,
+    isOffsetOpen,
+    isAutoScrollPaused,
+    parsedLines.length,
+  ]);
+
+  useEffect(() => {
+    plainProgressRef.current = {
+      position: progress.position,
+      at: Date.now(),
+      playing: player.isPlaying,
+    };
+  }, [progress.position, player.isPlaying]);
+
+  useEffect(() => {
+    if (
+      !isAppActive ||
+      !isFullscreenPlayerOpen ||
+      !isLyricsMode ||
+      isOffsetOpen ||
+      isAutoScrollPaused ||
+      currentLyrics?.syncedLyrics ||
+      !currentLyrics?.plainLyrics ||
+      progress.duration <= 0
+    ) {
+      return;
+    }
+
+    let frameId = 0;
+    let lastY = -1;
+    const duration = progress.duration;
+
+    const tick = () => {
+      if (!isPlainUserScrollingRef.current) {
+        const maxScroll = Math.max(
+          0,
+          plainContentHeightRef.current - plainScrollViewHeightRef.current
+        );
+
+        if (maxScroll > 0) {
+          const snapshot = plainProgressRef.current;
+          const elapsed = snapshot.playing
+            ? Math.min(0.5, Math.max(0, (Date.now() - snapshot.at) / 1000))
+            : 0;
+          const estimatedPosition = Math.min(
+            duration,
+            Math.max(0, snapshot.position + elapsed)
+          );
+          const adjustedPosition = Math.min(
+            duration,
+            Math.max(0, estimatedPosition - appliedLyricsOffset)
+          );
+          const targetY = (adjustedPosition / duration) * maxScroll;
+
+          if (lastY < 0 || Math.abs(targetY - lastY) >= 0.5) {
+            lastY = targetY;
+            plainLyricsScrollRef.current?.scrollTo({
+              y: targetY,
+              animated: false,
+            });
+          }
+        }
+      }
+
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, [
+    progress.duration,
+    isAppActive,
+    isFullscreenPlayerOpen,
+    isLyricsMode,
+    isOffsetOpen,
+    isAutoScrollPaused,
+    currentLyrics?.syncedLyrics,
+    currentLyrics?.plainLyrics,
+    appliedLyricsOffset,
+  ]);
+
+  useEffect(() => {
+    if (activeTrackKey) {
+      isPlainUserScrollingRef.current = false;
+      if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
+      plainLyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
+    }
+  }, [activeTrackKey]);
+
+  useEffect(() => {
+    setIsAutoScrollPaused(false);
+    setIsOffsetOpen(false);
+  }, [activeTrackKey, isRemote]);
+
+  const adjustLyricsOffset = useCallback(
+    (delta: number) => {
+      if (lyricsOffsetKeys.length === 0 || isRemote) return;
+      // Read the latest value from the store instead of the render closure so
+      // two quick taps cannot both start from the same stale offset.
+      const currentOffsets = useStore.getState().lyricsOffsets;
+      let current = 0;
+      for (const key of lyricsOffsetKeys) {
+        const value = currentOffsets[key];
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          current = value;
+          break;
+        }
+      }
+      setLyricsOffsets(lyricsOffsetKeys, current + delta);
+    },
+    [lyricsOffsetKeys, isRemote, setLyricsOffsets]
+  );
+
+  const resetLyricsOffset = useCallback(() => {
+    if (isRemote || lyricsOffsetKeys.length === 0) return;
+    setLyricsOffsets(lyricsOffsetKeys, 0);
+  }, [isRemote, lyricsOffsetKeys, setLyricsOffsets]);
+
+  return (
+    <>
+      <View style={styles.lyricsCardHeader}>
+        <View style={[styles.lyricsSourceBadge, { backgroundColor: theme.surface }]}>
+          <Ionicons
+            name={
+              hasWordSync
+                ? 'sparkles'
+                : currentLyrics?.syncedLyrics || parsedLines.length > 0
+                ? 'musical-notes'
+                : 'document-text-outline'
+            }
+            size={12}
+            color={hasWordSync ? '#10b981' : theme.primary}
+            style={{ marginRight: 4 }}
+          />
+          <Text
+            numberOfLines={1}
+            style={[styles.lyricsSourceText, { color: hasWordSync ? '#10b981' : theme.textAccent }]}>
+            {hasWordSync
+              ? 'LRCLIB (Word Sync)'
+              : currentLyrics?.syncedLyrics || parsedLines.length > 0
+              ? 'LRCLIB (Sync)'
+              : currentLyrics?.source === 'lrclib'
+              ? 'LRCLIB (Plain Text)'
+              : currentLyrics?.source === 'genius'
+              ? 'Genius (Plain Text)'
+              : t('player.lyrics')}
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {hasLyricsContent && !isRemote && lyricsOffsetKey ? (
+            <TouchableOpacity
+              style={[styles.lyricsActionBtn, { backgroundColor: theme.surface }]}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={`${t('player.lyrics_offset')} ${formatLyricsOffset(appliedLyricsOffset)}`}
+              onPress={() => setIsOffsetOpen(true)}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+              {appliedLyricsOffset !== 0 ? (
+                <Text
+                  style={[
+                    styles.lyricsActionBtnText,
+                    { color: theme.primary, marginLeft: 0, fontVariant: ['tabular-nums'] },
+                  ]}>
+                  {formatLyricsOffset(appliedLyricsOffset)}
+                </Text>
+              ) : (
+                <Ionicons name="time-outline" size={12} color="rgba(255, 255, 255, 0.65)" />
+              )}
+            </TouchableOpacity>
+          ) : null}
+
+          {hasLyricsContent ? (
+            <TouchableOpacity
+              style={[
+                styles.lyricsActionBtn,
+                { backgroundColor: theme.surface },
+                isAutoScrollPaused && { backgroundColor: 'rgba(239, 68, 68, 0.18)' },
+              ]}
+              activeOpacity={0.7}
+              onPress={toggleAutoScroll}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+              <Ionicons
+                name={isAutoScrollPaused ? 'play' : 'pause'}
+                size={12}
+                color={isAutoScrollPaused ? '#ef4444' : theme.primary}
+              />
+              <Text
+                style={[
+                  styles.lyricsActionBtnText,
+                  { color: isAutoScrollPaused ? '#ef4444' : theme.primary },
+                ]}>
+                {isAutoScrollPaused ? t('player.auto_scroll') : t('player.pause_scroll')}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+
+          <TouchableOpacity
+            style={[styles.lyricsSearchBtn, { backgroundColor: theme.surface }]}
+            activeOpacity={0.7}
+            onPress={onManualSearch}>
+            <Ionicons name="search" size={12} color={theme.primary} />
+            <Text style={[styles.lyricsSearchBtnText, { color: theme.primary }]}>
+              {t('player.manual_search')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {isLoadingLyrics ? (
+        <View style={styles.lyricsLoadingCenter}>
+          <ActivityIndicator size="large" color={theme.primary} />
+          <Text style={styles.lyricsLoadingText}>{t('player.searching_lyrics')}</Text>
+        </View>
+      ) : parsedLines.length > 0 ? (
+        <FlatList
+          ref={lyricsFlatListRef}
+          data={parsedLines}
+          keyExtractor={(_, index) => `lyric-line-${index}`}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.lyricsListContent}
+          extraData={`${activeLineIndex}-${lyricPosition}-${appliedLyricsOffset}`}
+          onScrollBeginDrag={() => {
+            isUserScrollingRef.current = true;
+            if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+          }}
+          onScrollEndDrag={() => {
+            if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+            scrollTimeoutRef.current = setTimeout(() => {
+              isUserScrollingRef.current = false;
+            }, 4000);
+          }}
+          renderItem={({ item, index }) => {
+            const isActive = index === activeLineIndex;
+            return (
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => player.seekTo(Math.max(0, item.time + appliedLyricsOffset))}
+                style={[styles.lyricRow, isActive && styles.lyricRowActive]}>
+                {isActive && item.words && item.words.length > 0 ? (
+                  <Text
+                    style={[
+                      styles.lyricText,
+                      styles.lyricTextActive,
+                      { textShadowColor: theme.glowColor },
+                    ]}>
+                    {item.words.map((word, wIdx) => {
+                      const isSung = lyricPosition >= word.time;
+                      const displayWord =
+                        wIdx < item.words!.length - 1 &&
+                        !word.text.endsWith(' ') &&
+                        !item.words![wIdx + 1].text.startsWith(' ')
+                          ? word.text + ' '
+                          : word.text;
+                      return (
+                        <Text
+                          key={`word-${wIdx}`}
+                          style={
+                            isSung
+                              ? [
+                                  styles.lyricWordSung,
+                                  { textShadowColor: theme.glowColor },
+                                ]
+                              : styles.lyricWordUpcoming
+                          }>
+                          {displayWord}
+                        </Text>
+                      );
+                    })}
+                  </Text>
+                ) : (
+                  <Text
+                    style={[
+                      styles.lyricText,
+                      isActive && [
+                        styles.lyricTextActive,
+                        { textShadowColor: theme.glowColor },
+                      ],
+                    ]}>
+                    {item.text}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            );
+          }}
+        />
+      ) : currentLyrics?.plainLyrics ? (
+        <ScrollView
+          ref={plainLyricsScrollRef}
+          style={styles.plainLyricsScroll}
+          contentContainerStyle={styles.lyricsListContent}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={(_, h) => {
+            plainContentHeightRef.current = h;
+          }}
+          onLayout={(e) => {
+            plainScrollViewHeightRef.current = e.nativeEvent.layout.height;
+          }}
+          onScrollBeginDrag={() => {
+            isPlainUserScrollingRef.current = true;
+            if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
+          }}
+          onScrollEndDrag={() => {
+            if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
+            plainScrollTimeoutRef.current = setTimeout(() => {
+              isPlainUserScrollingRef.current = false;
+            }, 4000);
+          }}
+          onMomentumScrollBegin={() => {
+            isPlainUserScrollingRef.current = true;
+            if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
+          }}
+          onMomentumScrollEnd={() => {
+            if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
+            plainScrollTimeoutRef.current = setTimeout(() => {
+              isPlainUserScrollingRef.current = false;
+            }, 4000);
+          }}>
+          <Text style={styles.plainLyricsText}>{currentLyrics.plainLyrics}</Text>
+        </ScrollView>
+      ) : (
+        <View style={styles.lyricsEmptyState}>
+          <Ionicons name="mic-off-outline" size={38} color="#52525b" />
+          <Text style={styles.lyricsEmptyTitle}>{t('player.no_lyrics_found')}</Text>
+          <Text style={styles.lyricsEmptySubtitle}>
+            {t('player.no_lyrics_subtitle')}
+          </Text>
+          <TouchableOpacity
+            style={[styles.lyricsEmptySearchBtn, { backgroundColor: theme.primary }]}
+            activeOpacity={0.8}
+            onPress={onManualSearch}>
+            <Ionicons name="search" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+            <Text style={styles.lyricsEmptySearchBtnText}>{t('player.search_lyrics_btn')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      <Modal
+        visible={isOffsetOpen && !isRemote}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsOffsetOpen(false)}>
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setIsOffsetOpen(false)}>
+          <Pressable
+            style={[styles.lyricsOffsetModalBox, { borderColor: theme.border }]}
+            onPress={(e) => e.stopPropagation()}>
+            <View style={styles.lyricsOffsetHeader}>
+              <View style={styles.lyricsOffsetTitleRow}>
+                <Ionicons name="time-outline" size={20} color={theme.primary} />
+                <Text style={styles.lyricsOffsetTitle}>{t('player.lyrics_offset')}</Text>
+              </View>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={t('player.lyrics_offset_close')}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                onPress={() => setIsOffsetOpen(false)}>
+                <Ionicons name="close" size={22} color="#a1a1aa" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.lyricsOffsetValue, { color: theme.primary }]}>
+              {formatLyricsOffset(lyricsOffset)}
+            </Text>
+            <Text style={styles.lyricsOffsetHint}>{t('player.lyrics_offset_hint')}</Text>
+            <Text style={styles.lyricsOffsetSignHint}>{t('player.lyrics_offset_sign_hint')}</Text>
+
+            <View style={styles.lyricsOffsetGrid}>
+              {[-1, -0.5, -0.1, 0.1, 0.5, 1].map((delta) => (
+                <TouchableOpacity
+                  key={`offset-${delta}`}
+                  activeOpacity={0.7}
+                  onPress={() => adjustLyricsOffset(delta)}
+                  style={[
+                    styles.lyricsOffsetAdjustBtn,
+                    { backgroundColor: theme.surface, borderColor: theme.border },
+                  ]}>
+                  <Text style={[styles.lyricsOffsetAdjustText, { color: theme.textAccent }]}>
+                    {formatLyricsOffset(delta)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              activeOpacity={0.7}
+              disabled={lyricsOffset === 0}
+              onPress={resetLyricsOffset}
+              style={[
+                styles.lyricsOffsetResetBtn,
+                { backgroundColor: theme.surface, borderColor: theme.border },
+                lyricsOffset === 0 && styles.lyricsOffsetResetBtnDisabled,
+              ]}>
+              <Ionicons
+                name="refresh"
+                size={15}
+                color={lyricsOffset === 0 ? 'rgba(255, 255, 255, 0.35)' : theme.primary}
+              />
+              <Text
+                style={[
+                  styles.lyricsOffsetResetText,
+                  { color: lyricsOffset === 0 ? 'rgba(255, 255, 255, 0.35)' : theme.primary },
+                ]}>
+                {t('player.lyrics_offset_reset')}
+              </Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
 
 function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
   useComponentDiagnostics('FullscreenPlayer');
@@ -128,9 +778,6 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   const theme = useThemeStore((s) => s.theme);
   const player = useActivePlayer();
-  // The fullscreen tree is retained after its first open to avoid a Fabric
-  // mount/unmount leak. Throttle progress polling while it is collapsed.
-  const progress = useActiveProgress(isFullscreenPlayerOpen);
   const localActiveTrack = useActiveTrack();
   const activeTrack = player.activeTrack;
   const playing = player.isPlaying;
@@ -341,9 +988,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const artworkMap = useStore((s) => s.artworkMap);
   const metadataMap = useStore((s) => s.metadataMap);
   const lyricsCache = useStore((s) => s.lyricsCache);
-  const lyricsOffsets = useStore((s) => s.lyricsOffsets);
   const setLyrics = useStore((s) => s.setLyrics);
-  const setLyricsOffset = useStore((s) => s.setLyricsOffset);
   const getLyricsFromCache = useStore((s) => s.getLyricsFromCache);
   const hideTrack = useStore((s) => s.hideTrack);
   const isHydrated = useStore((s) => s.isHydrated);
@@ -357,21 +1002,10 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   const [isLoadingDynamicAd, setIsLoadingDynamicAd] = useState(false);
 
-  const [barWidth, setBarWidth] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragTime, setDragTime] = useState(0);
-
   const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
   const [isEditTrackModalOpen, setIsEditTrackModalOpen] = useState(false);
   const [customTimerMinutes, setCustomTimerMinutes] = useState('');
   const [sleepTimerRemaining, setSleepTimerRemaining] = useState<string>('');
-  const [isLyricsAutoScrollPaused, setIsLyricsAutoScrollPaused] = useState(false);
-  const [isLyricsOffsetOpen, setIsLyricsOffsetOpen] = useState(false);
-
-  useEffect(() => {
-    setIsLyricsAutoScrollPaused(false);
-    setIsLyricsOffsetOpen(false);
-  }, [activeTrack?.id, player.isRemote]);
 
   // Sleep Timer store
   const isSleepTimerActive = useSleepTimerStore((s) => s.isActive);
@@ -477,33 +1111,6 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const [isSearchingCandidates, setIsSearchingCandidates] = useState(false);
   const [resolvingCandidateId, setResolvingCandidateId] = useState<string | null>(null);
 
-  const lyricsFlatListRef = useRef<FlatList<LyricLine>>(null);
-  const isUserScrollingRef = useRef(false);
-  const scrollTimeoutRef = useRef<any>(null);
-
-  const plainLyricsScrollRef = useRef<ScrollView>(null);
-  const plainContentHeightRef = useRef(0);
-  const plainScrollViewHeightRef = useRef(0);
-  const isPlainUserScrollingRef = useRef(false);
-  const plainScrollTimeoutRef = useRef<any>(null);
-  /**
-   * Son bilinen şarkı konumu + zaman damgası. `useProgress` saniyede 4 kez
-   * güncellendiği için aradaki karelerde konumu duvar saatinden tahmin ederek
-   * düz metin sözlerini kesintisiz kaydırıyoruz.
-   */
-  const plainProgressRef = useRef({ position: 0, at: 0, playing: false });
-
-  const currentPosition = isDragging ? dragTime : progress.position;
-  const duration = progress.duration > 0 ? progress.duration : 0;
-  const progressPercent = duration > 0 ? Math.min(1, Math.max(0, currentPosition / duration)) : 0;
-
-  const formatTime = (secs: number) => {
-    if (isNaN(secs) || secs < 0) return '0:00';
-    const m = Math.floor(secs / 60);
-    const s = Math.floor(secs % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
-
   const refreshQueue = useCallback(async () => {
     if (player.isRemote) return;
     try {
@@ -531,7 +1138,10 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     if (!isFullscreenPlayerOpen || !isAppActive) return;
     refreshQueue();
     refreshQueueSections();
-  }, [activeTrack, isFullscreenPlayerOpen, isAppActive, refreshQueue, refreshQueueSections]);
+    // `activeTrack` is a summary object rebuilt by useActivePlayer on every
+    // render. Depending on that object re-ran this effect after each async
+    // setQueue/setQueueSections, creating an ~8 renders/sec feedback loop.
+  }, [activeTrack?.id, isFullscreenPlayerOpen, isAppActive, refreshQueue, refreshQueueSections]);
 
   // Kuyruk modu açıkken veya aktif parça / kuyruk / modlar değiştiğinde bölümleri tazele.
   useEffect(() => {
@@ -1519,73 +2129,6 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     return parseAnySyncedLyrics(currentLyrics.lyricsfile, currentLyrics.syncedLyrics);
   }, [currentLyrics]);
 
-  const hasWordSync = useMemo(() => {
-    if (!currentLyrics) return false;
-    if (currentLyrics.hasWordSync) return true;
-    return parsedLines.some((l) => !!l.words && l.words.length > 0);
-  }, [currentLyrics, parsedLines]);
-
-  /**
-   * Söz ofseti parça başına saklanır. Kanonik kütüphane kimliği önceliklidir;
-   * kütüphane henüz taranmadıysa aktif kuyruk kimliği/URL'si yedek olarak
-   * kullanılır. Eski kayıtlarda kalan yedek anahtarlar da okunur.
-   */
-  const lyricsOffsetKeys = useMemo(() => {
-    if (!localActiveTrack) return [] as string[];
-    const keys = [
-      resolveTrackId(localActiveTrack, allAssets),
-      String(localActiveTrack.id || ''),
-      String(localActiveTrack.url || ''),
-    ]
-      .map((key) => key.trim())
-      .filter(Boolean);
-    return Array.from(new Set(keys));
-  }, [localActiveTrack, allAssets]);
-  const lyricsOffsetKey = lyricsOffsetKeys[0] || '';
-
-  const lyricsOffset = useMemo(() => {
-    if (!localActiveTrack || player.isRemote) return 0;
-    for (const key of lyricsOffsetKeys) {
-      const value = lyricsOffsets[key];
-      if (typeof value === 'number' && Number.isFinite(value)) return value;
-    }
-    return 0;
-  }, [localActiveTrack, lyricsOffsetKeys, lyricsOffsets, player.isRemote]);
-  /** Uzak oynatımda ofset yerel cihaza uygulanmaz. */
-  const appliedLyricsOffset = player.isRemote ? 0 : lyricsOffset;
-
-  const hasLyricsContent = parsedLines.length > 0 || !!currentLyrics?.plainLyrics;
-
-  const adjustLyricsOffset = useCallback(
-    (delta: number) => {
-      if (lyricsOffsetKeys.length === 0 || player.isRemote) return;
-      const currentOffsets = useStore.getState().lyricsOffsets;
-      let current = 0;
-      for (const key of lyricsOffsetKeys) {
-        const value = currentOffsets[key];
-        if (typeof value === 'number' && Number.isFinite(value)) {
-          current = value;
-          break;
-        }
-      }
-      // Aynı ofseti kanonik kimlik, kuyruk kimliği ve URL için birlikte yaz;
-      // böylece kütüphane taraması sırasında anahtar değişse bile değer korunur
-      // ve sıfırlama eski bir yedek anahtardan geri gelmez.
-      const next = current + delta;
-      for (const key of lyricsOffsetKeys) {
-        setLyricsOffset(key, next);
-      }
-    },
-    [lyricsOffsetKeys, player.isRemote, setLyricsOffset]
-  );
-
-  const resetLyricsOffset = useCallback(() => {
-    if (player.isRemote) return;
-    for (const key of lyricsOffsetKeys) {
-      setLyricsOffset(key, 0);
-    }
-  }, [lyricsOffsetKeys, player.isRemote, setLyricsOffset]);
-
   const remoteLyrics = player.lyrics;
   const remoteLrclibId = remoteLyrics?.lrclibId;
   const remoteGeniusId = remoteLyrics?.geniusId;
@@ -1763,160 +2306,6 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     autoFetchLyrics,
   ]);
 
-  // Ofset, söz zaman çizelgesini kaydırır. Pozitif değer sözleri geciktirir,
-  // bu yüzden karşılaştırmada ses konumundan ofset çıkarılır. Negatif değer
-  // ilk satırın bile öne alınmasına izin vermek için alt sınır uygulanmaz.
-  const lyricPosition = progress.position - appliedLyricsOffset;
-
-  const activeLineIndex = useMemo(() => {
-    if (!parsedLines || parsedLines.length === 0) return -1;
-    for (let i = parsedLines.length - 1; i >= 0; i--) {
-      if (lyricPosition >= parsedLines[i].time) {
-        return i;
-      }
-    }
-    return -1;
-  }, [parsedLines, lyricPosition]);
-
-  const toggleLyricsAutoScroll = useCallback(() => {
-    setIsLyricsAutoScrollPaused((prev) => {
-      const next = !prev;
-      if (!next && activeLineIndex >= 0 && parsedLines.length > 0) {
-        try {
-          lyricsFlatListRef.current?.scrollToIndex({
-            index: activeLineIndex,
-            animated: true,
-            viewPosition: 0.35,
-          });
-        } catch {
-          // Fallback
-        }
-      }
-      return next;
-    });
-  }, [activeLineIndex, parsedLines.length]);
-
-  useEffect(() => {
-    if (
-      isAppActive &&
-      isFullscreenPlayerOpen &&
-      isLyricsMode &&
-      !isLyricsAutoScrollPaused &&
-      activeLineIndex >= 0 &&
-      parsedLines.length > 0 &&
-      !isUserScrollingRef.current
-    ) {
-      try {
-        lyricsFlatListRef.current?.scrollToIndex({
-          index: activeLineIndex,
-          animated: true,
-          viewPosition: 0.35,
-        });
-      } catch {
-        // Fallback
-      }
-    }
-  }, [
-    activeLineIndex,
-    isAppActive,
-    isFullscreenPlayerOpen,
-    isLyricsMode,
-    isLyricsAutoScrollPaused,
-    parsedLines.length,
-  ]);
-
-  // Progress 4Hz geldiği için konumu son tick'ten bu yana geçen süreyle
-  // besliyoruz; böylece düz metin sözler 60fps'te tek bir akış hâlinde kayar.
-  useEffect(() => {
-    plainProgressRef.current = {
-      position: progress.position,
-      at: Date.now(),
-      playing,
-    };
-  }, [progress.position, playing]);
-
-  // Düz metin (Genius / LRCLIB plain) şarkı sözlerini şarkının saniyesine göre aşağıya doğru orantılı kaydır.
-  // `scrollTo(animated: true)` her progress tick'inde yeniden başlatıldığı için
-  // takılma yapıyordu; bunun yerine her karede hedefi yeniden hesaplayıp
-  // animasyonsuz kaydırıyoruz.
-  useEffect(() => {
-    if (
-      !isAppActive ||
-      !isFullscreenPlayerOpen ||
-      !isLyricsMode ||
-      isLyricsAutoScrollPaused ||
-      currentLyrics?.syncedLyrics ||
-      !currentLyrics?.plainLyrics ||
-      duration <= 0
-    ) {
-      return;
-    }
-
-    let frameId = 0;
-    let lastY = -1;
-
-    const tick = () => {
-      if (!isPlainUserScrollingRef.current) {
-        const maxScroll = Math.max(
-          0,
-          plainContentHeightRef.current - plainScrollViewHeightRef.current
-        );
-
-        if (maxScroll > 0) {
-          const snapshot = plainProgressRef.current;
-          const elapsed = snapshot.playing
-            ? Math.min(0.5, Math.max(0, (Date.now() - snapshot.at) / 1000))
-            : 0;
-          const estimatedPosition = Math.min(
-            duration,
-            Math.max(0, snapshot.position + elapsed)
-          );
-          // Düz metinde satır zamanı olmadığı için ofseti orantılı kaydırma
-          // konumuna uyguluyoruz; pozitif değer kaydırmayı geciktirir.
-          const adjustedPosition = Math.min(
-            duration,
-            Math.max(0, estimatedPosition - appliedLyricsOffset)
-          );
-          const targetY = (adjustedPosition / duration) * maxScroll;
-
-          if (lastY < 0 || Math.abs(targetY - lastY) >= 0.5) {
-            lastY = targetY;
-            plainLyricsScrollRef.current?.scrollTo({
-              y: targetY,
-              animated: false,
-            });
-          }
-        }
-      }
-
-      frameId = requestAnimationFrame(tick);
-    };
-
-    frameId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frameId);
-  }, [
-    duration,
-    isAppActive,
-    isFullscreenPlayerOpen,
-    isLyricsMode,
-    isLyricsAutoScrollPaused,
-    currentLyrics?.syncedLyrics,
-    currentLyrics?.plainLyrics,
-    appliedLyricsOffset,
-  ]);
-
-  // Sadece parça kimliği (ID/URL) gerçekten değiştiğinde düz metin kaydırma pozisyonunu sıfırla
-  const activeTrackKey = activeTrack?.id || (activeTrack as any)?.url || null;
-  const lastPlainResetTrackIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (activeTrackKey && activeTrackKey !== lastPlainResetTrackIdRef.current) {
-      lastPlainResetTrackIdRef.current = activeTrackKey;
-      isPlainUserScrollingRef.current = false;
-      if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
-      plainLyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
-    }
-  }, [activeTrackKey]);
-
   const handleManualSearch = async () => {
     if (!manualQuery.trim() || !activeTrack) return;
     setIsSearchingCandidates(true);
@@ -2008,53 +2397,33 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     }
   };
 
-  const handleTouchCalc = (e: GestureResponderEvent) => {
-    if (barWidth <= 0 || duration <= 0) return 0;
-    const x = Math.max(0, Math.min(barWidth, e.nativeEvent.pageX - 24));
-    return (x / barWidth) * duration;
-  };
-
-  const handleSeekGrant = (e: GestureResponderEvent) => {
-    if (duration <= 0) return;
-    setIsDragging(true);
-    setDragTime(handleTouchCalc(e));
-  };
-
-  const handleSeekMove = (e: GestureResponderEvent) => {
-    if (!isDragging || duration <= 0) return;
-    setDragTime(handleTouchCalc(e));
-  };
-
-  const handleSeekRelease = async (e: GestureResponderEvent) => {
-    if (duration <= 0) {
-      setIsDragging(false);
-      return;
-    }
-    const target = handleTouchCalc(e);
-    setIsDragging(false);
-    await player.seekTo(target);
-  };
-
   const togglePlayback = async () => {
     if (player.isPlaying) {
       await player.pause();
-      if (!player.isRemote && localActiveTrack && progress.position > 0) {
-        saveLastPlayback(
-          {
-            trackId: localActiveTrack.id || localActiveTrack.url,
-            trackIndex: activeIndex,
-            position: progress.position,
-            track: {
-              id: localActiveTrack.id || localActiveTrack.url,
-              url: localActiveTrack.url,
-              title: localActiveTrack.title,
-              artist: localActiveTrack.artist,
-              artwork: typeof localActiveTrack.artwork === 'string' ? localActiveTrack.artwork : undefined,
-            },
-          },
-          true
-        );
-        updateQueueSnapshotActiveIndex(activeIndex, progress.position);
+      if (!player.isRemote && localActiveTrack) {
+        try {
+          const { position } = await TrackPlayer.getProgress();
+          if (position > 0) {
+            saveLastPlayback(
+              {
+                trackId: localActiveTrack.id || localActiveTrack.url,
+                trackIndex: activeIndex,
+                position,
+                track: {
+                  id: localActiveTrack.id || localActiveTrack.url,
+                  url: localActiveTrack.url,
+                  title: localActiveTrack.title,
+                  artist: localActiveTrack.artist,
+                  artwork: typeof localActiveTrack.artwork === 'string' ? localActiveTrack.artwork : undefined,
+                },
+              },
+              true
+            );
+            updateQueueSnapshotActiveIndex(activeIndex, position);
+          }
+        } catch {
+          // Player may already be torn down; pausing is still successful.
+        }
       }
     } else {
       await player.play();
@@ -2075,11 +2444,11 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   // IMPORTANT: Interpolations must be memoized.
   //
-  // This component re-renders on every progress tick (4x/sec while playing).
-  // Creating `Animated.Value.interpolate(...)` inline on each render creates a
-  // new native Animated node graph every time. On long background playback
-  // this churns/leaks native nodes until Android aborts with OutOfMemoryError
-  // in NativeAnimatedNodesManager.createAnimatedNode.
+  // This shell still re-renders for player/theme/UI state changes. Creating
+  // `Animated.Value.interpolate(...)` inline on each render creates a new
+  // native Animated node graph every time. On long background playback this
+  // churns/leaks native nodes until Android aborts with OutOfMemoryError in
+  // NativeAnimatedNodesManager.createAnimatedNode.
   const headerMorphStyle = useMemo(
     () => ({ transform: [{ translateY: headerMorphY }] }),
     [headerMorphY]
@@ -2435,19 +2804,31 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   const handleSeekBackward = useCallback(async () => {
     try {
-      await player.seekTo(Math.max(0, progress.position - 5));
+      const position = player.isRemote
+        ? useRemoteConnectStore.getState().interpolatedPosition
+        : (await TrackPlayer.getProgress()).position;
+      await player.seekTo(Math.max(0, position - 5));
     } catch (e) {
       console.warn('Seek backward failed', e);
     }
-  }, [player, progress.position]);
+  }, [player]);
 
   const handleSeekForward = useCallback(async () => {
     try {
-      await player.seekTo(Math.min(duration, progress.position + 5));
+      if (player.isRemote) {
+        const remoteState = useRemoteConnectStore.getState();
+        const duration = remoteState.remoteState.activeTrack?.duration ?? 0;
+        const target = remoteState.interpolatedPosition + 5;
+        await player.seekTo(duration > 0 ? Math.min(duration, target) : target);
+        return;
+      }
+      const { position, duration } = await TrackPlayer.getProgress();
+      const target = position + 5;
+      await player.seekTo(duration > 0 ? Math.min(duration, target) : target);
     } catch (e) {
       console.warn('Seek forward failed', e);
     }
-  }, [player, progress.position, duration]);
+  }, [player]);
 
   const togglePlaybackMode = useCallback(async () => {
     if (player.isRemote) {
@@ -2783,221 +3164,21 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
           <Animated.View
             style={[styles.lyricsCardContainer, lyricsCardTransitionStyle]}
             pointerEvents={isLyricsMode ? 'auto' : 'none'}>
-            <View style={styles.lyricsCardHeader}>
-              <View style={[styles.lyricsSourceBadge, { backgroundColor: theme.surface }]}>
-                <Ionicons
-                  name={
-                    hasWordSync
-                      ? 'sparkles'
-                      : currentLyrics?.syncedLyrics || parsedLines.length > 0
-                      ? 'musical-notes'
-                      : 'document-text-outline'
-                  }
-                  size={12}
-                  color={hasWordSync ? '#10b981' : theme.primary}
-                  style={{ marginRight: 4 }}
-                />
-                <Text
-                  numberOfLines={1}
-                  style={[styles.lyricsSourceText, { color: hasWordSync ? '#10b981' : theme.textAccent }]}>
-                  {hasWordSync
-                    ? 'LRCLIB (Word Sync)'
-                    : currentLyrics?.syncedLyrics || parsedLines.length > 0
-                    ? 'LRCLIB (Sync)'
-                    : currentLyrics?.source === 'lrclib'
-                    ? 'LRCLIB (Plain Text)'
-                    : currentLyrics?.source === 'genius'
-                    ? 'Genius (Plain Text)'
-                    : t('player.lyrics')}
-                </Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                {hasLyricsContent && !player.isRemote && lyricsOffsetKey ? (
-                  <TouchableOpacity
-                    style={[styles.lyricsActionBtn, { backgroundColor: theme.surface }]}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${t('player.lyrics_offset')} ${formatLyricsOffset(appliedLyricsOffset)}`}
-                    onPress={() => setIsLyricsOffsetOpen(true)}
-                    hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
-                    {appliedLyricsOffset !== 0 ? (
-                      <Text
-                        style={[
-                          styles.lyricsActionBtnText,
-                          { color: theme.primary, marginLeft: 0, fontVariant: ['tabular-nums'] },
-                        ]}>
-                        {formatLyricsOffset(appliedLyricsOffset)}
-                      </Text>
-                    ) : (
-                      <Ionicons name="time-outline" size={12} color="rgba(255, 255, 255, 0.65)" />
-                    )}
-                  </TouchableOpacity>
-                ) : null}
-
-                {hasLyricsContent ? (
-                  <TouchableOpacity
-                    style={[
-                      styles.lyricsActionBtn,
-                      { backgroundColor: theme.surface },
-                      isLyricsAutoScrollPaused && { backgroundColor: 'rgba(239, 68, 68, 0.18)' },
-                    ]}
-                    activeOpacity={0.7}
-                    onPress={toggleLyricsAutoScroll}
-                    hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
-                    <Ionicons
-                      name={isLyricsAutoScrollPaused ? 'play' : 'pause'}
-                      size={12}
-                      color={isLyricsAutoScrollPaused ? '#ef4444' : theme.primary}
-                    />
-                    <Text
-                      style={[
-                        styles.lyricsActionBtnText,
-                        { color: isLyricsAutoScrollPaused ? '#ef4444' : theme.primary },
-                      ]}>
-                      {isLyricsAutoScrollPaused ? t('player.auto_scroll') : t('player.pause_scroll')}
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
-
-                <TouchableOpacity
-                  style={[styles.lyricsSearchBtn, { backgroundColor: theme.surface }]}
-                  activeOpacity={0.7}
-                  onPress={toggleManualSearch}>
-                  <Ionicons name="search" size={12} color={theme.primary} />
-                  <Text style={[styles.lyricsSearchBtnText, { color: theme.primary }]}>{t('player.manual_search')}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {isLoadingLyrics ? (
-              <View style={styles.lyricsLoadingCenter}>
-                <ActivityIndicator size="large" color={theme.primary} />
-                <Text style={styles.lyricsLoadingText}>{t('player.searching_lyrics')}</Text>
-              </View>
-            ) : parsedLines.length > 0 ? (
-              /* Senkronize Söz Akışı (Apple Music Tipografisi & Kelime Senkronizasyonu) */
-              <FlatList
-                ref={lyricsFlatListRef}
-                data={parsedLines}
-                keyExtractor={(_, index) => `lyric-line-${index}`}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.lyricsListContent}
-                onScrollBeginDrag={() => {
-                  isUserScrollingRef.current = true;
-                  if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-                }}
-                onScrollEndDrag={() => {
-                  if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-                  scrollTimeoutRef.current = setTimeout(() => {
-                    isUserScrollingRef.current = false;
-                  }, 4000);
-                }}
-                renderItem={({ item, index }) => {
-                  const isActive = index === activeLineIndex;
-                  return (
-                    <TouchableOpacity
-                      activeOpacity={0.7}
-                      onPress={() => player.seekTo(Math.max(0, item.time + appliedLyricsOffset))}
-                      style={[styles.lyricRow, isActive && styles.lyricRowActive]}>
-                      {isActive && item.words && item.words.length > 0 ? (
-                        <Text
-                          style={[
-                            styles.lyricText,
-                            styles.lyricTextActive,
-                            { textShadowColor: theme.glowColor },
-                          ]}>
-                          {item.words.map((word, wIdx) => {
-                            const isSung = lyricPosition >= word.time;
-                            const displayWord =
-                              wIdx < item.words!.length - 1 &&
-                              !word.text.endsWith(' ') &&
-                              !item.words![wIdx + 1].text.startsWith(' ')
-                                ? word.text + ' '
-                                : word.text;
-                            return (
-                              <Text
-                                key={`word-${wIdx}`}
-                                style={
-                                  isSung
-                                    ? [
-                                        styles.lyricWordSung,
-                                        { textShadowColor: theme.glowColor },
-                                      ]
-                                    : styles.lyricWordUpcoming
-                                }>
-                                {displayWord}
-                              </Text>
-                            );
-                          })}
-                        </Text>
-                      ) : (
-                        <Text
-                          style={[
-                            styles.lyricText,
-                            isActive && [
-                              styles.lyricTextActive,
-                              { textShadowColor: theme.glowColor },
-                            ],
-                          ]}>
-                          {item.text}
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  );
-                }}
-              />
-            ) : currentLyrics?.plainLyrics ? (
-              /* Düz Metin Söz Akışı (Şarkının süresine göre orantılı kaydırma) */
-              <ScrollView
-                ref={plainLyricsScrollRef}
-                style={styles.plainLyricsScroll}
-                contentContainerStyle={styles.lyricsListContent}
-                showsVerticalScrollIndicator={false}
-                onContentSizeChange={(_, h) => {
-                  plainContentHeightRef.current = h;
-                }}
-                onLayout={(e) => {
-                  plainScrollViewHeightRef.current = e.nativeEvent.layout.height;
-                }}
-                onScrollBeginDrag={() => {
-                  isPlainUserScrollingRef.current = true;
-                  if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
-                }}
-                onScrollEndDrag={() => {
-                  if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
-                  plainScrollTimeoutRef.current = setTimeout(() => {
-                    isPlainUserScrollingRef.current = false;
-                  }, 4000);
-                }}
-                onMomentumScrollBegin={() => {
-                  isPlainUserScrollingRef.current = true;
-                  if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
-                }}
-                onMomentumScrollEnd={() => {
-                  if (plainScrollTimeoutRef.current) clearTimeout(plainScrollTimeoutRef.current);
-                  plainScrollTimeoutRef.current = setTimeout(() => {
-                    isPlainUserScrollingRef.current = false;
-                  }, 4000);
-                }}>
-                <Text style={styles.plainLyricsText}>{currentLyrics.plainLyrics}</Text>
-              </ScrollView>
-            ) : (
-              /* Söz Bulunamadı Durumu */
-              <View style={styles.lyricsEmptyState}>
-                <Ionicons name="mic-off-outline" size={38} color="#52525b" />
-                <Text style={styles.lyricsEmptyTitle}>{t('player.no_lyrics_found')}</Text>
-                <Text style={styles.lyricsEmptySubtitle}>
-                  {t('player.no_lyrics_subtitle')}
-                </Text>
-                <TouchableOpacity
-                  style={[styles.lyricsEmptySearchBtn, { backgroundColor: theme.primary }]}
-                  activeOpacity={0.8}
-                  onPress={toggleManualSearch}>
-                  <Ionicons name="search" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                  <Text style={styles.lyricsEmptySearchBtnText}>{t('player.search_lyrics_btn')}</Text>
-                </TouchableOpacity>
-              </View>
-            )}
+            <LyricsPanel
+              isFullscreenPlayerOpen={isFullscreenPlayerOpen}
+              isLyricsMode={isLyricsMode}
+              isRemote={player.isRemote}
+              localActiveTrack={localActiveTrack ?? null}
+              allAssets={allAssets}
+              currentLyrics={currentLyrics}
+              parsedLines={parsedLines}
+              isLoadingLyrics={isLoadingLyrics}
+              activeTrackKey={activeTrack?.id || (activeTrack as any)?.url || null}
+              player={player}
+              theme={theme}
+              t={t}
+              onManualSearch={toggleManualSearch}
+            />
           </Animated.View>
 
           {/* 3. Çalma Sırası (Queue) Görünümü (Kapak yerine aynı boyutta yumuşak geçiş) */}
@@ -3833,38 +4014,11 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
           </Animated.View>
 
           {/* İlerleme Çubuğu (Apple Music Scrubber) */}
-          <View style={styles.scrubberBox}>
-            <View
-              style={styles.progressTouchContainer}
-              onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
-              onStartShouldSetResponder={() => true}
-              onMoveShouldSetResponder={() => true}
-              onResponderGrant={handleSeekGrant}
-              onResponderMove={handleSeekMove}
-              onResponderRelease={handleSeekRelease}>
-              <View
-                pointerEvents="none"
-                style={[
-                  styles.progressBarBackground,
-                  {
-                    height: isDragging ? 10 : 7,
-                  }
-                ]}>
-                <View
-                  style={[
-                    styles.progressBarFill,
-                    { backgroundColor: theme.primary, width: `${progressPercent * 100}%` },
-                  ]}
-                />
-              </View>
-            </View>
-            <View style={styles.timeRow}>
-              <Text style={styles.timeText}>{formatTime(currentPosition)}</Text>
-              <Text style={styles.timeText}>
-                {duration > 0 ? formatTime(duration) : '0:00'}
-              </Text>
-            </View>
-          </View>
+          <PlayerScrubber
+            active={isFullscreenPlayerOpen}
+            player={player}
+            theme={theme}
+          />
 
           {/* Oynatma Kontrolleri (Apple Music Minimalist Glyphs) */}
           <View style={styles.controlsRow}>
@@ -4146,81 +4300,6 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                   </Text>
                 </View>
               )}
-            </Pressable>
-          </Pressable>
-        </Modal>
-
-        {/* Şarkı Sözü Ofseti Modalı */}
-        <Modal
-          visible={isLyricsOffsetOpen && !player.isRemote}
-          animationType="fade"
-          transparent
-          onRequestClose={() => setIsLyricsOffsetOpen(false)}>
-          <Pressable
-            style={styles.modalBackdrop}
-            onPress={() => setIsLyricsOffsetOpen(false)}>
-            <Pressable
-              style={[styles.lyricsOffsetModalBox, { borderColor: theme.border }]}
-              onPress={(e) => e.stopPropagation()}>
-              <View style={styles.lyricsOffsetHeader}>
-                <View style={styles.lyricsOffsetTitleRow}>
-                  <Ionicons name="time-outline" size={20} color={theme.primary} />
-                  <Text style={styles.lyricsOffsetTitle}>{t('player.lyrics_offset')}</Text>
-                </View>
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  accessibilityLabel={t('player.lyrics_offset_close')}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  onPress={() => setIsLyricsOffsetOpen(false)}>
-                  <Ionicons name="close" size={22} color="#a1a1aa" />
-                </TouchableOpacity>
-              </View>
-
-              <Text style={[styles.lyricsOffsetValue, { color: theme.primary }]}>
-                {formatLyricsOffset(lyricsOffset)}
-              </Text>
-              <Text style={styles.lyricsOffsetHint}>{t('player.lyrics_offset_hint')}</Text>
-              <Text style={styles.lyricsOffsetSignHint}>{t('player.lyrics_offset_sign_hint')}</Text>
-
-              <View style={styles.lyricsOffsetGrid}>
-                {[-1, -0.5, -0.1, 0.1, 0.5, 1].map((delta) => (
-                  <TouchableOpacity
-                    key={`offset-${delta}`}
-                    activeOpacity={0.7}
-                    onPress={() => adjustLyricsOffset(delta)}
-                    style={[
-                      styles.lyricsOffsetAdjustBtn,
-                      { backgroundColor: theme.surface, borderColor: theme.border },
-                    ]}>
-                    <Text style={[styles.lyricsOffsetAdjustText, { color: theme.textAccent }]}>
-                      {formatLyricsOffset(delta)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <TouchableOpacity
-                activeOpacity={0.7}
-                disabled={lyricsOffset === 0}
-                onPress={resetLyricsOffset}
-                style={[
-                  styles.lyricsOffsetResetBtn,
-                  { backgroundColor: theme.surface, borderColor: theme.border },
-                  lyricsOffset === 0 && styles.lyricsOffsetResetBtnDisabled,
-                ]}>
-                <Ionicons
-                  name="refresh"
-                  size={15}
-                  color={lyricsOffset === 0 ? 'rgba(255, 255, 255, 0.35)' : theme.primary}
-                />
-                <Text
-                  style={[
-                    styles.lyricsOffsetResetText,
-                    { color: lyricsOffset === 0 ? 'rgba(255, 255, 255, 0.35)' : theme.primary },
-                  ]}>
-                  {t('player.lyrics_offset_reset')}
-                </Text>
-              </TouchableOpacity>
             </Pressable>
           </Pressable>
         </Modal>
@@ -5536,6 +5615,7 @@ const styles = StyleSheet.create({
   },
 });
 
-// Parent re-renders (progress ticks in ExpandingPlayer) must not re-render the
-// entire fullscreen player tree. Internal store subscriptions still update it.
+// Parent re-renders must not re-render the entire fullscreen player tree.
+// Internal store subscriptions and the isolated progress leaves still update
+// the parts that actually need to change.
 export const FullscreenPlayerModal = React.memo(FullscreenPlayerModalImpl);

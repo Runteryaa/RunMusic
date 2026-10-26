@@ -28,6 +28,30 @@ import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
+/**
+ * Only this 2px bar needs 4 Hz progress updates. Keeping the hook inside this
+ * tiny leaf prevents the whole mini player (and its six marquee texts) from
+ * re-rendering four times per second.
+ */
+function MiniPlayerProgressBar({ active, color }: { active: boolean; color: string }) {
+  const progress = useActiveProgress(active);
+  const percent =
+    progress.duration > 0
+      ? Math.min(1, Math.max(0, progress.position / progress.duration))
+      : 0;
+
+  return (
+    <View style={styles.progressBarTrack}>
+      <View
+        style={[
+          styles.progressBarFill,
+          { backgroundColor: color, width: `${percent * 100}%` },
+        ]}
+      />
+    </View>
+  );
+}
+
 function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
   useComponentDiagnostics('MiniPlayer');
   const { t } = useTranslation();
@@ -36,22 +60,18 @@ function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
   const theme = useThemeStore((s) => s.theme);
   const openFullscreenPlayer = usePlayerUIStore((s) => s.openFullscreenPlayer);
   const isFullscreenPlayerOpen = usePlayerUIStore((s) => s.isFullscreenPlayerOpen);
-  // The mini player is fully hidden behind the fullscreen sheet; polling it at
-  // 4 Hz only churns its three pages while the user is not looking at it.
-  const progress = useActiveProgress(!isFullscreenPlayerOpen);
   const metadataMap = useStore((s) => s.metadataMap);
   const artworkMap = useStore((s) => s.artworkMap);
-
-  const duration = progress.duration > 0 ? progress.duration : 0;
-  const progressPercent = duration > 0 ? Math.min(1, Math.max(0, progress.position / duration)) : 0;
+  const queueRevision = useStore((s) => s.queueRevision);
 
   // Queue State for Next/Prev Previews
   const [localQueue, setLocalQueue] = useState<Track[]>([]);
   const [localActiveIndex, setLocalActiveIndex] = useState<number>(0);
   const remoteQueue = useRemoteConnectStore((s) => s.remoteState.queue);
+  const activeTrackId = player.activeTrack?.id ?? null;
 
   useEffect(() => {
-    if (player.isRemote) return;
+    if (player.isRemote || !activeTrackId) return;
     const fetchQueue = async () => {
       try {
         const q = await TrackPlayer.getQueue();
@@ -62,10 +82,11 @@ function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
         console.warn('MiniPlayer queue fetch err:', e);
       }
     };
-    if (player.activeTrack) {
-      fetchQueue();
-    }
-  }, [player.activeTrack, player.isRemote]);
+    fetchQueue();
+    // Depend on the stable track id, not `player.activeTrack`: useActivePlayer
+    // builds a fresh summary object on every render. Using the object here
+    // caused an async setState -> render -> fetch loop (~8 renders/sec).
+  }, [activeTrackId, player.isRemote, player.isShuffle, queueRevision]);
 
   const queue = player.isRemote ? (remoteQueue as any[]) : localQueue;
   const activeIndex = player.isRemote
@@ -192,28 +213,32 @@ function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
   const togglePlayback = async () => {
     if (player.isPlaying) {
       await player.pause();
-      if (!player.isRemote && player.activeTrack && progress.position > 0) {
-        TrackPlayer.getActiveTrackIndex()
-          .then((idx) => {
+      if (!player.isRemote && player.activeTrack) {
+        try {
+          const { position } = await TrackPlayer.getProgress();
+          if (position > 0) {
+            const idx = await TrackPlayer.getActiveTrackIndex();
             const resolvedIdx = idx ?? 0;
             saveLastPlayback(
               {
-                trackId: player.activeTrack!.id,
+                trackId: player.activeTrack.id,
                 trackIndex: resolvedIdx,
-                position: progress.position,
+                position,
                 track: {
-                  id: player.activeTrack!.id,
+                  id: player.activeTrack.id,
                   url: (player.activeTrack as any).url || '',
-                  title: player.activeTrack!.title,
-                  artist: player.activeTrack!.artist,
+                  title: player.activeTrack.title,
+                  artist: player.activeTrack.artist,
                   artwork: player.artworkUri || undefined,
                 },
               },
               true
             );
-            updateQueueSnapshotActiveIndex(resolvedIdx, progress.position);
-          })
-          .catch(() => {});
+            updateQueueSnapshotActiveIndex(resolvedIdx, position);
+          }
+        } catch {
+          // Player may already be torn down; pausing is still successful.
+        }
       }
     } else {
       await player.play();
@@ -358,14 +383,7 @@ function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
       ]}
       {...panResponder.panHandlers}>
       {/* Top 2px Progress Bar */}
-      <View style={styles.progressBarTrack}>
-        <View
-          style={[
-            styles.progressBarFill,
-            { backgroundColor: theme.primary, width: `${progressPercent * 100}%` },
-          ]}
-        />
-      </View>
+      <MiniPlayerProgressBar active={!isFullscreenPlayerOpen} color={theme.primary} />
 
       <View style={styles.contentRow}>
         <View style={{ flex: 1, overflow: 'hidden', marginRight: 4 }}>
