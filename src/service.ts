@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 import TrackPlayer, { Event, State } from 'react-native-track-player';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from './services/playbackStorage';
 import { restoreQueueIfNeeded } from './services/playerBootstrap';
@@ -22,6 +23,7 @@ import { useRemoteConnectStore } from './store/useRemoteConnectStore';
 import { useOptimisticPlayerStore } from './store/useOptimisticPlayerStore';
 import { remoteSyncManager } from './services/remote/remoteSyncManager';
 import { syncReplayGainForTrack } from './services/audioEffectsService';
+import { ensureActiveTrackArtwork } from './services/activeTrackArtwork';
 
 let MusicWidgetModule: any = null;
 try {
@@ -246,7 +248,11 @@ export default async function playbackService() {
           hasArtwork: !!art,
         };
         useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
-        if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
+        if (
+          art &&
+          AppState.currentState === 'active' &&
+          useStore.getState().preferences.dynamicColorFromArtwork
+        ) {
           useThemeStore.getState().updateThemeFromArtwork(art);
         }
 
@@ -261,6 +267,13 @@ export default async function playbackService() {
             artist: cleanArt,
             artwork: art || undefined,
           }).catch(() => {});
+        }
+
+        // The queue itself no longer carries artwork for every queued track.
+        // Resolve the cover for the newly active track only, even while the app
+        // is backgrounded, so the notification/lock screen keeps its artwork.
+        if (!art) {
+          ensureActiveTrackArtwork(event.track, event.index).catch(() => {});
         }
 
         await saveLastPlayback(

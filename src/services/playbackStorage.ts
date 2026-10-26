@@ -129,12 +129,17 @@ export async function saveQueueSnapshot(model: SavedQueueModel): Promise<void> {
     const { position } = await TrackPlayer.getProgress();
 
     // Yalnızca taşınması gereken alanlar; kapak yolları store'dan yeniden gelir.
-    const items: SavedTrackItem[] = queue.map((track) => ({
+    // Persist artwork for the active track only; queued covers are resolved
+    // lazily when they become active.
+    const items: SavedTrackItem[] = queue.map((track, index) => ({
       id: String(track.id ?? track.url ?? ''),
       url: String(track.url ?? ''),
       title: track.title ?? undefined,
       artist: track.artist ?? undefined,
-      artwork: typeof track.artwork === 'string' ? track.artwork : undefined,
+      artwork:
+        index === activeIndex && typeof track.artwork === 'string'
+          ? track.artwork
+          : undefined,
     }));
 
     const payload: SavedQueueState = {

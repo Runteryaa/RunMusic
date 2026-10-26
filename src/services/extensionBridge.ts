@@ -291,8 +291,12 @@ export async function handleBridgeMessage(
             }
           }
 
-          // Kuyruğu ayarla ve çal
-          const newQueue = [nativeTrack, ...preservedUpNextTracks];
+          // Kuyruğu ayarla ve çal. Sıradaki parçaların kapaklarını kuyruğa
+          // gömmeyiz; sıra onlara geldiğinde yalnızca aktif parça çözülür.
+          const newQueue = [
+            nativeTrack,
+            ...preservedUpNextTracks.map((track) => ({ ...track, artwork: undefined })),
+          ];
           await TrackPlayer.setQueue(newQueue);
           await TrackPlayer.play();
 
@@ -342,7 +346,13 @@ export async function handleBridgeMessage(
             await setupTrackPlayerIfNeeded();
             const currentQueue = await TrackPlayer.getQueue();
             if (currentQueue.length === 0) {
-              await TrackPlayer.setQueue(tracksToAdd);
+              // The first item becomes active; the rest are queued and must
+              // not keep their artwork in the native media session.
+              const sanitizedQueue = tracksToAdd.map((track, index) => ({
+                ...track,
+                artwork: index === 0 ? track.artwork : undefined,
+              }));
+              await TrackPlayer.setQueue(sanitizedQueue);
               await TrackPlayer.play();
               useStore.setState({
                 contextIds: tracksToAdd.map((t) => t.id),

@@ -13,6 +13,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { handlePlaybackError } from './queueController';
 import { initAudioEffects } from './audioEffectsService';
+import { ensureActiveTrackArtwork } from './activeTrackArtwork';
 
 let MusicWidgetModule: any = null;
 try {
@@ -227,8 +228,6 @@ async function doRestoreQueueIfNeeded(): Promise<boolean> {
         return true;
       }
 
-      await TrackPlayer.setQueue(toPlayableTracks(snapshot.queue as Track[]));
-
       let targetIndex = -1;
       if (lastPlayback?.trackId) {
         targetIndex = snapshot.queue.findIndex(
@@ -261,12 +260,25 @@ async function doRestoreQueueIfNeeded(): Promise<boolean> {
         targetIndex = 0;
       }
 
+      // Restore the queue without per-track artwork; only the restored active
+      // track may carry its cover. Other covers are resolved when they become
+      // active so background playback does not retain the whole queue's art.
+      const restoredQueue = snapshot.queue.map((track, index) => ({
+        ...track,
+        artwork: index === targetIndex ? track.artwork : undefined,
+      }));
+      await TrackPlayer.setQueue(toPlayableTracks(restoredQueue as Track[]));
+
       if (targetIndex >= 0 && targetIndex < snapshot.queue.length) {
         try {
           await TrackPlayer.skip(targetIndex);
         } catch (skipErr) {
           console.warn('[playerBootstrap] skip error:', skipErr);
         }
+      }
+
+      if (targetIndex >= 0 && targetIndex < snapshot.queue.length) {
+        ensureActiveTrackArtwork(snapshot.queue[targetIndex] as Track, targetIndex).catch(() => {});
       }
 
       const isMatchedWithLastPlayback =
@@ -327,6 +339,7 @@ async function doRestoreQueueIfNeeded(): Promise<boolean> {
       if (lastPlayback.position && lastPlayback.position > 0) {
         await TrackPlayer.seekTo(lastPlayback.position);
       }
+      ensureActiveTrackArtwork(lastPlayback.track as Track, 0).catch(() => {});
       if (MusicWidgetModule && MusicWidgetModule.updateWidget && lastPlayback.track) {
         try {
           const theme = useThemeStore.getState().theme;

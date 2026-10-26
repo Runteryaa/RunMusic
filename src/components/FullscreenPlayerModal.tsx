@@ -84,6 +84,7 @@ import {
   type QueueTrackLike,
 } from '../services/queueController';
 import { UpNextRow, type UpNextItem } from './QueueUpNextList';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useIsAppActive } from '../hooks/useIsAppActive';
 import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 
@@ -1047,30 +1048,16 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
         {isCurrent ? (
           <Ionicons name="volume-high" size={20} color={theme.primary} />
         ) : isContext ? (
-          <View style={styles.queueQuickActions}>
-            <TouchableOpacity
-              style={styles.queueQuickPromoteBtn}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              activeOpacity={0.7}
-              onPress={(e) => {
-                e.stopPropagation();
-                handlePromoteToUpNext(entry.index, info.trackId || entry.track.id);
-              }}>
-              <Ionicons name="arrow-up-circle-outline" size={22} color="rgba(255,255,255,0.45)" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.queueQuickRemoveBtn}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel={t('common.delete')}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleRemoveFromContext(entry.index, info.trackId || entry.track.id);
-              }}>
-              <Ionicons name="trash-outline" size={19} color="rgba(255,255,255,0.45)" />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={styles.queueQuickPromoteBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            activeOpacity={0.7}
+            onPress={(e) => {
+              e.stopPropagation();
+              handlePromoteToUpNext(entry.index, info.trackId || entry.track.id);
+            }}>
+            <Ionicons name="arrow-up-circle-outline" size={22} color="rgba(255,255,255,0.45)" />
+          </TouchableOpacity>
         ) : null}
       </TouchableOpacity>
     );
@@ -1138,6 +1125,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
             item={item.item}
             index={item.upNextIndex}
             count={upNextItems.length}
+            accentColor={theme.primary}
             onCommit={handleMoveUpNext}
             onRemove={handleRemoveUpNext}
             onPress={handleUpNextItemPress}
@@ -1145,9 +1133,46 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
         );
       }
 
-      case 'context':
-        // Quick promote/remove actions live inside the row; no Swipeable tree.
-        return renderQueueTrackRow(item.entry, false, false, undefined, true);
+      case 'context': {
+        const info = resolveTrackDisplay(item.entry.track);
+        return (
+          <Swipeable
+            friction={1}
+            leftThreshold={130}
+            rightThreshold={130}
+            overshootLeft={false}
+            overshootRight={false}
+            activeOffsetX={[-20, 20]}
+            failOffsetY={[-15, 15]}
+            onSwipeableOpen={(direction, swipeable) => {
+              swipeable?.close?.();
+              if (direction === 'left') {
+                handlePromoteToUpNext(item.entry.index, info.trackId || item.entry.track.id);
+              } else if (direction === 'right') {
+                handleRemoveFromContext(item.entry.index, info.trackId || item.entry.track.id);
+              }
+            }}
+            renderLeftActions={() => (
+              <TouchableOpacity
+                style={[styles.queuePromoteAction, { backgroundColor: theme.primary }]}
+                activeOpacity={0.8}
+                onPress={() => handlePromoteToUpNext(item.entry.index, info.trackId || item.entry.track.id)}>
+                <Ionicons name="arrow-up-circle-outline" size={22} color="#ffffff" />
+                <Text style={styles.queuePromoteText}>{t('queue.promote_to_up_next') || 'Öne Al'}</Text>
+              </TouchableOpacity>
+            )}
+            renderRightActions={() => (
+              <TouchableOpacity
+                style={[styles.queueRemoveAction, { backgroundColor: '#ef4444' }]}
+                activeOpacity={0.8}
+                onPress={() => handleRemoveFromContext(item.entry.index, info.trackId || item.entry.track.id)}>
+                <Ionicons name="trash-outline" size={20} color="#ffffff" />
+              </TouchableOpacity>
+            )}>
+            {renderQueueTrackRow(item.entry, false, false, undefined, true)}
+          </Swipeable>
+        );
+      }
 
       default:
         return null;
@@ -5217,14 +5242,27 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '600',
   },
-  queueQuickActions: {
-    flexDirection: 'row',
+  queueRemoveAction: {
+    width: 72,
     alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    marginVertical: 2,
+  },
+  queuePromoteAction: {
+    width: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    marginVertical: 2,
+  },
+  queuePromoteText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 2,
   },
   queueQuickPromoteBtn: {
-    padding: 6,
-  },
-  queueQuickRemoveBtn: {
     padding: 6,
   },
   queueItem: {

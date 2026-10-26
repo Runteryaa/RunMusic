@@ -1,5 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, Text, StyleProp, ViewStyle } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  StyleProp,
+  ViewStyle,
+  useWindowDimensions,
+} from 'react-native';
+import { useIsFocused } from 'expo-router';
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { AD_UNIT_IDS } from '../services/adService';
 import { useThemeStore } from '../store/useThemeStore';
@@ -17,57 +25,99 @@ export function AdBanner({ style, size = BannerAdSize.ANCHORED_ADAPTIVE_BANNER }
   useComponentDiagnostics('AdBanner');
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const containerRef = useRef<View>(null);
+  const { height: windowHeight } = useWindowDimensions();
+  const isFocused = useIsFocused();
   const theme = useThemeStore((s) => s.theme);
   const isDevModeActive = useStore((s) => s.preferences.isDevModeActive);
   const isAppActive = useIsAppActive();
 
-  // Releasing the native ad view while backgrounded stops AdMob refreshes and
-  // any ad-related native allocations during long playback sessions.
+  const canRender = isAppActive && isFocused && !isDevModeActive;
+
+  // Ads are expensive native views. Keep only the ones currently inside the
+  // viewport mounted; everything else is a lightweight placeholder that
+  // preserves layout height so the list does not jump while scrolling.
+  const measureVisibility = useCallback(() => {
+    if (!canRender) {
+      setIsVisible(false);
+      return;
+    }
+    const node = containerRef.current;
+    if (!node) return;
+    node.measureInWindow((_x, y, _width, height) => {
+      if (!canRender) return;
+      const visible = height > 0 && y < windowHeight && y + height > 0;
+      setIsVisible((previous) => (previous === visible ? previous : visible));
+    });
+  }, [canRender, windowHeight]);
+
   useEffect(() => {
-    if (!isAppActive) {
+    if (!canRender) {
+      setIsVisible(false);
+      setIsLoaded(false);
+      setHasError(false);
+      return;
+    }
+
+    measureVisibility();
+    const interval = setInterval(measureVisibility, 1000);
+    return () => clearInterval(interval);
+  }, [canRender, measureVisibility]);
+
+  // Release the native ad view as soon as the banner leaves the viewport.
+  useEffect(() => {
+    if (!isVisible) {
       setIsLoaded(false);
       setHasError(false);
     }
-  }, [isAppActive]);
+  }, [isVisible]);
 
-  if (isDevModeActive || hasError || !isAppActive) {
+  if (isDevModeActive || hasError) {
     return null;
   }
 
   return (
     <View
+      ref={containerRef}
+      collapsable={false}
+      onLayout={measureVisibility}
       style={[
         styles.container,
-        isLoaded ? styles.containerVisible : styles.containerHidden,
-        { borderColor: theme.border || '#27272a' },
+        isLoaded ? styles.containerVisible : styles.containerPlaceholder,
+        isLoaded && { borderColor: theme.border || '#27272a' },
         style,
       ]}>
-      {isLoaded && (
-        <View style={styles.adBadgeContainer}>
-          <Text style={styles.adBadgeText}>Ad</Text>
-        </View>
-      )}
-      <BannerAd
-        unitId={AD_UNIT_IDS.BANNER}
-        size={size}
-        requestOptions={{
-          requestNonPersonalizedAdsOnly: true,
-        }}
-        onAdLoaded={() => {
-          setIsLoaded(true);
-          setHasError(false);
-          recordEvent('ad_loaded');
-        }}
-        onAdFailedToLoad={(error) => {
-          console.log('[AdBanner] Ad failed to load:', error);
-          setHasError(true);
-          setIsLoaded(false);
-          recordEvent(
-            'ad_failed',
-            String((error as { code?: string | number; message?: string })?.code ?? error)
-          );
-        }}
-      />
+      {isVisible ? (
+        <>
+          {isLoaded && (
+            <View style={styles.adBadgeContainer}>
+              <Text style={styles.adBadgeText}>Ad</Text>
+            </View>
+          )}
+          <BannerAd
+            unitId={AD_UNIT_IDS.BANNER}
+            size={size}
+            requestOptions={{
+              requestNonPersonalizedAdsOnly: true,
+            }}
+            onAdLoaded={() => {
+              setIsLoaded(true);
+              setHasError(false);
+              recordEvent('ad_loaded');
+            }}
+            onAdFailedToLoad={(error) => {
+              console.log('[AdBanner] Ad failed to load:', error);
+              setHasError(true);
+              setIsLoaded(false);
+              recordEvent(
+                'ad_failed',
+                String((error as { code?: string | number; message?: string })?.code ?? error)
+              );
+            }}
+          />
+        </>
+      ) : null}
     </View>
   );
 }
@@ -88,12 +138,11 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     minHeight: 56,
   },
-  containerHidden: {
-    height: 0,
-    width: 0,
-    opacity: 0,
-    marginVertical: 0,
+  containerPlaceholder: {
+    marginVertical: 10,
+    minHeight: 56,
     borderWidth: 0,
+    backgroundColor: 'transparent',
   },
   adBadgeContainer: {
     position: 'absolute',

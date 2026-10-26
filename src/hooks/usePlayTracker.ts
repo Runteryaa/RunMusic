@@ -6,20 +6,15 @@ import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/pl
 import { useStore } from '../store/useStore';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
-import { useIsAppActive } from './useIsAppActive';
 import { recordEvent } from '../services/memoryDiagnostics';
 
 export function usePlayTracker() {
   const activeTrack = useActiveTrack();
-  const isAppActive = useIsAppActive();
-  // While backgrounded we only need enough position resolution to persist the
-  // last playback state and to cross the 30s history threshold. Polling at
-  // 1 Hz for hours was unnecessary native bridge work.
-  const progress = useProgress(isAppActive ? 1000 : 10000);
+  // Play tracking must keep 1 Hz resolution in the background as well; the
+  // history threshold and last-playback snapshot depend on it.
+  const progress = useProgress(1000);
   const { playing: playingState } = useIsPlaying();
   const playing = Boolean(playingState);
-  const lastPositionBucketRef = useRef<number>(-1);
-  const lastPlayingRef = useRef<boolean | null>(null);
 
   // In client mode TrackPlayer holds a silent "remote_<id>" shadow track only
   // to keep the notification alive. It must never be written to listening
@@ -107,21 +102,9 @@ export function usePlayTracker() {
     };
   }, [playing, activeTrack?.id, shouldSkipTracking]);
 
-  const positionBucket = Math.floor(progress.position / 10);
-
   // Çalma konumu ve parça durumunu periyodik ve duraklatmada kaydet
   useEffect(() => {
     if (shouldSkipTracking || !activeTrack) return;
-
-    // The effect still runs on every progress tick because the progress
-    // position is needed for the actual persisted value. Only touch the native
-    // player bridge when the 10s bucket or play/pause state changes though.
-    const playingChanged = lastPlayingRef.current !== playing;
-    lastPlayingRef.current = playing;
-    const bucketChanged = lastPositionBucketRef.current !== positionBucket;
-    lastPositionBucketRef.current = positionBucket;
-    if (!playingChanged && !bucketChanged && playing) return;
-
     const trackId = String(activeTrack.id ?? activeTrack.url ?? '');
     const trackData = {
       id: trackId,
@@ -163,7 +146,7 @@ export function usePlayTracker() {
         }
       }).catch(() => {});
     }
-  }, [playing, positionBucket, activeTrack, progress.position, shouldSkipTracking]);
+  }, [playing, activeTrack, progress.position, shouldSkipTracking]);
 
   // Uygulama arka plana geçtiğinde veya kapatıldığında son durumu anında kaydet
   useEffect(() => {

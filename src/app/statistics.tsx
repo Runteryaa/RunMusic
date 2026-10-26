@@ -428,6 +428,9 @@ export default function StatisticsScreen() {
                     return (
                       <React.Fragment key={`hist-${item.played_at}-${idx}`}>
                         {renderTrackItem(item.track_id, subtitle, undefined, `hist-${item.played_at}-${idx}`, item)}
+                        {(idx + 1) % 15 === 0 && idx !== recentHistory.length - 1 ? (
+                          <AdBanner style={{ marginVertical: 6 }} />
+                        ) : null}
                       </React.Fragment>
                     );
                   })}

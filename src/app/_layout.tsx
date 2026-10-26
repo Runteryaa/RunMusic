@@ -15,7 +15,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { restoreQueueIfNeeded, syncAppKilledPlaybackBehavior, attachGlobalPlayerEventListeners } from '../services/playerBootstrap';
 import { refreshReplayGainForActiveTrack } from '../services/audioEffectsService';
 import { ExpandingPlayer } from '../components/ExpandingPlayer';
-import { getArtworkAsync } from '../../modules/audio-artwork/src';
+import { ensureActiveTrackArtwork } from '../services/activeTrackArtwork';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
 import { usePlayTracker } from '../hooks/usePlayTracker';
 import { useMemoryDiagnostics } from '../hooks/useMemoryDiagnostics';
@@ -97,16 +97,34 @@ function PlayerSideEffects() {
 }
 
 /**
- * Theme/artwork sync is pure foreground work. Mount it only while active so a
- * track change received in the background cannot mutate the theme and force
- * every mounted screen to re-render.
+ * Resolve only the currently playing track's artwork. This tiny side-effect
+ * component stays mounted in the background so the media notification/lock
+ * screen keeps its cover; queued tracks are resolved later, when they become
+ * the active track.
+ */
+function ActiveTrackArtworkSync() {
+  const activeTrack = useActiveTrack();
+  const activeTrackId = activeTrack?.id;
+  const isRemoteMode = useRemoteConnectStore((s) => s.mode === 'client');
+
+  useEffect(() => {
+    if (isRemoteMode || !activeTrack || activeTrackId?.startsWith('remote_')) return;
+    ensureActiveTrackArtwork(activeTrack).catch(() => {});
+  }, [activeTrack, activeTrackId, isRemoteMode]);
+
+  return null;
+}
+
+/**
+ * Theme sync is pure foreground work. Mount it only while active so a track
+ * change received in the background cannot mutate the theme and force every
+ * mounted screen to re-render.
  */
 function ActiveTrackThemeSync() {
   const activeTrack = useActiveTrack();
   const updateThemeFromArtwork = useThemeStore((s) => s.updateThemeFromArtwork);
   const dynamicColorFromArtwork = useStore((s) => s.preferences.dynamicColorFromArtwork);
   const presetThemeColor = useStore((s) => s.preferences.presetThemeColor);
-  const setArtwork = useStore((s) => s.setArtwork);
   const activeTrackId = activeTrack?.id;
   const storeArtwork = useStore((s) =>
     activeTrackId ? s.metadataMap[activeTrackId]?.artwork || s.artworkMap[activeTrackId] : undefined
@@ -118,22 +136,6 @@ function ActiveTrackThemeSync() {
   const isRemoteMode = useRemoteConnectStore((s) => s.mode === 'client');
   const remoteArtworkUri = useRemoteConnectStore((s) => s.remoteState.artworkUri);
   const effectiveArtworkUri = isRemoteMode ? remoteArtworkUri : artworkUri;
-
-  // Aktif şarkının kapak görseli henüz önbellekte yoksa anında çek ve temayı tetikle
-  useEffect(() => {
-    if (isRemoteMode || activeTrackId?.startsWith('remote_')) return;
-    if (!artworkUri && activeTrack?.url && activeTrackId) {
-      let isMounted = true;
-      getArtworkAsync(activeTrack.url, activeTrackId).then((resolved) => {
-        if (isMounted && resolved) {
-          setArtwork(activeTrackId, resolved);
-        }
-      });
-      return () => {
-        isMounted = false;
-      };
-    }
-  }, [artworkUri, activeTrack?.url, activeTrackId, setArtwork, isRemoteMode]);
 
   useEffect(() => {
     // Tercih de bağımlılık: kullanıcı "kapaktan renk türet"i açıp kapatınca
@@ -193,6 +195,7 @@ function MainAppLayout({ onFirstLayout }: { onFirstLayout: () => void }) {
       onLayout={onFirstLayout}>
       <View style={{ flex: 1, backgroundColor: '#121212' }}>
         <PlayerSideEffects />
+        <ActiveTrackArtworkSync />
         {isAppActive ? <ActiveTrackThemeSync /> : null}
         <Tabs
           screenOptions={{

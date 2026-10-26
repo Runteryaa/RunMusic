@@ -490,7 +490,6 @@ export async function replenishUpcomingQueueIfNeeded(): Promise<void> {
 
     const allAssets = useStore.getState().allAssets;
     const metadataMap = useStore.getState().metadataMap;
-    const artworkMap = useStore.getState().artworkMap;
 
     const tracksToAdd: Track[] = [];
     for (const id of idsToAdd) {
@@ -502,7 +501,9 @@ export async function replenishUpcomingQueueIfNeeded(): Promise<void> {
           url: asset.uri,
           title: meta?.title || asset.filename,
           artist: meta?.artist || "Unknown Artist",
-          artwork: meta?.artwork || artworkMap[asset.id] || undefined,
+          // Upcoming tracks never carry artwork. The notification resolves the
+          // cover only when one of them becomes the active track.
+          artwork: undefined,
           duration: asset.duration,
         } as Track);
       }
@@ -654,13 +655,18 @@ export async function startPlaybackFromLibrary(params: {
   ];
   const finalStartIndex = 0;
 
-  const enrichedQueue = finalQueue.map((t) => {
+  const enrichedQueue = finalQueue.map((t, index) => {
     const k = trackKey(t);
     const meta = metadataMap[k];
+    // Only the track that is actually playing gets artwork in the native
+    // queue. Keeping artwork on every queued item makes the media session load
+    // and retain covers for the whole queue.
     const art =
-      meta?.artwork ||
-      useStore.getState().artworkMap[k] ||
-      (typeof t.artwork === 'string' ? t.artwork : undefined);
+      index === finalStartIndex
+        ? meta?.artwork ||
+          useStore.getState().artworkMap[k] ||
+          (typeof t.artwork === 'string' ? t.artwork : undefined)
+        : undefined;
     return {
       ...t,
       title: meta?.title || t.title,
@@ -749,7 +755,12 @@ async function executeNativeUpcomingSync(
   const { queue, activeIndex } = await readQueueState();
   if (queue.length === 0 || activeIndex < 0) {
     if (extraTracks.length > 0) {
-      await TrackPlayer.add(toPlayableTracks(extraTracks));
+      // First added track becomes active; only that one may keep artwork.
+      const sanitized = extraTracks.map((track, index) => ({
+        ...track,
+        artwork: index === 0 ? track.artwork : undefined,
+      }));
+      await TrackPlayer.add(toPlayableTracks(sanitized));
     }
     return;
   }
@@ -810,7 +821,10 @@ async function executeNativeUpcomingSync(
     }
   }
 
-  const upcoming = [...upNextTracks, ...remainingContext];
+  const upcoming = [...upNextTracks, ...remainingContext].map((track) => ({
+    ...track,
+    artwork: undefined,
+  }));
 
   setIsMutatingQueue(true);
   try {
@@ -1033,11 +1047,16 @@ export async function setShuffle(enabled: boolean, smart: boolean = false): Prom
     // Çalan parçayı durdurmadan ve sıfırlamadan sıradaki parçaları güncelle
     await TrackPlayer.removeUpcomingTracks();
     if (upcoming.length > 0) {
-      await TrackPlayer.add(toPlayableTracks(upcoming as Track[]));
+      await TrackPlayer.add(
+        toPlayableTracks(upcoming.map((track) => ({ ...track, artwork: undefined })) as Track[])
+      );
     }
   } catch (err) {
     console.warn('Seamless queue update failed, falling back to setQueue', err);
-    const newQueue = [...history, ...upcoming];
+    const newQueue = [...history, ...upcoming].map((track, index) => ({
+      ...track,
+      artwork: index === activeIndex ? track.artwork : undefined,
+    }));
     await TrackPlayer.setQueue(toPlayableTracks(newQueue));
     if (activeIndex > 0) {
       await TrackPlayer.skip(activeIndex);
