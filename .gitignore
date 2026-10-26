@@ -47,3 +47,6 @@ example
 # generated native folders
 /ios
 /android
+
+# Chat exports / logs
+rust-ile-d-k-kaynakl-ble-windows-istemcisi.json

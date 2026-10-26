@@ -454,14 +454,16 @@ function LyricsPanel({
         }
       }
       setLyricsOffsets(lyricsOffsetKeys, current + delta);
+      if (localActiveTrack) remoteSyncManager.broadcastLyricsUpdate(localActiveTrack.id);
     },
-    [lyricsOffsetKeys, isRemote, setLyricsOffsets]
+    [lyricsOffsetKeys, isRemote, localActiveTrack, setLyricsOffsets]
   );
 
   const resetLyricsOffset = useCallback(() => {
     if (isRemote || lyricsOffsetKeys.length === 0) return;
     setLyricsOffsets(lyricsOffsetKeys, 0);
-  }, [isRemote, lyricsOffsetKeys, setLyricsOffsets]);
+    if (localActiveTrack) remoteSyncManager.broadcastLyricsUpdate(localActiveTrack.id);
+  }, [isRemote, localActiveTrack, lyricsOffsetKeys, setLyricsOffsets]);
 
   return (
     <>

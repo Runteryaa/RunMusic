@@ -1,5 +1,6 @@
 package expo.modules.runmusicbleperipheral
 
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -17,8 +18,12 @@ import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelUuid
+import android.os.PowerManager
 import android.util.Base64
+import android.util.Log
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -50,8 +55,18 @@ class RunMusicBlePeripheralModule : Module() {
 
   private val connectedDevices = CopyOnWriteArrayList<BluetoothDevice>()
   private var currentDeviceName: String = "RunMusic Device"
+  @Volatile
   private var isAdvertising = false
   private var multicastLock: WifiManager.MulticastLock? = null
+  private var applicationContext: Context? = null
+  private var wakeLock: PowerManager.WakeLock? = null
+
+  // Native heartbeat: React Native pauses JS timers when the activity goes to
+  // the background, so the host must be ticked from Android instead.
+  private val heartbeatHandler = Handler(Looper.getMainLooper())
+  private val notificationHandler = Handler(Looper.getMainLooper())
+  @Volatile
+  private var heartbeatRunnable: Runnable? = null
 
   // Promise queue for notification pacing
   private val pendingNotificationPromises = ConcurrentHashMap<String, Promise>()
@@ -63,6 +78,9 @@ class RunMusicBlePeripheralModule : Module() {
 
     override fun onStartFailure(errorCode: Int) {
       isAdvertising = false
+      stopHeartbeat()
+      applicationContext?.let { RunMusicBleHostService.stop(it) }
+      Log.w("RunMusicBlePeripheral", "BLE advertising failed with error code $errorCode")
     }
   }
 
@@ -75,9 +93,15 @@ class RunMusicBlePeripheralModule : Module() {
           if (!connectedDevices.any { it.address == device.address }) {
             connectedDevices.add(device)
           }
+          ensureHeartbeat()
+          updateHostServiceClients()
           sendEvent("onClientConnected", mapOf("deviceAddress" to device.address))
         } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
           connectedDevices.removeAll { it.address == device.address }
+          if (connectedDevices.isEmpty()) {
+            stopHeartbeat()
+          }
+          updateHostServiceClients()
           sendEvent("onClientDisconnected", mapOf("deviceAddress" to device.address))
         }
       } catch (e: SecurityException) {
@@ -128,6 +152,8 @@ class RunMusicBlePeripheralModule : Module() {
 
       if (!connectedDevices.any { it.address == device.address }) {
         connectedDevices.add(device)
+        ensureHeartbeat()
+        updateHostServiceClients()
       }
 
       // Rule 1: Always send response if responseNeeded is true so client's FIFO queue never hangs
@@ -165,6 +191,8 @@ class RunMusicBlePeripheralModule : Module() {
 
       if (!connectedDevices.any { it.address == device.address }) {
         connectedDevices.add(device)
+        ensureHeartbeat()
+        updateHostServiceClients()
       }
 
       // Update descriptor value in GATT server so Android internal BLE stack recognizes subscriptions
@@ -200,33 +228,42 @@ class RunMusicBlePeripheralModule : Module() {
       // Rule 3: Host Notification Pacing - resolve any pending notification promise
       sendEvent("onNotificationSent", mapOf("status" to status))
 
-      // Resolve all pending promises waiting for this notification chunk
+      // Resolve all pending promises waiting for this notification chunk.
+      // Keep a tiny native inter-chunk gap for the Android BLE RF buffer. The
+      // old JS implementation used a timer here, which stopped when the app
+      // was backgrounded and left messages partially transmitted.
       val keys = pendingNotificationPromises.keys().toList()
-      for (key in keys) {
-        pendingNotificationPromises.remove(key)?.resolve(status == BluetoothGatt.GATT_SUCCESS)
-      }
+      notificationHandler.postDelayed({
+        for (key in keys) {
+          pendingNotificationPromises.remove(key)?.resolve(status == BluetoothGatt.GATT_SUCCESS)
+        }
+      }, 15)
     }
   }
 
   override fun definition() = ModuleDefinition {
     Name("RunMusicBlePeripheral")
 
-    Events("onClientConnected", "onClientDisconnected", "onCharacteristicWrite", "onNotificationSent", "onClientSubscribed")
+    Events("onClientConnected", "onClientDisconnected", "onCharacteristicWrite", "onNotificationSent", "onClientSubscribed", "onHeartbeat")
 
     OnCreate {
       val context = appContext.reactContext ?: return@OnCreate
+      applicationContext = context.applicationContext
       bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
       bluetoothAdapter = bluetoothManager?.adapter
     }
 
     OnDestroy {
+      stopHeartbeat()
       stopGattServerAndAdvertising()
+      releaseWakeLock()
       try {
         if (multicastLock?.isHeld == true) {
           multicastLock?.release()
         }
       } catch (e: Exception) {}
       multicastLock = null
+      applicationContext = null
     }
 
     Function("acquireMulticastLock") {
@@ -339,6 +376,13 @@ class RunMusicBlePeripheralModule : Module() {
         advertiser?.startAdvertising(settings, adData, scanResponse, advertiseCallback)
 
         isAdvertising = true
+        try {
+          applicationContext?.let { RunMusicBleHostService.start(it) }
+        } catch (e: Exception) {
+          // Advertising still works without the foreground service; the host
+          // may only lose screen-off updates on aggressive Android versions.
+          Log.w("RunMusicBlePeripheral", "Foreground service start failed", e)
+        }
         promise.resolve(true)
       } catch (e: Exception) {
         promise.reject("ADVERTISE_ERROR", e.message ?: "Failed to start advertising", e)
@@ -376,10 +420,13 @@ class RunMusicBlePeripheralModule : Module() {
       val promiseId = UUID.randomUUID().toString()
       pendingNotificationPromises[promiseId] = promise
 
-      // Safety fallback timeout: resolve if onNotificationSent never arrives within 45ms
-      android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+      // Safety fallback timeout. Normal BLE stacks resolve this from
+      // onNotificationSent; the fallback is deliberately generous because the
+      // JS side no longer uses a timer (React Native pauses timers in the
+      // background, which used to stall multi-chunk messages).
+      notificationHandler.postDelayed({
         pendingNotificationPromises.remove(promiseId)?.resolve(true)
-      }, 45)
+      }, 80)
 
       try {
         @Suppress("DEPRECATION")
@@ -410,6 +457,79 @@ class RunMusicBlePeripheralModule : Module() {
         promise.reject("NOTIFY_ERROR", e.message ?: "Failed to notify characteristic", e)
       }
     }
+  }
+
+  private fun ensureHeartbeat() {
+    if (heartbeatRunnable != null) return
+
+    val runnable = object : Runnable {
+      override fun run() {
+        if (!isAdvertising || connectedDevices.isEmpty()) {
+          heartbeatRunnable = null
+          return
+        }
+
+        try {
+          sendEvent("onHeartbeat", mapOf("timestamp" to System.currentTimeMillis()))
+        } catch (_: Exception) {
+          // The JS runtime may be tearing down; stop quietly.
+        }
+
+        heartbeatHandler.postDelayed(this, 1500)
+      }
+    }
+
+    heartbeatRunnable = runnable
+    heartbeatHandler.postDelayed(runnable, 1500)
+  }
+
+  private fun stopHeartbeat() {
+    heartbeatRunnable?.let { heartbeatHandler.removeCallbacks(it) }
+    heartbeatRunnable = null
+  }
+
+  @SuppressLint("WakelockTimeout")
+  @Synchronized
+  private fun updateHostServiceClients() {
+    val context = applicationContext ?: appContext.reactContext?.applicationContext ?: return
+
+    try {
+      if (connectedDevices.isNotEmpty()) {
+        if (wakeLock == null) {
+          val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            ?: return
+          wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "RunMusic:BleRemoteHost"
+          ).apply {
+            setReferenceCounted(false)
+          }
+        }
+        if (wakeLock?.isHeld != true) {
+          wakeLock?.acquire()
+        }
+      } else {
+        releaseWakeLock()
+      }
+    } catch (e: Exception) {
+      Log.w("RunMusicBlePeripheral", "Unable to update BLE host wake lock", e)
+    }
+
+    // Notification text is cosmetic; the wake lock above is the part that
+    // must survive even if the service intent is rejected while backgrounded.
+    RunMusicBleHostService.updateClientCount(context, connectedDevices.size)
+  }
+
+  @Synchronized
+  private fun releaseWakeLock() {
+    try {
+      if (wakeLock?.isHeld == true) {
+        wakeLock?.release()
+      }
+    } catch (_: Exception) {
+      // Ignore release failures during teardown.
+    }
+    wakeLock = null
   }
 
   private fun setupGattServices() {
@@ -459,6 +579,8 @@ class RunMusicBlePeripheralModule : Module() {
 
   private fun stopGattServerAndAdvertising() {
     try {
+      stopHeartbeat()
+      applicationContext?.let { RunMusicBleHostService.stop(it) }
       if (isAdvertising) {
         advertiser?.stopAdvertising(advertiseCallback)
         isAdvertising = false
@@ -467,6 +589,7 @@ class RunMusicBlePeripheralModule : Module() {
       gattServer?.close()
       gattServer = null
       connectedDevices.clear()
+      releaseWakeLock()
       pendingNotificationPromises.clear()
     } catch (e: Exception) {
       // Cleanup

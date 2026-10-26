@@ -9,6 +9,7 @@ export interface BlePeripheralEvents {
     deviceAddress: string;
   }) => void;
   onNotificationSent: (event: { status: number }) => void;
+  onHeartbeat: (event: { timestamp: number }) => void;
   [key: string]: any;
 }
 

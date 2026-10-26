@@ -45,6 +45,7 @@ import type {
   PositionSyncMessage,
   StateChangeMessage,
   TrackChangeMessage,
+  ThemeSyncMessage,
   LyricsSyncMessage,
   ActiveArtworkSyncMessage,
   QueueSyncMessage,
@@ -58,12 +59,37 @@ import type {
 } from './remoteTypes';
 import { wsRoomClient } from './wsRoomClient';
 
+/**
+ * BLE istemcileri için söz özetini hafifletir: kelime zamanlamaları (`words`)
+ * atılır (kelime senkronu 100 KB'ı aşabilir), istemci yalnızca satır metni ve
+ * zamanını alır. Satırlar yoksa ham kaynak (LRC) gönderilir.
+ */
+function toBleLyrics(lyrics: RemoteLyricsSummary | null): RemoteLyricsSummary | null {
+  if (!lyrics) return null;
+  const lines = (lyrics.lines || []).map((line) => ({ time: line.time, text: line.text }));
+  const hasLines = lines.length > 0;
+  const keepRaw = !hasLines;
+  return {
+    trackId: lyrics.trackId,
+    lines,
+    isSynced: lyrics.isSynced,
+    source: lyrics.source ?? null,
+    syncedLyrics: keepRaw ? lyrics.syncedLyrics ?? undefined : undefined,
+    lyricsfile: keepRaw ? lyrics.lyricsfile ?? undefined : undefined,
+    plainLyrics: !lyrics.isSynced ? lyrics.plainLyrics ?? undefined : undefined,
+    offsetSeconds: lyrics.offsetSeconds ?? 0,
+  };
+}
+
 class RemoteSyncManager {
   private isHostActive = false;
   private activeClientTransport: 'wifi' | 'ble' | 'internet' = 'wifi';
   private clientConnectionSeq = 0;
   private hostSubscriptions: (() => void)[] = [];
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private hostHeartbeatInFlight = false;
+  private bleHeartbeatActive = false;
+  private lastBleHeartbeatAt = 0;
   private pendingLibraryQueries: Map<
     string,
     { resolve: (res: LibraryResultMessage) => void; reject: (err: any) => void; timer: ReturnType<typeof setTimeout> }
@@ -72,8 +98,8 @@ class RemoteSyncManager {
   private broadcastToAll(message: RemoteMessage): void {
     tcpHostServer.broadcast(message);
     if (message.type !== 'ACTIVE_ARTWORK_SYNC' && message.type !== 'QUEUE_SYNC') {
-      if (message.type === 'TRACK_CHANGE') {
-        const bleMsg = { ...message, lyrics: null };
+      if (message.type === 'TRACK_CHANGE' || message.type === 'LYRICS_SYNC') {
+        const bleMsg = { ...message, lyrics: toBleLyrics(message.lyrics) };
         blePeripheralService.broadcast(bleMsg).catch(() => {});
       } else {
         blePeripheralService.broadcast(message).catch(() => {});
@@ -170,6 +196,10 @@ class RemoteSyncManager {
       onCommand: (msg) => {
         this.handleHostCommand(msg, null);
       },
+      onHeartbeat: () => {
+        this.lastBleHeartbeatAt = Date.now();
+        this.sendHostHeartbeat().catch(() => {});
+      },
       onClientSubscribed: async () => {
         useRemoteConnectStore.getState().addConnectedClient({
           id: 'ble_client',
@@ -186,7 +216,12 @@ class RemoteSyncManager {
       },
     });
 
-    blePeripheralService.startHost(deviceName).catch((err) => {
+    blePeripheralService.startHost(deviceName).then((success) => {
+      this.bleHeartbeatActive = success;
+      this.lastBleHeartbeatAt = 0;
+    }).catch((err) => {
+      this.bleHeartbeatActive = false;
+      this.lastBleHeartbeatAt = 0;
       console.warn('[RemoteSyncManager] BLE peripheral startHost failed:', err);
     });
 
@@ -207,6 +242,10 @@ class RemoteSyncManager {
   }
 
   public stopHostService(): void {
+    this.isHostActive = false;
+    this.bleHeartbeatActive = false;
+    this.lastBleHeartbeatAt = 0;
+    this.hostHeartbeatInFlight = false;
     this.detachHostListeners();
     tcpHostServer.stopServer();
     udpDiscoveryService.stopHostBeacon();
@@ -217,7 +256,6 @@ class RemoteSyncManager {
     if (useRemoteConnectStore.getState().mode === 'host') {
       useRemoteConnectStore.getState().setMode('idle');
     }
-    this.isHostActive = false;
   }
 
   private attachHostListeners(): void {
@@ -235,6 +273,7 @@ class RemoteSyncManager {
         type: 'TRACK_CHANGE',
         track: trackSummary,
         lyrics: lyricsSummary,
+        themeColor: useThemeStore.getState().theme.primary || undefined,
       };
       this.broadcastToAll(trackChangeMsg);
 
@@ -338,33 +377,65 @@ class RemoteSyncManager {
       }
     });
 
+    // 4. Store change listener for artwork/preset theme color
+    let lastThemeColor = useThemeStore.getState().theme.primary;
+    const unsubTheme = useThemeStore.subscribe((themeState) => {
+      if (!this.isHostActive) return;
+      const currentPrimary = themeState.theme.primary;
+      if (currentPrimary && currentPrimary !== lastThemeColor) {
+        lastThemeColor = currentPrimary;
+        const themeMsg: ThemeSyncMessage = {
+          type: 'THEME_SYNC',
+          themeColor: currentPrimary,
+        };
+        this.broadcastToAll(themeMsg);
+      }
+    });
+
     this.hostSubscriptions = [
       () => subTrack.remove(),
       () => subState.remove(),
       () => unsubStore(),
+      () => unsubTheme(),
     ];
 
-    // 3. High-accuracy position heartbeat (every 1500ms while active)
-    this.heartbeatTimer = setInterval(async () => {
-      if (!this.isHostActive || useRemoteConnectStore.getState().mode === 'client') return;
-      try {
-        const playback = await TrackPlayer.getPlaybackState();
-        const isPlaying = playback.state === State.Playing;
-        if (isPlaying) {
-          const progress = await TrackPlayer.getProgress();
-          const posMsg: PositionSyncMessage = {
-            type: 'POSITION_SYNC',
-            position: progress.position,
-            duration: progress.duration > 0 ? progress.duration : undefined,
-            isPlaying: true,
-            playbackRate: 1.0,
-          };
-          this.broadcastToAll(posMsg);
-        }
-      } catch {
-        // ignore
-      }
+    // 3. Position heartbeat for foreground Wi-Fi/internet clients. When the
+    // BLE host is active, Android's native heartbeat drives this instead
+    // because React Native pauses JS timers while the screen is off.
+    this.heartbeatTimer = setInterval(() => {
+      const nativeBleHeartbeatHealthy =
+        this.bleHeartbeatActive &&
+        blePeripheralService.getConnectedClientCount() > 0 &&
+        Date.now() - this.lastBleHeartbeatAt < 5000;
+      if (nativeBleHeartbeatHealthy) return;
+      this.sendHostHeartbeat().catch(() => {});
     }, 1500);
+  }
+
+  private async sendHostHeartbeat(): Promise<void> {
+    if (!this.isHostActive || useRemoteConnectStore.getState().mode === 'client') return;
+    if (this.hostHeartbeatInFlight) return;
+
+    this.hostHeartbeatInFlight = true;
+    try {
+      const playback = await TrackPlayer.getPlaybackState();
+      if (playback.state !== State.Playing) return;
+
+      const progress = await TrackPlayer.getProgress();
+      const posMsg: PositionSyncMessage = {
+        type: 'POSITION_SYNC',
+        position: progress.position,
+        duration: progress.duration > 0 ? progress.duration : undefined,
+        isPlaying: true,
+        playbackRate: 1.0,
+      };
+      this.broadcastToAll(posMsg);
+    } catch {
+      // Playback can disappear while the app is backgrounded; keep the
+      // heartbeat alive for the next tick.
+    } finally {
+      this.hostHeartbeatInFlight = false;
+    }
   }
 
   private detachHostListeners(): void {
@@ -394,8 +465,11 @@ class RemoteSyncManager {
     if (trackSummary && trackSummary.duration <= 0 && progress.duration > 0) {
       trackSummary.duration = progress.duration;
     }
+    const lyricsSummary = activeTrack ? this.formatLyricsSummary(activeTrack) : null;
+    const currentThemeColor = useThemeStore.getState().theme.primary || undefined;
 
-    // BLE is a dedicated media remote: omit queue and lyrics payloads (< 200 bytes per message)
+    // BLE is a dedicated media remote: queue is omitted; lyrics are sent in a
+    // slim form (no pre-parsed `lines`) so the payload stays a few KB.
     if (isBle) {
       return {
         type: 'INITIAL_STATE',
@@ -407,11 +481,10 @@ class RemoteSyncManager {
         isShuffle,
         queue: [],
         upNext: [],
-        lyrics: null,
+        lyrics: toBleLyrics(lyricsSummary),
+        themeColor: currentThemeColor,
       };
     }
-
-    const lyricsSummary = activeTrack ? this.formatLyricsSummary(activeTrack) : null;
 
     // Build queue summaries for Wi-Fi (TCP) clients
     const queueTracks = await TrackPlayer.getQueue();
@@ -444,6 +517,7 @@ class RemoteSyncManager {
       queue: queueSummaries,
       upNext: upNextSummaries,
       lyrics: lyricsSummary,
+      themeColor: currentThemeColor,
     };
   }
 
@@ -1431,6 +1505,16 @@ class RemoteSyncManager {
       if (candidate?.geniusUrl) geniusUrl = candidate.geniusUrl;
     }
 
+    const offsets = useStore.getState().lyricsOffsets;
+    let offsetSeconds = 0;
+    for (const key of keys) {
+      const value = offsets[key];
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        offsetSeconds = value;
+        break;
+      }
+    }
+
     return {
       trackId: track.id,
       lines,
@@ -1442,6 +1526,7 @@ class RemoteSyncManager {
       lrclibId,
       geniusId,
       geniusUrl,
+      offsetSeconds,
     };
   }
 

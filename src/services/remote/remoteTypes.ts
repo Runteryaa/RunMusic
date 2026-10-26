@@ -24,6 +24,8 @@ export interface RemoteLyricsSummary {
   lrclibId?: string | number | null;
   geniusId?: string | number | null;
   geniusUrl?: string | null;
+  /** Host'ta bu parça için uygulanan söz ofseti (saniye, pozitif = geciktirir). */
+  offsetSeconds?: number;
 }
 
 export interface DiscoveredHost {
@@ -92,6 +94,8 @@ export interface InitialStateMessage {
   queue: RemoteTrackSummary[];
   upNext: RemoteTrackSummary[];
   lyrics: RemoteLyricsSummary | null;
+  /** Host'un aktif tema ana vurgu rengi (hex, örn. #3b82f6) */
+  themeColor?: string;
 }
 
 export interface PositionSyncMessage {
@@ -114,6 +118,12 @@ export interface TrackChangeMessage {
   type: 'TRACK_CHANGE';
   track: RemoteTrackSummary | null;
   lyrics: RemoteLyricsSummary | null;
+  themeColor?: string;
+}
+
+export interface ThemeSyncMessage {
+  type: 'THEME_SYNC';
+  themeColor: string;
 }
 
 export interface LyricsSyncMessage {
@@ -261,6 +271,7 @@ export type RemoteMessage =
   | PositionSyncMessage
   | StateChangeMessage
   | TrackChangeMessage
+  | ThemeSyncMessage
   | LyricsSyncMessage
   | ActiveArtworkSyncMessage
   | QueueSyncMessage

@@ -16,6 +16,7 @@ const BLE_SAFE_NOTIFY_CHUNK_SIZE = 180;
 
 export interface BlePeripheralHandlers {
   onCommand: (message: RemoteMessage, clientInfo: { deviceId: string; deviceName: string }) => void;
+  onHeartbeat?: () => void;
   onClientConnected?: (clientInfo: { deviceId: string; deviceName: string }) => void;
   onClientSubscribed?: (clientInfo: { deviceId: string; deviceName: string; charUuid: string }) => void;
   onClientDisconnected?: (deviceId: string) => void;
@@ -24,6 +25,7 @@ export interface BlePeripheralHandlers {
 class BlePeripheralService {
   private isAdvertising = false;
   private handlers: BlePeripheralHandlers | null = null;
+  private connectedClients = new Set<string>();
 
   // Rule 2: Dedicated NDJSON parser instance per characteristic to avoid chunk interleaving
   private commandWriteParser: NDJSONParser = new NDJSONParser();
@@ -48,6 +50,10 @@ class BlePeripheralService {
     return this.isAdvertising;
   }
 
+  public getConnectedClientCount(): number {
+    return this.connectedClients.size;
+  }
+
   public async startHost(deviceName: string): Promise<boolean> {
     if (this.isAdvertising) return true;
     if (Platform.OS !== 'android') return false;
@@ -63,6 +69,7 @@ class BlePeripheralService {
     }
 
     this.setupListeners();
+    this.connectedClients.clear();
     try {
       RunMusicBlePeripheralModule.setCustomDeviceName(deviceName);
       const success = await RunMusicBlePeripheralModule.startAdvertising(deviceName);
@@ -77,19 +84,20 @@ class BlePeripheralService {
 
   public async stopHost(): Promise<void> {
     this.removeListeners();
+    this.connectedClients.clear();
     this.commandWriteParser.reset();
     this.queueLyricsParser.reset();
     this.sendQueue = [];
     this.isProcessingQueue = false;
 
-    if (this.isAdvertising) {
-      try {
-        await RunMusicBlePeripheralModule?.stopAdvertising();
-      } catch (err) {
-        console.warn('[BlePeripheralService] Error stopping advertising:', err);
-      }
-      this.isAdvertising = false;
+    try {
+      // Always ask the native side to tear down. It also stops the foreground
+      // service and releases the wake lock if advertising never fully started.
+      await RunMusicBlePeripheralModule?.stopAdvertising();
+    } catch (err) {
+      console.warn('[BlePeripheralService] Error stopping advertising:', err);
     }
+    this.isAdvertising = false;
   }
 
   /**
@@ -128,11 +136,11 @@ class BlePeripheralService {
       for (const chunk of chunks) {
         const base64Chunk = chunk.toString('base64');
         try {
-          const sendPromise = RunMusicBlePeripheralModule?.sendNotification(targetUuid, base64Chunk);
-          const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), 80));
-          await Promise.race([sendPromise, timeoutPromise]);
-          // 15ms inter-chunk breath for Android BLE RF buffer
-          await new Promise((res) => setTimeout(res, 15));
+          // Native sendNotification resolves from onNotificationSent (or its
+          // own native timeout). Do not use JS timers here: React Native
+          // pauses them when the app is backgrounded, which used to leave a
+          // partial NDJSON message and wedge this queue while the screen was off.
+          await RunMusicBlePeripheralModule?.sendNotification(targetUuid, base64Chunk);
         } catch (err) {
           console.warn('[BlePeripheralService] Notification chunk failed:', err);
         }
@@ -174,6 +182,7 @@ class BlePeripheralService {
     const subConnect = RunMusicBlePeripheralModule.addListener(
       'onClientConnected',
       (event: { deviceAddress: string }) => {
+        this.connectedClients.add(event.deviceAddress);
         this.handlers?.onClientConnected?.({
           deviceId: event.deviceAddress,
           deviceName: `BLE Client (${event.deviceAddress.slice(-5)})`,
@@ -184,6 +193,7 @@ class BlePeripheralService {
     const subSubscribed = RunMusicBlePeripheralModule.addListener(
       'onClientSubscribed',
       (event: { deviceAddress: string; charUuid: string }) => {
+        this.connectedClients.add(event.deviceAddress);
         this.handlers?.onClientSubscribed?.({
           deviceId: event.deviceAddress,
           deviceName: `BLE Client (${event.deviceAddress.slice(-5)})`,
@@ -195,7 +205,15 @@ class BlePeripheralService {
     const subDisconnect = RunMusicBlePeripheralModule.addListener(
       'onClientDisconnected',
       (event: { deviceAddress: string }) => {
+        this.connectedClients.delete(event.deviceAddress);
         this.handlers?.onClientDisconnected?.(event.deviceAddress);
+      }
+    );
+
+    const subHeartbeat = RunMusicBlePeripheralModule.addListener(
+      'onHeartbeat',
+      () => {
+        this.handlers?.onHeartbeat?.();
       }
     );
 
@@ -223,6 +241,7 @@ class BlePeripheralService {
       () => subConnect.remove(),
       () => subSubscribed.remove(),
       () => subDisconnect.remove(),
+      () => subHeartbeat.remove(),
       () => subWrite.remove()
     );
   }
