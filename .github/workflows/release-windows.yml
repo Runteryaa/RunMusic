@@ -51,11 +51,16 @@ jobs:
         run: cargo build --release
 
       - name: ⚙️ Setup Inno Setup
-        uses: Min-Feng/setup-innosetup@v1
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress
+          echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
       - name: 📦 Compile Installer
         working-directory: desktop
-        run: ISCC.exe installer.iss
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
       - name: 🔐 Generate Checksums
         working-directory: desktop
