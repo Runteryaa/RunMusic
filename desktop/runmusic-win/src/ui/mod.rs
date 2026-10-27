@@ -34,10 +34,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_APPWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, CS_HREDRAW, CS_VREDRAW,
     IDC_ARROW,
 };
+use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 
 use crate::ble::{self, AppEvent, Control, Status, WM_APP_BLE};
 use crate::config::{self, Config};
 use crate::log::log;
+use crate::media_controls::{MediaControls, WM_APP_SMTC, WM_APP_SMTC_SEEK};
 use crate::now_playing::NowPlaying;
 use crate::protocol::Command;
 
@@ -94,6 +96,8 @@ pub struct App {
     pub lyrics_open: bool,
     pub lyrics_scroll: i32,
     pub lyrics_font: f32,
+    /// Windows media session; `None` when SMTC could not be registered.
+    media: Option<MediaControls>,
     /// True when the remembered position did not fit the monitors available at
     /// launch (for example a screen that is still waking up at logon). The stored
     /// coordinates are kept until the user actually moves the window, so a
@@ -136,6 +140,7 @@ impl App {
             lyrics_open,
             lyrics_scroll: 0,
             lyrics_font,
+            media: None,
             position_clamped: false,
         };
         app.set_topmost(always_on_top);
@@ -171,6 +176,49 @@ impl App {
         if let Some(sender) = &self.control {
             let _ = sender.send(Control::Command(command));
         }
+    }
+
+    /// Pushes the current track/position into the Windows media flyout.
+    fn sync_media(&mut self) {
+        if let Some(media) = &mut self.media {
+            media.sync(&self.np);
+        }
+    }
+
+    /// Handles a transport button coming from the Windows media controls.
+    fn on_media_button(&mut self, button: i32) {
+        use windows::Media::SystemMediaTransportControlsButton as Button;
+
+        let command = if button == Button::Play.0 {
+            Command::Play
+        } else if button == Button::Pause.0 {
+            Command::Pause
+        } else if button == Button::Next.0 {
+            Command::SkipNext
+        } else if button == Button::Previous.0 {
+            Command::SkipPrevious
+        } else {
+            return;
+        };
+        log(&format!("media key: {command:?}"));
+        if !self.status.is_connected() {
+            return;
+        }
+        self.send(command);
+    }
+
+    /// Handles a position request from the media flyout's seek slider.
+    fn on_media_seek(&mut self) {
+        let Some(position) = self.media.as_ref().and_then(MediaControls::take_seek) else {
+            return;
+        };
+        log(&format!("media key: seek to {position:.1}s"));
+        if !self.status.is_connected() {
+            return;
+        }
+        self.np.seek_local(position);
+        self.send(Command::Seek { position });
+        self.invalidate();
     }
 
     fn drain_events(&mut self) {
@@ -209,6 +257,7 @@ impl App {
 
         self.update_tray();
         self.invalidate();
+        self.sync_media();
     }
 
     fn update_tray(&mut self) {
@@ -597,6 +646,9 @@ impl App {
                 self.update_tray();
             }
             ID_EXIT => {
+                if let Some(media) = &self.media {
+                    media.shutdown();
+                }
                 self.remember_size();
                 self.send_control(Control::Shutdown);
                 unsafe {
@@ -676,6 +728,10 @@ unsafe fn clamp_window_position(x: i32, y: i32, width: i32, height: i32) -> (i32
 }
 
 unsafe fn run_inner() -> Result<(), String> {
+    // WinRT activation (SMTC) and the shell extract icons need an initialized
+    // apartment on the UI thread. S_FALSE ("already initialized") is fine.
+    let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+
     let instance = GetModuleHandleW(None).map_err(|error| error.to_string())?;
     let class_name = wide(CLASS_NAME);
 
@@ -813,6 +869,7 @@ unsafe fn run_inner() -> Result<(), String> {
 
     let mut app = App::new(hwnd)?;
     app.position_clamped = position_clamped;
+    app.media = MediaControls::new(hwnd);
     APP.with(|cell| *cell.borrow_mut() = Some(Box::new(app)));
     with_app(|app| app.start_ble());
 
@@ -900,6 +957,7 @@ unsafe extern "system" fn wndproc(
         }
         WM_TIMER if wparam.0 == TIMER_ID => {
             with_app(|app| {
+                app.sync_media();
                 if app.np.is_playing {
                     app.invalidate();
                 }
@@ -915,6 +973,14 @@ unsafe extern "system" fn wndproc(
                     app.invalidate();
                 }
             });
+            LRESULT(0)
+        }
+        WM_APP_SMTC => {
+            with_app(|app| app.on_media_button(wparam.0 as i32));
+            LRESULT(0)
+        }
+        WM_APP_SMTC_SEEK => {
+            with_app(|app| app.on_media_seek());
             LRESULT(0)
         }
         WM_APP_BLE => {

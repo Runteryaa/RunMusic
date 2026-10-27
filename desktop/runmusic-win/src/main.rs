@@ -5,6 +5,7 @@ mod config;
 mod icon;
 mod log;
 mod lyrics;
+mod media_controls;
 mod ndjson;
 mod now_playing;
 mod protocol;
