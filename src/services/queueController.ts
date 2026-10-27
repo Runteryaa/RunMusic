@@ -1273,9 +1273,11 @@ export async function cyclePlaybackMode(): Promise<void> {
 
       case 'smart':
         // 3 (Akıllı Karıştır) -> 4 (Tek Şarkı Tekrarla)
-        await setShuffle(false, false);
+        // Önce tek şarkı tekrarına geç; aksi halde shuffle kapanırken
+        // ara durum "Tümünü Tekrarla" olarak görünüp ikon bir an değişir.
         store.setRepeatMode(RepeatMode.Track);
         await TrackPlayer.setRepeatMode(RepeatMode.Track);
+        await setShuffle(false, false);
         break;
 
       case 'repeat-one':
