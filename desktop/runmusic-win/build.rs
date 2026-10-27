@@ -34,8 +34,14 @@ fn main() {
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 
     if target_env == "msvc" {
-        compile_msvc("icon.rc", &out_dir.join("runmusic_icon.res"));
-        compile_msvc(&version_rc, &out_dir.join("runmusic_version.res"));
+        let Some(rc) = find_rc() else {
+            println!(
+                "cargo:warning=rc.exe bulunamadi, uygulama simgesi/surum bilgisi gomulmedi"
+            );
+            return;
+        };
+        compile_msvc(&rc, "icon.rc", &out_dir.join("runmusic_icon.res"));
+        compile_msvc(&rc, &version_rc, &out_dir.join("runmusic_version.res"));
         return;
     }
 
@@ -52,8 +58,8 @@ fn main() {
     );
 }
 
-fn compile_msvc(rc_file: impl AsRef<Path>, res_file: &Path) {
-    let output = Command::new("rc.exe")
+fn compile_msvc(rc: &Path, rc_file: impl AsRef<Path>, res_file: &Path) {
+    let output = Command::new(rc)
         .arg(format!("/fo{}", res_file.display()))
         .arg(rc_file.as_ref())
         .output();
@@ -62,10 +68,13 @@ fn compile_msvc(rc_file: impl AsRef<Path>, res_file: &Path) {
             println!("cargo:rustc-link-arg={}", res_file.display());
         }
         Ok(result) => {
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let stderr = String::from_utf8_lossy(&result.stderr);
             println!(
-                "cargo:warning=rc.exe basarisiz ({}): {}",
+                "cargo:warning=rc.exe basarisiz ({}): stdout={}; stderr={}",
                 rc_file.as_ref().display(),
-                String::from_utf8_lossy(&result.stderr).trim()
+                stdout.trim(),
+                stderr.trim()
             );
         }
         Err(error) => {
@@ -104,6 +113,125 @@ fn compile_windres(windres: &Path, rc_file: impl AsRef<Path>, object: &Path) {
         }
         Err(error) => println!("cargo:warning=windres calistirilamadi: {error}"),
     }
+}
+
+/// `rc.exe` is not on PATH in a plain MSVC cargo build (rustc finds `link.exe`
+/// on its own, but not the resource compiler). Search PATH first, then standard
+/// Windows SDK installation directories, and finally ask vswhere.
+fn find_rc() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("RC") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    if let Some(path) = find_in_path("rc.exe") {
+        return Some(path);
+    }
+
+    if let Some(path) = find_windows_sdk_rc() {
+        return Some(path);
+    }
+
+    let vswhere = PathBuf::from(std::env::var_os("ProgramFiles(x86)")?)
+        .join("Microsoft Visual Studio")
+        .join("Installer")
+        .join("vswhere.exe");
+    if !vswhere.is_file() {
+        return None;
+    }
+
+    let output = Command::new(&vswhere)
+        .args([
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let install = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if install.is_empty() {
+        return None;
+    }
+
+    find_msvc_tool(Path::new(&install), "rc.exe")
+}
+
+fn find_windows_sdk_rc() -> Option<PathBuf> {
+    let roots = [
+        std::env::var_os("ProgramFiles(x86)"),
+        std::env::var_os("ProgramFiles"),
+    ];
+
+    for root in roots.into_iter().flatten() {
+        let base = PathBuf::from(root).join("Windows Kits");
+        for kit in ["10", "8.1"] {
+            let bin = base.join(kit).join("bin");
+            if !bin.is_dir() {
+                continue;
+            }
+
+            // In Windows Kits 10, there are subdirectories by SDK version (e.g., 10.0.22621.0)
+            if let Ok(entries) = fs::read_dir(&bin) {
+                let mut versions: Vec<PathBuf> = entries
+                    .filter_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| p.is_dir())
+                    .collect();
+                versions.sort();
+                for version in versions.iter().rev() {
+                    for arch in ["x64", "x86", "arm64"] {
+                        let candidate = version.join(arch).join("rc.exe");
+                        if candidate.is_file() {
+                            return Some(candidate);
+                        }
+                    }
+                }
+            }
+
+            // In Windows Kits 8.1 or older, bin/x64 or bin/x86 directly
+            for arch in ["x64", "x86"] {
+                let candidate = bin.join(arch).join("rc.exe");
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_msvc_tool(install: &Path, name: &str) -> Option<PathBuf> {
+    let tools = install.join("VC").join("Tools").join("MSVC");
+    let mut versions: Vec<PathBuf> = fs::read_dir(&tools)
+        .ok()?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect();
+    versions.sort();
+    for version in versions.iter().rev() {
+        for host in ["Hostx64\\x64", "Hostx86\\x86"] {
+            let candidate = version.join(host).join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn find_in_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 fn version_info(version: &str) -> String {

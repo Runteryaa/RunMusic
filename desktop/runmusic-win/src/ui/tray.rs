@@ -8,8 +8,9 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetCursorPos, HICON,
-    PostMessageW, SetForegroundWindow, TrackPopupMenu, MF_BYCOMMAND, MF_CHECKED, MF_ENABLED,
-    MF_GRAYED, MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_NULL,
+    PostMessageW, RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, MF_BYCOMMAND,
+    MF_CHECKED, MF_ENABLED, MF_GRAYED, MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    WM_NULL,
 };
 
 use super::{
@@ -17,6 +18,13 @@ use super::{
 };
 
 const TRAY_ID: u32 = 1;
+
+/// Broadcast sent by Explorer after it (re)starts. Registering the message
+/// lets the app restore its tray icon instead of losing it until restart.
+pub fn taskbar_created_message() -> u32 {
+    static MESSAGE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MESSAGE.get_or_init(|| unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) })
+}
 
 pub struct Tray {
     nid: NOTIFYICONDATAW,
@@ -48,6 +56,16 @@ impl Tray {
         write_tip(&mut self.nid, tip);
         unsafe {
             let _ = Shell_NotifyIconW(NIM_MODIFY, &self.nid);
+        }
+    }
+
+    /// Explorer restarts (crash, update, logon) drop every tray icon. This is
+    /// called from the `TaskbarCreated` broadcast to put ours back.
+    pub fn re_add(&mut self) {
+        unsafe {
+            if !Shell_NotifyIconW(NIM_ADD, &self.nid).as_bool() {
+                crate::log::log("tray: NIM_ADD (re-add) failed");
+            }
         }
     }
 

@@ -3,6 +3,13 @@ name: Build Android APK & Release
 on:
   push:
     branches: [ main, master ]
+    # Desktop/docs-only changes must not rebuild the Android app.
+    paths-ignore:
+      - 'desktop/**'
+      - 'docs/**'
+      - '**/*.md'
+      - '.github/workflows/release-windows.yml'
+      - '.github/workflows/build-ios.yml'
   workflow_dispatch:
 
 concurrency:

@@ -50,6 +50,9 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: 🖥️ Setup MSVC Dev Environment
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: 💾 Cache Cargo Dependencies
         uses: actions/cache@v4
         with:

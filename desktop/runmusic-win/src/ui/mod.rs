@@ -914,6 +914,13 @@ unsafe extern "system" fn wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    // Explorer broadcasts this after a restart; without re-adding, the tray
+    // icon stays gone for the rest of the process lifetime.
+    if message == tray::taskbar_created_message() {
+        with_app(|app| app.tray.re_add());
+        return LRESULT(0);
+    }
+
     match message {
         WM_PAINT => {
             with_app(|app| app.paint());
