@@ -1,6 +1,6 @@
 ; Inno Setup Script for RunMusic Remote
 #define MyAppName "RunMusic Remote"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "RunMusic"
 #define MyAppURL "https://github.com/Runteryaa/RunMusic"
 #define MyAppExeName "RunMusic Remote.exe"

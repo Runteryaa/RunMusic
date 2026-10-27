@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: 🏗 Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: ⚙️ Setup Node.js
         uses: actions/setup-node@v4
@@ -32,6 +34,36 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '17'
+
+      - name: 🔢 Resolve Version (auto-bump on every push)
+        id: version
+        run: |
+          set -euo pipefail
+          CURRENT=$(node -p "require('./package.json').version")
+          if [ "${GITHUB_REF_NAME}" = "beta" ]; then
+            SUFFIX="-beta"
+          else
+            SUFFIX=""
+          fi
+          TAG="v${CURRENT}${SUFFIX}"
+
+          # If this version was already released, bump the patch (1.1.0 -> 1.1.1).
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists; bumping patch."
+            node scripts/version.mjs bump patch
+          else
+            node scripts/version.mjs sync
+          fi
+
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}${SUFFIX}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "SUFFIX=${SUFFIX}" >> "$GITHUB_ENV"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "Resolved release: ${TAG}"
+
+      - name: ✅ Verify Version Consistency
+        run: node scripts/version.mjs check
 
       - name: 💾 Cache Gradle Packages
         uses: actions/cache@v4
@@ -92,11 +124,12 @@ jobs:
           else
             UPDATE_BRANCH="production"
           fi
-          echo "Publishing EAS Update for branch: $UPDATE_BRANCH"
-          npx eas-cli update --branch $UPDATE_BRANCH --platform android --environment production --non-interactive -m "Automated OTA update from CI ($UPDATE_BRANCH)"
+          echo "Publishing EAS Update for branch: $UPDATE_BRANCH (${TAG})"
+          npx eas-cli update --branch $UPDATE_BRANCH --platform android --environment production --non-interactive -m "${TAG} (${GITHUB_SHA::7})"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EAS_SKIP_AUTO_FINGERPRINT: 1
+          EXPO_PUBLIC_APP_VERSION: ${{ env.VERSION }}
 
       - name: 🛠 Prebuild Android
         run: |
@@ -131,24 +164,50 @@ jobs:
       - name: 🏗 Build APK
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m"
+          EXPO_PUBLIC_APP_VERSION: ${{ env.VERSION }}
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon --build-cache --parallel -PreactNativeArchitectures=arm64-v8a -x lintVitalRelease
 
+      - name: 📦 Rename APK with Version
+        run: |
+          set -euo pipefail
+          APK=$(ls android/app/build/outputs/apk/release/*.apk | head -n 1)
+          mv "$APK" "RunMusic-${VERSION}${SUFFIX}.apk"
+          ls -lh "RunMusic-${VERSION}${SUFFIX}.apk"
+
+      - name: 🏷 Commit Version Bump, Tag & Push
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json app.json desktop/runmusic-win/Cargo.toml desktop/Cargo.lock desktop/installer.iss
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): ${TAG}"
+          fi
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists locally."
+          else
+            git tag "${TAG}"
+            git push origin "${TAG}"
+          fi
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
       - name: 📤 Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RunMusic.apk
-          path: android/app/build/outputs/apk/release/*.apk
+          name: RunMusic-${{ env.VERSION }}${{ env.SUFFIX }}.apk
+          path: RunMusic-*.apk
 
       - name: 🏷 Create Release & Upload APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name == 'beta' && format('v1.0.{0}-beta', github.run_number) || format('v1.0.{0}', github.run_number) }}
-          name: ${{ github.ref_name == 'beta' && format('RunMusic Beta v1.0.{0}', github.run_number) || format('RunMusic v1.0.{0}', github.run_number) }}
+          tag_name: ${{ env.TAG }}
+          name: RunMusic ${{ env.VERSION }}${{ env.SUFFIX }}
           body: |
-            RunMusic ${{ github.ref_name == 'beta' && 'Beta (AdMob Test Ads & Beta OTA updates)' || 'Production Release' }}
-          files: android/app/build/outputs/apk/release/*.apk
+            RunMusic ${{ env.VERSION }}${{ env.SUFFIX }} — ${{ github.ref_name == 'beta' && 'Beta (AdMob Test Ads & Beta OTA updates)' || 'Production Release' }}
+            Commit: ${{ github.sha }}
+          files: RunMusic-*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

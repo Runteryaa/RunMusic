@@ -2,7 +2,7 @@
   "expo": {
     "name": "RunMusic",
     "slug": "RunMusic",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "runmusic",
@@ -24,7 +24,8 @@
         "NSUserTrackingUsageDescription": "Size özel ve uygun reklam deneyimi sunabilmek için izniniz istenmektedir.",
         "UIFileSharingEnabled": true,
         "LSSupportsOpeningDocumentsInPlace": true
-      }
+      },
+      "buildNumber": "10100"
     },
     "android": {
       "adaptiveIcon": {
@@ -34,7 +35,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "versionCode": 1,
+      "versionCode": 10100,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
@@ -75,7 +76,10 @@
           "photosPermission": "Allow RunMusic to access your media to find audio files.",
           "savePhotosPermission": "Allow RunMusic to save audio files.",
           "isAccessMediaLocationEnabled": false,
-          "granularPermissions": ["audio", "photo"]
+          "granularPermissions": [
+            "audio",
+            "photo"
+          ]
         }
       ],
       "expo-sqlite",
@@ -102,7 +106,7 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "runtimeVersion": "1.0.0",
+    "runtimeVersion": "1.1",
     "extra": {
       "router": {},
       "eas": {

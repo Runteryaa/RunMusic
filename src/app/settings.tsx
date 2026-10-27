@@ -18,6 +18,7 @@ import TrackPlayer from 'react-native-track-player';
 import { Ionicons } from '@expo/vector-icons';
 import * as Updates from 'expo-updates';
 import Constants from 'expo-constants';
+import { APP_VERSION, NATIVE_APP_VERSION, NATIVE_BUILD_VERSION, RUNTIME_VERSION } from '../constants/version';
 import { useStore, DEFAULT_PREFERENCES } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
@@ -1118,11 +1119,16 @@ export default function SettingsScreen() {
       <Section
         icon="information-circle-outline"
         title={t('settings.about_section')}
-        subtitle={`RunMusic v${Constants.expoConfig?.version || '1.0.0'}`}
+        subtitle={`RunMusic v${APP_VERSION}`}
         theme={theme}>
         <View style={styles.detailsBox}>
-          <DetailRow label={t('common.version')} value={`v${Constants.expoConfig?.version || '1.0.0'}`} />
-          <DetailRow label={t('common.runtime')} value={Updates.runtimeVersion || '1.0.0'} />
+          <DetailRow label={t('common.version_ota')} value={`v${APP_VERSION}`} />
+          <DetailRow
+            label={t('common.installed_apk')}
+            value={NATIVE_APP_VERSION ? `v${NATIVE_APP_VERSION}` : '—'}
+          />
+          <DetailRow label={t('common.build_number')} value={NATIVE_BUILD_VERSION ?? '—'} />
+          <DetailRow label={t('common.runtime')} value={RUNTIME_VERSION ?? '—'} />
           <DetailRow
             label={resolvedLanguage === 'tr' ? 'Kanal' : 'Channel'}
             value={Updates.channel || (Constants.expoConfig?.updates as { channel?: string } | undefined)?.channel || 'beta'}

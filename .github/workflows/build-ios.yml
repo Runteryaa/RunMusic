@@ -27,6 +27,16 @@ jobs:
           node-version: 22
           cache: 'npm'
 
+      - name: 🔢 Resolve Version
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "Building iOS ${VERSION}"
+
+      - name: ✅ Verify Version Consistency
+        run: node scripts/version.mjs check
+
       - name: 📦 Install Dependencies
         run: npm install --legacy-peer-deps
 
@@ -44,6 +54,8 @@ jobs:
           node ./scripts/patch-swift-tools.js
 
       - name: 🏗 Compile Unsigned iOS Archive
+        env:
+          EXPO_PUBLIC_APP_VERSION: ${{ env.VERSION }}
         run: |
           cd ios
           xcodebuild clean archive \
@@ -68,61 +80,59 @@ jobs:
           cd ..
           ls -lh RunMusic.ipa
 
-      - name: 📤 Upload IPA Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: RunMusic.ipa
-          path: RunMusic.ipa
-
-      - name: 🏷 Attach IPA to Existing Release
+      - name: 🏷 Locate Release, Rename IPA & Attach
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           echo "=== Locating release for commit ${GITHUB_SHA} ==="
           TARGET_TAG=""
 
-          # Wait up to 5 minutes (30 x 10s) for Android build to finish and create release tag if running in parallel
+          # Wait up to 5 minutes for the Android workflow to create the release for this commit.
           for i in {1..30}; do
             git fetch --tags --force 2>/dev/null || true
-            
-            # 1. Try finding tag pointing at current commit
-            COMMIT_TAG=$(git tag --points-at HEAD | grep -E '^v[0-9]' | head -n 1 || true)
+
+            COMMIT_TAG=$(git tag --points-at HEAD | grep -E '^v[0-9]' | grep -v '^win-' | head -n 1 || true)
             if [ -n "$COMMIT_TAG" ]; then
               TARGET_TAG="$COMMIT_TAG"
               echo "✅ Found git tag pointing to current commit: $TARGET_TAG"
               break
             fi
 
-            # 2. Try finding release on GitHub matching current commit SHA
-            RELEASE_TAG=$(gh release list --limit 10 --json tagName,targetCommitish -q ".[] | select(.targetCommitish == \"${GITHUB_SHA}\") | .tagName" | head -n 1 || true)
+            RELEASE_TAG=$(gh release list --limit 20 --json tagName,targetCommitish \
+              -q ".[] | select(.targetCommitish == \"${GITHUB_SHA}\" and (.tagName | test(\"^v[0-9]\"))) | .tagName" | head -n 1 || true)
             if [ -n "$RELEASE_TAG" ]; then
               TARGET_TAG="$RELEASE_TAG"
               echo "✅ Found GitHub release matching commit SHA: $TARGET_TAG"
               break
             fi
 
-            echo "⏳ Release not found yet. Waiting for Android workflow to finish creating release tag (attempt $i/30)..."
+            echo "⏳ Release not found yet. Waiting for Android workflow (attempt $i/30)..."
             sleep 10
           done
 
-          # 3. Fallback: If still not found (e.g. manual workflow_dispatch), use the latest release
           if [ -z "$TARGET_TAG" ]; then
-            echo "⚠️ Commit tag not detected. Searching for latest release on repo..."
-            TARGET_TAG=$(gh release list --limit 1 --json tagName -q '.[0].tagName' || true)
+            echo "⚠️ No release matched this commit. Using the latest mobile release."
+            TARGET_TAG=$(gh release list --limit 20 --json tagName \
+              -q '[.[] | select(.tagName | test("^v[0-9]"))][0].tagName' || true)
           fi
 
-          # 4. Fallback 2: If no releases exist at all, create a new one
           if [ -z "$TARGET_TAG" ]; then
-            BRANCH_NAME="${GITHUB_REF_NAME}"
-            if [ "$BRANCH_NAME" = "beta" ]; then
-              TARGET_TAG="v1.0.${GITHUB_RUN_NUMBER}-beta"
-            else
-              TARGET_TAG="v1.0.${GITHUB_RUN_NUMBER}"
-            fi
+            TARGET_TAG="v${VERSION}"
             echo "🚀 Creating brand new release $TARGET_TAG..."
-            gh release create "$TARGET_TAG" RunMusic.ipa --title "RunMusic $TARGET_TAG" --notes "RunMusic iOS Release"
-          else
-            echo "🚀 Uploading RunMusic.ipa to release: $TARGET_TAG..."
-            gh release upload "$TARGET_TAG" RunMusic.ipa --clobber
-            echo "✅ Successfully uploaded RunMusic.ipa to release $TARGET_TAG!"
+            gh release create "$TARGET_TAG" --title "RunMusic $TARGET_TAG" --notes "RunMusic iOS Release"
           fi
+
+          IPA_NAME="RunMusic-${TARGET_TAG#v}.ipa"
+          mv RunMusic.ipa "$IPA_NAME"
+          echo "IPA_NAME=${IPA_NAME}" >> "$GITHUB_ENV"
+          echo "TARGET_TAG=${TARGET_TAG}" >> "$GITHUB_ENV"
+          echo "🚀 Uploading $IPA_NAME to release: $TARGET_TAG..."
+          gh release upload "$TARGET_TAG" "$IPA_NAME" --clobber
+          echo "✅ Successfully uploaded $IPA_NAME to release $TARGET_TAG!"
+
+      - name: 📤 Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IPA_NAME }}
+          path: ${{ env.IPA_NAME }}

@@ -65,6 +65,18 @@ npx tsc scripts/verify-persist-migration.ts --ignoreConfig --outDir .tmp-verify 
 node .tmp-verify/scripts/verify-persist-migration.js
 ```
 
+## Versioning & releases
+
+One version for the whole ecosystem (`MAJOR.MINOR.PATCH`), starting at **1.1.0**. `package.json` is the source of truth; never edit the generated fields in `app.json`, `desktop/runmusic-win/Cargo.toml`, `desktop/Cargo.lock` or `desktop/installer.iss` by hand. Use:
+
+```bash
+npm run version:sync   # package.json -> all targets
+npm run version:check  # verify they match
+npm run version:bump -- patch
+```
+
+CI bumps the patch automatically on every push to `main` and tags `v<version>` (Windows: `win-v<version>`), so **pull before pushing** (`git pull --rebase`). `runtimeVersion` is intentionally decoupled from the app version (`"1.1"`): bump it only when native code changes, otherwise OTA updates stop reaching installed APKs. Full details: `docs/RELEASE.md`.
+
 ## Rules
 
 - If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
