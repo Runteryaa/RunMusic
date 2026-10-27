@@ -39,7 +39,8 @@ Android workflow:
 
 So the first push produces `v1.1.0`, the next `v1.1.1`, and so on. The workflow
 pushes with `GITHUB_TOKEN`, which does not re-trigger workflows, so there is no
-loop.
+loop. One workflow run (one push) produces one patch increment, even if that push
+contains several commits.
 
 > Because CI pushes a release commit, pull before pushing the next change:
 > `git pull --rebase`.
