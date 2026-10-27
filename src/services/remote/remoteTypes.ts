@@ -1,5 +1,6 @@
 import type { RepeatMode } from 'react-native-track-player';
 import type { LyricLine } from '../lyricsService';
+import type { PlaybackMode } from '../queueMath';
 
 export const RUNMUSIC_BEACON_PORT = 8944;
 export const RUNMUSIC_TCP_PORT = 8945;
@@ -89,9 +90,8 @@ export interface InitialStateMessage {
   isPlaying: boolean;
   playbackRate: number;
   position: number;
-  repeatMode: RepeatMode;
-  isShuffle: boolean;
-  isSmartShuffle: boolean;
+  /** Host'un tek doğruluk kaynağı olan 4 durumlu oynatma modu. */
+  playbackMode: PlaybackMode;
   queue: RemoteTrackSummary[];
   upNext: RemoteTrackSummary[];
   lyrics: RemoteLyricsSummary | null;
@@ -110,9 +110,8 @@ export interface PositionSyncMessage {
 export interface StateChangeMessage {
   type: 'STATE_CHANGE';
   isPlaying?: boolean;
-  repeatMode?: RepeatMode;
-  isShuffle?: boolean;
-  isSmartShuffle?: boolean;
+  /** Host tarafından hesaplanan güncel oynatma modu. */
+  playbackMode?: PlaybackMode;
   playbackRate?: number;
 }
 
@@ -188,13 +187,16 @@ export interface CommandSeekMessage {
 export interface CommandSetShuffleMessage {
   type: 'COMMAND_SET_SHUFFLE';
   enabled: boolean;
-  /** true ise akıllı karıştırma; yoksa klasik karıştırma. */
-  smart?: boolean;
 }
 
 export interface CommandSetRepeatMessage {
   type: 'COMMAND_SET_REPEAT';
   mode: RepeatMode;
+}
+
+/** Remote butonu: host'a "mod butonuna basıldı" der; sıradaki modu host seçer. */
+export interface CommandCyclePlaybackModeMessage {
+  type: 'COMMAND_CYCLE_PLAYBACK_MODE';
 }
 
 export interface CommandQueueMoveMessage {
@@ -288,6 +290,7 @@ export type RemoteMessage =
   | CommandSeekMessage
   | CommandSetShuffleMessage
   | CommandSetRepeatMessage
+  | CommandCyclePlaybackModeMessage
   | CommandQueueMoveMessage
   | CommandQueueRemoveMessage
   | CommandPlayTrackMessage

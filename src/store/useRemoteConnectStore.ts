@@ -15,6 +15,7 @@ import type {
   TrackChangeMessage,
   QueueSyncMessage,
 } from '../services/remote/remoteTypes';
+import type { PlaybackMode } from '../services/queueMath';
 import type { ClientConnectionStatus } from '../services/remote/tcpClient';
 import type { PendingPairChallenge } from '../services/remote/tcpHostServer';
 import type { DiscoveredPeer } from '../services/remote/IRemoteTransport';
@@ -23,9 +24,8 @@ export interface RemotePlaybackState {
   activeTrack: RemoteTrackSummary | null;
   isPlaying: boolean;
   playbackRate: number;
-  repeatMode: RepeatMode;
-  isShuffle: boolean;
-  isSmartShuffle: boolean;
+  /** Host'un gönderdiği tek doğruluk kaynağı: 4 durumlu mod. */
+  playbackMode: PlaybackMode;
   lyrics: RemoteLyricsSummary | null;
   queue: RemoteTrackSummary[];
   upNext: RemoteTrackSummary[];
@@ -130,9 +130,7 @@ const initialRemotePlaybackState: RemotePlaybackState = {
   activeTrack: null,
   isPlaying: false,
   playbackRate: 1.0,
-  repeatMode: RepeatMode.Off,
-  isShuffle: false,
-  isSmartShuffle: false,
+  playbackMode: 'repeat-all',
   lyrics: null,
   queue: [],
   upNext: [],
@@ -293,9 +291,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
             activeTrack: msg.activeTrack,
             isPlaying: msg.isPlaying,
             playbackRate: msg.playbackRate || 1.0,
-            repeatMode: msg.repeatMode,
-            isShuffle: msg.isShuffle,
-            isSmartShuffle: Boolean(msg.isSmartShuffle),
+            playbackMode: msg.playbackMode,
             lyrics: msg.lyrics,
             queue: msg.queue,
             upNext: msg.upNext,
@@ -373,12 +369,10 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
           remoteState: {
             ...state.remoteState,
             isPlaying: msg.isPlaying !== undefined ? msg.isPlaying : state.remoteState.isPlaying,
-            repeatMode: msg.repeatMode !== undefined ? msg.repeatMode : state.remoteState.repeatMode,
-            isShuffle: msg.isShuffle !== undefined ? msg.isShuffle : state.remoteState.isShuffle,
-            isSmartShuffle:
-              msg.isSmartShuffle !== undefined
-                ? msg.isSmartShuffle
-                : state.remoteState.isSmartShuffle,
+            playbackMode:
+              msg.playbackMode !== undefined
+                ? msg.playbackMode
+                : state.remoteState.playbackMode,
             playbackRate: msg.playbackRate !== undefined ? msg.playbackRate : state.remoteState.playbackRate,
           },
         }));
@@ -451,7 +445,16 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
         set((state) => ({
           remoteState: {
             ...state.remoteState,
-            repeatMode: mode,
+            playbackMode:
+              mode === RepeatMode.Track
+                ? 'repeat-one'
+                : mode === RepeatMode.Queue
+                  ? 'repeat-all'
+                  : state.remoteState.playbackMode === 'smart'
+                    ? 'smart'
+                    : state.remoteState.playbackMode === 'shuffle'
+                      ? 'shuffle'
+                      : 'repeat-all',
           },
         }));
       },
@@ -460,8 +463,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
         set((state) => ({
           remoteState: {
             ...state.remoteState,
-            isShuffle: shuffle,
-            isSmartShuffle: shuffle ? smart : false,
+            playbackMode: shuffle ? (smart ? 'smart' : 'shuffle') : 'repeat-all',
           },
         }));
       },

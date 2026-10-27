@@ -11,10 +11,13 @@ import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import {
   skipToPreviousTrack,
+  cyclePlaybackMode as cycleLocalPlaybackMode,
   setShuffle as setLocalShuffle,
   handlePlaybackError,
+  getPlaybackMode,
   trackKey,
   resolveTrackId,
+  type PlaybackMode,
 } from '../services/queueController';
 import { findLyricsInCache } from '../services/persistSanitize';
 import { parseAnySyncedLyrics, getLyricsCacheKeys, type LyricLine } from '../services/lyricsService';
@@ -31,6 +34,7 @@ export interface ActivePlayerState {
   repeatMode: RepeatMode;
   isShuffle: boolean;
   isSmartShuffle: boolean;
+  playbackMode: PlaybackMode;
 
   // Controls
   play: () => Promise<void>;
@@ -41,6 +45,7 @@ export interface ActivePlayerState {
   seekTo: (position: number) => Promise<void>;
   setRepeatMode: (mode: RepeatMode) => Promise<void>;
   setShuffle: (enabled: boolean, smart?: boolean) => Promise<void>;
+  cyclePlaybackMode: () => Promise<void>;
   disconnect: () => void;
 }
 
@@ -57,6 +62,16 @@ export function useActivePlayer(): ActivePlayerState {
   );
   const remoteDeviceName = useRemoteConnectStore((s) => s.connectedDeviceName);
   const remoteState = useRemoteConnectStore((s) => s.remoteState);
+  const remotePlaybackMode = remoteState.playbackMode;
+  const remoteIsShuffle =
+    remotePlaybackMode === 'shuffle' || remotePlaybackMode === 'smart';
+  const remoteIsSmartShuffle = remotePlaybackMode === 'smart';
+  const remoteRepeatMode =
+    remotePlaybackMode === 'repeat-one'
+      ? RepeatMode.Track
+      : remotePlaybackMode === 'repeat-all'
+        ? RepeatMode.Queue
+        : RepeatMode.Off;
 
   const optimisticTrack = useOptimisticPlayerStore((s) => s.optimisticTrack);
   const optimisticArtwork = useOptimisticPlayerStore((s) => s.optimisticArtworkUri);
@@ -119,14 +134,14 @@ export function useActivePlayer(): ActivePlayerState {
     let next: RemoteTrackSummary | null = null;
     if (currentIdx >= 0 && currentIdx < q.length - 1) {
       next = q[currentIdx + 1];
-    } else if (remoteState.repeatMode === RepeatMode.Queue && q.length > 0) {
+    } else if (remoteRepeatMode === RepeatMode.Queue && q.length > 0) {
       next = q[0];
     }
     if (next) {
       useOptimisticPlayerStore.getState().setOptimisticTrack(next, null);
     }
     remoteSyncManager.sendClientCommand({ type: 'COMMAND_SKIP_NEXT' });
-  }, [remoteState.queue, remoteState.activeTrack?.id, remoteState.repeatMode, optimisticTrack?.id]);
+  }, [remoteState.queue, remoteState.activeTrack?.id, remoteRepeatMode, optimisticTrack?.id]);
 
   const remoteSkipPrevious = useCallback(async () => {
     const q = Array.isArray(remoteState.queue) ? remoteState.queue : [];
@@ -135,14 +150,14 @@ export function useActivePlayer(): ActivePlayerState {
     let prev: RemoteTrackSummary | null = null;
     if (currentIdx > 0) {
       prev = q[currentIdx - 1];
-    } else if (remoteState.repeatMode === RepeatMode.Queue && q.length > 0) {
+    } else if (remoteRepeatMode === RepeatMode.Queue && q.length > 0) {
       prev = q[q.length - 1];
     }
     if (prev) {
       useOptimisticPlayerStore.getState().setOptimisticTrack(prev, null);
     }
     remoteSyncManager.sendClientCommand({ type: 'COMMAND_SKIP_PREVIOUS' });
-  }, [remoteState.queue, remoteState.activeTrack?.id, remoteState.repeatMode, optimisticTrack?.id]);
+  }, [remoteState.queue, remoteState.activeTrack?.id, remoteRepeatMode, optimisticTrack?.id]);
 
   const remoteSeekTo = useCallback(async (position: number) => {
     useRemoteConnectStore.getState().setOptimisticPosition(position);
@@ -154,9 +169,15 @@ export function useActivePlayer(): ActivePlayerState {
     remoteSyncManager.sendClientCommand({ type: 'COMMAND_SET_REPEAT', mode });
   }, []);
 
-  const remoteSetShuffle = useCallback(async (enabled: boolean, smart = false) => {
-    useRemoteConnectStore.getState().setOptimisticShuffle(enabled, smart);
-    remoteSyncManager.sendClientCommand({ type: 'COMMAND_SET_SHUFFLE', enabled, smart });
+  const remoteSetShuffle = useCallback(async (enabled: boolean) => {
+    useRemoteConnectStore.getState().setOptimisticShuffle(enabled, false);
+    remoteSyncManager.sendClientCommand({ type: 'COMMAND_SET_SHUFFLE', enabled });
+  }, []);
+
+  const remoteCyclePlaybackMode = useCallback(async () => {
+    // Host tek doğruluk kaynağı: sadece "butona basıldı" bilgisini gönder.
+    // Host sıradaki modu seçer ve güncel modu STATE_CHANGE ile yayınlar.
+    remoteSyncManager.sendClientCommand({ type: 'COMMAND_CYCLE_PLAYBACK_MODE' });
   }, []);
 
   const remoteDisconnect = useCallback(() => {
@@ -324,6 +345,10 @@ export function useActivePlayer(): ActivePlayerState {
     await setLocalShuffle(enabled, smart);
   }, []);
 
+  const localCyclePlaybackMode = useCallback(async () => {
+    await cycleLocalPlaybackMode();
+  }, []);
+
   if (isRemote) {
     const effectiveActive = optimisticTrack ?? remoteState.activeTrack;
     const effectiveArtwork = optimisticArtwork ?? remoteState.artworkUri;
@@ -337,9 +362,10 @@ export function useActivePlayer(): ActivePlayerState {
       duration: effectiveDuration,
       lyrics: remoteState.lyrics,
       artworkUri: effectiveArtwork,
-      repeatMode: remoteState.repeatMode,
-      isShuffle: remoteState.isShuffle,
-      isSmartShuffle: remoteState.isSmartShuffle,
+      repeatMode: remoteRepeatMode,
+      isShuffle: remoteIsShuffle,
+      isSmartShuffle: remoteIsSmartShuffle,
+      playbackMode: remotePlaybackMode,
 
       play: remotePlay,
       pause: remotePause,
@@ -349,6 +375,7 @@ export function useActivePlayer(): ActivePlayerState {
       seekTo: remoteSeekTo,
       setRepeatMode: remoteSetRepeatMode,
       setShuffle: remoteSetShuffle,
+      cyclePlaybackMode: remoteCyclePlaybackMode,
       disconnect: remoteDisconnect,
     };
   }
@@ -424,6 +451,11 @@ export function useActivePlayer(): ActivePlayerState {
     repeatMode: localRepeatMode,
     isShuffle: localIsShuffle,
     isSmartShuffle: localIsShuffle ? localIsSmartShuffle : false,
+    playbackMode: getPlaybackMode({
+      isShuffle: localIsShuffle,
+      isSmartShuffle: localIsSmartShuffle,
+      isRepeatOne: localRepeatMode === RepeatMode.Track,
+    }),
 
     play: localPlay,
     pause: localPause,
@@ -433,6 +465,7 @@ export function useActivePlayer(): ActivePlayerState {
     seekTo: localSeekTo,
     setRepeatMode: localSetRepeatMode,
     setShuffle: localSetShuffle,
+    cyclePlaybackMode: localCyclePlaybackMode,
     disconnect: () => {},
   };
 }

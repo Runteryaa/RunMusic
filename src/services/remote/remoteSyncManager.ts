@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import TrackPlayer, {
   Event,
+  RepeatMode,
   State,
   type Track,
 } from 'react-native-track-player';
@@ -18,6 +19,8 @@ import {
   playNext,
   playQueueTrack,
   removeQueueItem,
+  cyclePlaybackMode,
+  getPlaybackMode,
   setShuffle,
   startPlaybackFromLibrary,
   type QueueTrack,
@@ -64,6 +67,15 @@ import { wsRoomClient } from './wsRoomClient';
  * atılır (kelime senkronu 100 KB'ı aşabilir), istemci yalnızca satır metni ve
  * zamanını alır. Satırlar yoksa ham kaynak (LRC) gönderilir.
  */
+function getHostPlaybackMode() {
+  const store = useStore.getState();
+  return getPlaybackMode({
+    isShuffle: store.isShuffle,
+    isSmartShuffle: store.isSmartShuffle,
+    isRepeatOne: store.repeatMode === RepeatMode.Track,
+  });
+}
+
 function toBleLyrics(lyrics: RemoteLyricsSummary | null): RemoteLyricsSummary | null {
   if (!lyrics) return null;
   const lines = (lyrics.lines || []).map((line) => ({ time: line.time, text: line.text }));
@@ -343,16 +355,11 @@ class RemoteSyncManager {
       if (!this.isHostActive || useRemoteConnectStore.getState().mode === 'client') return;
       const isPlaying = event.state === State.Playing;
       const progress = await TrackPlayer.getProgress();
-      const repeatMode = await TrackPlayer.getRepeatMode();
-      const isShuffle = useStore.getState().isShuffle;
-      const isSmartShuffle = isShuffle ? useStore.getState().isSmartShuffle : false;
 
       const stateMsg: StateChangeMessage = {
         type: 'STATE_CHANGE',
         isPlaying,
-        repeatMode,
-        isShuffle,
-        isSmartShuffle,
+        playbackMode: getHostPlaybackMode(),
       };
       this.broadcastToAll(stateMsg);
 
@@ -366,20 +373,17 @@ class RemoteSyncManager {
       this.broadcastToAll(posMsg);
     });
 
-    // 3. Store change listener for isShuffle, isSmartShuffle & repeatMode on Host
-    let lastShuffle = useStore.getState().isShuffle;
-    let lastSmartShuffle = useStore.getState().isSmartShuffle;
-    let lastRepeat = useStore.getState().repeatMode;
+    // 3. Store change listener: tek alan olan 4 durumlu oynatma modunu izle.
+    let lastPlaybackMode = getHostPlaybackMode();
     const unsubStore = useStore.subscribe((state) => {
       if (!this.isHostActive) return;
-      if (
-        state.isShuffle !== lastShuffle ||
-        state.isSmartShuffle !== lastSmartShuffle ||
-        state.repeatMode !== lastRepeat
-      ) {
-        lastShuffle = state.isShuffle;
-        lastSmartShuffle = state.isSmartShuffle;
-        lastRepeat = state.repeatMode;
+      const playbackMode = getPlaybackMode({
+        isShuffle: state.isShuffle,
+        isSmartShuffle: state.isSmartShuffle,
+        isRepeatOne: state.repeatMode === RepeatMode.Track,
+      });
+      if (playbackMode !== lastPlaybackMode) {
+        lastPlaybackMode = playbackMode;
         this.broadcastStateChange();
         this.broadcastQueueSync();
       }
@@ -466,9 +470,7 @@ class RemoteSyncManager {
     const activeTrack = await TrackPlayer.getActiveTrack();
     const playback = await TrackPlayer.getPlaybackState();
     const progress = await TrackPlayer.getProgress();
-    const repeatMode = await TrackPlayer.getRepeatMode();
-    const isShuffle = useStore.getState().isShuffle;
-    const isSmartShuffle = isShuffle ? useStore.getState().isSmartShuffle : false;
+    const playbackMode = getHostPlaybackMode();
 
     const trackSummary = activeTrack ? this.formatTrackSummary(activeTrack) : null;
     if (trackSummary && trackSummary.duration <= 0 && progress.duration > 0) {
@@ -486,9 +488,7 @@ class RemoteSyncManager {
         isPlaying: playback.state === State.Playing,
         playbackRate: 1.0,
         position: progress.position,
-        repeatMode,
-        isShuffle,
-        isSmartShuffle,
+        playbackMode,
         queue: [],
         upNext: [],
         lyrics: toBleLyrics(lyricsSummary),
@@ -522,9 +522,7 @@ class RemoteSyncManager {
       isPlaying: playback.state === State.Playing,
       playbackRate: 1.0,
       position: progress.position,
-      repeatMode,
-      isShuffle,
-      isSmartShuffle,
+      playbackMode,
       queue: queueSummaries,
       upNext: upNextSummaries,
       lyrics: lyricsSummary,
@@ -537,16 +535,11 @@ class RemoteSyncManager {
     try {
       const playback = await TrackPlayer.getPlaybackState();
       const isPlaying = playback.state === State.Playing;
-      const repeatMode = await TrackPlayer.getRepeatMode();
-      const isShuffle = useStore.getState().isShuffle;
-      const isSmartShuffle = isShuffle ? useStore.getState().isSmartShuffle : false;
 
       const stateMsg: StateChangeMessage = {
         type: 'STATE_CHANGE',
         isPlaying,
-        repeatMode,
-        isShuffle,
-        isSmartShuffle,
+        playbackMode: getHostPlaybackMode(),
       };
       this.broadcastToAll(stateMsg);
     } catch (e) {
@@ -614,13 +607,24 @@ class RemoteSyncManager {
         break;
 
       case 'COMMAND_SET_SHUFFLE':
-        setShuffle(msg.enabled, Boolean(msg.smart))
+        setShuffle(msg.enabled, false)
           .then(() => {
             this.broadcastStateChange();
             this.broadcastQueueSync();
           })
           .catch((err) => {
             console.warn('[RemoteSyncManager] Host setShuffle error:', err);
+          });
+        break;
+
+      case 'COMMAND_CYCLE_PLAYBACK_MODE':
+        cyclePlaybackMode()
+          .then(() => {
+            this.broadcastStateChange();
+            this.broadcastQueueSync();
+          })
+          .catch((err) => {
+            console.warn('[RemoteSyncManager] Host cyclePlaybackMode error:', err);
           });
         break;
 

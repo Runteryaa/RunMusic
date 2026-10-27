@@ -68,9 +68,7 @@ import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/pl
 import {
   buildQueueRows,
   clearUpNextQueue,
-  cyclePlaybackMode,
   deriveQueueSections,
-  getPlaybackMode,
   getQueueSections,
   markUpNextConsumed,
   moveUpNext,
@@ -982,13 +980,15 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const repeatMode = player.isRemote ? player.repeatMode : storeRepeatMode;
   const isShuffle = player.isRemote ? player.isShuffle : storeIsShuffle;
   const isSmartShuffle = player.isRemote ? player.isSmartShuffle : storeIsSmartShuffle;
-  const playbackModeLabel = isShuffle
-    ? isSmartShuffle
+  const playbackMode = player.playbackMode;
+  const playbackModeLabel =
+    playbackMode === 'smart'
       ? t('player.playback_mode_smart')
-      : t('player.playback_mode_shuffle')
-    : repeatMode === RepeatMode.Track
-      ? t('player.playback_mode_repeat_one')
-      : t('player.playback_mode_repeat_all');
+      : playbackMode === 'shuffle'
+        ? t('player.playback_mode_shuffle')
+        : playbackMode === 'repeat-one'
+          ? t('player.playback_mode_repeat_one')
+          : t('player.playback_mode_repeat_all');
   const library = useStore((s) => s.library);
   const allAssets = useStore((s) => s.allAssets);
   const upNextIds = useStore((s) => s.upNextIds);
@@ -2841,37 +2841,8 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   }, [player]);
 
   const togglePlaybackMode = useCallback(async () => {
-    if (player.isRemote) {
-      const mode = getPlaybackMode({
-        isShuffle: player.isShuffle,
-        isSmartShuffle: player.isSmartShuffle,
-        isRepeatOne: player.repeatMode === RepeatMode.Track,
-      });
-
-      switch (mode) {
-        case 'repeat-all':
-          await player.setRepeatMode(RepeatMode.Off);
-          await player.setShuffle(true, false);
-          break;
-        case 'shuffle':
-          await player.setRepeatMode(RepeatMode.Off);
-          await player.setShuffle(true, true);
-          break;
-        case 'smart':
-          await player.setShuffle(false, false);
-          await player.setRepeatMode(RepeatMode.Track);
-          break;
-        case 'repeat-one':
-          if (player.isShuffle) {
-            await player.setShuffle(false, false);
-          }
-          await player.setRepeatMode(RepeatMode.Queue);
-          break;
-      }
-      return;
-    }
-    await cyclePlaybackMode();
-    if (isQueueMode) {
+    await player.cyclePlaybackMode();
+    if (!player.isRemote && isQueueMode) {
       await refreshQueueSections();
       await refreshQueue();
     }
@@ -4114,11 +4085,17 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                 accessibilityHint={t('player.playback_mode_hint')}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Ionicons
-                  name={isShuffle ? (isSmartShuffle ? 'sparkles' : 'shuffle') : 'repeat'}
+                  name={
+                    playbackMode === 'smart'
+                      ? 'sparkles'
+                      : playbackMode === 'shuffle'
+                        ? 'shuffle'
+                        : 'repeat'
+                  }
                   size={20}
                   color={theme.primary}
                 />
-                {repeatMode === RepeatMode.Track ? (
+                {playbackMode === 'repeat-one' ? (
                   <Text style={[styles.repeatBadge, { color: theme.primary }]}>1</Text>
                 ) : null}
               </TouchableOpacity>

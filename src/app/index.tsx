@@ -706,11 +706,9 @@ export default function LibraryScreen() {
   };
 
   const handleRemoteShuffleAll = () => {
-    const remoteSmartShuffle = useRemoteConnectStore.getState().remoteState.isSmartShuffle;
     remoteSyncManager.sendClientCommand({
       type: 'COMMAND_SET_SHUFFLE',
       enabled: true,
-      smart: remoteSmartShuffle,
     });
     if (remoteLibrary.length > 0) {
       const random = remoteLibrary[Math.floor(Math.random() * remoteLibrary.length)];
@@ -725,11 +723,7 @@ export default function LibraryScreen() {
       remoteSyncManager.sendClientCommand({ type: 'COMMAND_PLAY' });
     }
     openFullscreenPlayer();
-    showToast(
-      remoteSmartShuffle
-        ? t('library.smart_shuffle_started')
-        : t('library.shuffle_started')
-    );
+    showToast(t('library.shuffle_started'));
   };
 
   const playTrack = async (selectedAsset: MediaLibrary.Asset) => {
@@ -887,18 +881,16 @@ export default function LibraryScreen() {
 
   /**
    * "Karışık çal": rastgele bir şarkıdan başlayıp tüm kütüphaneyi karıştırarak
-   * çalar. Son seçilen modu hatırlar (akıllı veya standart).
+   * çalar. Yerelde son seçilen modu (akıllı veya standart) hatırlar; remote
+   * istemcide host klasik karıştırmaya geçer.
    */
   const handleShuffleAll = async () => {
     if (fullSortedList.length === 0) return;
     try {
       if (useRemoteConnectStore.getState().isRemoteConnected()) {
-        const remoteSmartShuffle =
-          useRemoteConnectStore.getState().remoteState.isSmartShuffle;
         remoteSyncManager.sendClientCommand({
           type: 'COMMAND_SET_SHUFFLE',
           enabled: true,
-          smart: remoteSmartShuffle,
         });
         remoteSyncManager.sendClientCommand({ type: 'COMMAND_PLAY' });
         openFullscreenPlayer();
