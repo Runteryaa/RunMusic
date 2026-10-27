@@ -34,13 +34,10 @@ jobs:
       - name: 🔢 Resolve Version
         shell: pwsh
         run: |
-          $latestTag = git tag -l 'v1.1.*' --sort=-v:refname | Select-Object -First 1
-          if ($latestTag) {
-            $version = $latestTag.TrimStart('v')
-          } else {
-            $version = node -p "require('./package.json').version"
-          }
+          # Windows releases carry the commit count in the patch slot:
+          # version = 1.1.<commit count>, tag = win-v1.1.<commit count>.
           $build = [int](git rev-list --count HEAD)
+          $version = "1.1.$build"
           node scripts/version.mjs apply $version --build $build
           node scripts/version.mjs check
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8

@@ -49,9 +49,10 @@ One workflow run (one push) produces one version; if a push contains several
 commits they share the same version. The patch comes from the workflow run
 number, which is monotonic per workflow.
 
-The Windows workflow mirrors the latest mobile release version (`v1.1.*`) and
-uses the same commit count as its build number. iOS is manual and attaches the
-IPA to the mobile release tag.
+The Windows workflow uses the commit count in the patch slot as well:
+`VERSION=1.1.<commit count>` and tag `win-v1.1.<commit count>` (so Windows
+versions advance with every commit, independent of Android workflow runs).
+iOS is manual and attaches the IPA to the mobile release tag.
 
 ## runtimeVersion (OTA gate)
 
@@ -87,8 +88,8 @@ and `versionCode`); OTA cannot change it. The in-app *About* section shows both:
 |---|---|
 | Android APK | `RunMusic-1.1.248.apk` (beta: `RunMusic-1.1.248-beta.apk`) |
 | iOS IPA | `RunMusic-1.1.248.ipa` |
-| Windows installer | `RunMusic-Remote-Setup-1.1.248.exe` (+ stable alias) |
-| Windows portable | `runmusic-win-1.1.248.exe` (+ stable alias `runmusic-win.exe`) |
+| Windows installer | `RunMusic-Remote-Setup-1.1.276.exe` (+ stable alias) |
+| Windows portable | `runmusic-win-1.1.276.exe` (+ stable alias `runmusic-win.exe`) |
 
 The stable (`unversioned`) copies exist so a future auto-updater and direct
 download links can use a fixed URL. The executable itself carries a VERSIONINFO
@@ -110,8 +111,9 @@ release).
 
 ### Windows (manual)
 
-Actions → **Build & Release Windows Client**. Creates `win-v<version>` and
-uploads the versioned installer and portable executable.
+Actions → **Build & Release Windows Client**. Creates `win-v1.1.<commit count>`
+(e.g. `win-v1.1.276`) and uploads the versioned installer and portable
+executable.
 
 ### Google Play (manual)
 
