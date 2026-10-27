@@ -16,21 +16,23 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
-    EndPaint, HBRUSH, HDC, HGDIOBJ, InvalidateRect, PAINTSTRUCT, SRCCOPY, ScreenToClient,
-    SelectObject, UpdateWindow,
+    EndPaint, GetMonitorInfoW, HBRUSH, HDC, HGDIOBJ, InvalidateRect, MonitorFromPoint, PAINTSTRUCT,
+    SRCCOPY, ScreenToClient, SelectObject, UpdateWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForSystem, GetDpiForWindow};
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
-    GetSystemMetrics, LoadCursorW, PostQuitMessage, RegisterClassW, SetForegroundWindow,
-    SetTimer, SetWindowPos, ShowWindow, TranslateMessage, HTCAPTION, HWND_NOTOPMOST, HWND_TOPMOST,
-    MSG, SIZE_MINIMIZED, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
-    SWP_NOSIZE, SW_HIDE, SW_RESTORE, SW_SHOW, WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY,
-    WM_DPICHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_NCHITTEST, WM_NCMOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_SIZE, WM_TIMER, WINDOW_EX_STYLE,
-    WNDCLASSW, WS_EX_APPWINDOW, WS_POPUP, WS_SYSMENU, CS_HREDRAW, CS_VREDRAW, IDC_ARROW,
+    GetSystemMetrics, GetWindowRect, LoadCursorW, PostQuitMessage, RegisterClassW,
+    SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, TranslateMessage, HTCAPTION,
+    HWND_NOTOPMOST, HWND_TOPMOST, MINMAXINFO, MSG, SIZE_MINIMIZED, SM_CXSCREEN, SM_CYSCREEN,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOSIZE, SW_HIDE, SW_RESTORE, SW_SHOW, WM_APP,
+    WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_EXITSIZEMOVE,
+    WM_GETMINMAXINFO, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST,
+    WM_NCMOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_SIZE, WM_TIMER, WINDOW_EX_STYLE, WNDCLASSW,
+    WS_EX_APPWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, CS_HREDRAW, CS_VREDRAW,
+    IDC_ARROW,
 };
 
 use crate::ble::{self, AppEvent, Control, Status, WM_APP_BLE};
@@ -91,6 +93,12 @@ pub struct App {
     always_on_top: bool,
     pub lyrics_open: bool,
     pub lyrics_scroll: i32,
+    pub lyrics_font: f32,
+    /// True when the remembered position did not fit the monitors available at
+    /// launch (for example a screen that is still waking up at logon). The stored
+    /// coordinates are kept until the user actually moves the window, so a
+    /// temporary monitor outage cannot permanently drag it to the main screen.
+    position_clamped: bool,
 }
 
 impl App {
@@ -105,13 +113,14 @@ impl App {
         let autostart = config::autostart_enabled();
         let always_on_top = config.always_on_top;
         let lyrics_open = config.lyrics_open;
+        let lyrics_font = config.lyrics_font;
         let app = Self {
             hwnd,
             config,
             np: NowPlaying::default(),
             status: Status::Idle,
             scale,
-            fonts: draw::Fonts::create(scale),
+            fonts: draw::Fonts::create(scale, lyrics_font),
             buffer: None,
             tray: tray::Tray::new(hwnd, crate::icon::load(16)),
             hover: None,
@@ -126,6 +135,8 @@ impl App {
             always_on_top,
             lyrics_open,
             lyrics_scroll: 0,
+            lyrics_font,
+            position_clamped: false,
         };
         app.set_topmost(always_on_top);
         app.update_timer();
@@ -274,30 +285,57 @@ impl App {
         self.lyrics_open = !self.lyrics_open;
         self.lyrics_scroll = 0;
         self.config.lyrics_open = self.lyrics_open;
+        if self.lyrics_open {
+            // Keep an already taller window and remember that height.
+            let height = self
+                .client_height_logical()
+                .max(self.config.lyrics_height as f32)
+                .max(config::LYRICS_HEIGHT_MIN as f32);
+            self.config.lyrics_height = height.round() as i32;
+        }
         self.config.save();
         self.resize_to_state();
         self.update_timer();
         self.invalidate();
     }
 
-    fn resize_to_state(&self) {
-        let logical_h = if self.lyrics_open {
-            draw::LOGICAL_HEIGHT_LYRICS
+    fn client_height_logical(&self) -> f32 {
+        let mut client = RECT::default();
+        unsafe {
+            let _ = GetClientRect(self.hwnd, &mut client);
+        }
+        if self.scale > 0.0 {
+            client.bottom as f32 / self.scale
         } else {
-            draw::LOGICAL_HEIGHT
-        };
+            draw::LOGICAL_HEIGHT as f32
+        }
+    }
+
+    fn client_width_logical(&self) -> f32 {
+        let mut client = RECT::default();
+        unsafe {
+            let _ = GetClientRect(self.hwnd, &mut client);
+        }
+        if self.scale > 0.0 {
+            client.right as f32 / self.scale
+        } else {
+            draw::LOGICAL_WIDTH as f32
+        }
+    }
+
+    fn set_logical_size(&self, logical_w: f32, logical_h: f32) {
         let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-        let style = WS_POPUP | WS_SYSMENU;
+        let style = WS_POPUP | WS_SYSMENU | WS_THICKFRAME;
         let ex_style = WS_EX_APPWINDOW;
-        let mut client_rect = RECT {
+        let mut rect = RECT {
             left: 0,
             top: 0,
-            right: (draw::LOGICAL_WIDTH as f32 * self.scale) as i32,
-            bottom: (logical_h as f32 * self.scale) as i32,
+            right: (logical_w * self.scale) as i32,
+            bottom: (logical_h * self.scale) as i32,
         };
-        let _ = unsafe { AdjustWindowRectExForDpi(&mut client_rect, style, false, ex_style, dpi) };
-        let new_w = client_rect.right - client_rect.left;
-        let new_h = client_rect.bottom - client_rect.top;
+        let _ = unsafe { AdjustWindowRectExForDpi(&mut rect, style, false, ex_style, dpi) };
+        let new_w = rect.right - rect.left;
+        let new_h = rect.bottom - rect.top;
         unsafe {
             let _ = SetWindowPos(
                 self.hwnd,
@@ -309,6 +347,70 @@ impl App {
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
+    }
+
+    fn resize_to_state(&mut self) {
+        let width = self
+            .client_width_logical()
+            .max(config::WINDOW_WIDTH_MIN as f32);
+        let logical_h = if self.lyrics_open {
+            self.config
+                .lyrics_height
+                .max(config::LYRICS_HEIGHT_MIN)
+                .max(self.client_height_logical().round() as i32) as f32
+        } else {
+            draw::LOGICAL_HEIGHT as f32
+        };
+        self.set_logical_size(width, logical_h);
+    }
+
+    /// Persists the size and position the user dragged the window to.
+    fn remember_size(&mut self) {
+        let width = (self.client_width_logical().round() as i32)
+            .clamp(config::WINDOW_WIDTH_MIN, config::WINDOW_WIDTH_MAX);
+        let mut changed = width != self.config.window_width;
+        self.config.window_width = width;
+        if self.lyrics_open {
+            let height = (self.client_height_logical().round() as i32)
+                .clamp(config::LYRICS_HEIGHT_MIN, config::LYRICS_HEIGHT_MAX);
+            if height != self.config.lyrics_height {
+                self.config.lyrics_height = height;
+                changed = true;
+            }
+        }
+        if !self.position_clamped {
+            let mut window = RECT::default();
+            if unsafe { GetWindowRect(self.hwnd, &mut window) }.is_ok() {
+                if self.config.window_x != Some(window.left) {
+                    self.config.window_x = Some(window.left);
+                    changed = true;
+                }
+                if self.config.window_y != Some(window.top) {
+                    self.config.window_y = Some(window.top);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.config.save();
+        }
+    }
+
+    fn adjust_lyrics_font(&mut self, delta: f32) {
+        if !self.lyrics_open {
+            return;
+        }
+        let next = (self.lyrics_font + delta)
+            .clamp(config::LYRICS_FONT_MIN, config::LYRICS_FONT_MAX);
+        if (next - self.lyrics_font).abs() < 0.001 {
+            return;
+        }
+        self.lyrics_font = next;
+        self.fonts = draw::Fonts::create(self.scale, next);
+        self.config.lyrics_font = next;
+        self.config.save();
+        self.lyrics_scroll = 0;
+        self.invalidate();
     }
 
     fn update_timer(&self) {
@@ -359,8 +461,9 @@ impl App {
 
     fn on_dpi_changed(&mut self, dpi: u32) {
         self.scale = dpi as f32 / 96.0;
-        self.fonts = draw::Fonts::create(self.scale);
+        self.fonts = draw::Fonts::create(self.scale, self.lyrics_font);
         self.buffer = None;
+        self.remember_size();
         self.invalidate();
     }
 
@@ -369,7 +472,7 @@ impl App {
         unsafe {
             let _ = GetClientRect(self.hwnd, &mut client);
         }
-        draw::layout(client.right, client.bottom, self.scale)
+        draw::layout(client.right, client.bottom, self.scale, self.lyrics_open)
     }
 
     fn seek_position(&self, x: i32, layout: &draw::Layout) -> f64 {
@@ -401,6 +504,8 @@ impl App {
         if let Some(action) = draw::hit_header(&layout, x, y) {
             match action {
                 draw::HeaderAction::Lyrics => self.toggle_lyrics(),
+                draw::HeaderAction::LyricsSmaller => self.adjust_lyrics_font(-1.0),
+                draw::HeaderAction::LyricsLarger => self.adjust_lyrics_font(1.0),
                 draw::HeaderAction::Pin => self.toggle_pin(),
                 draw::HeaderAction::Minimize | draw::HeaderAction::Close => self.hide_to_tray(),
             }
@@ -492,6 +597,7 @@ impl App {
                 self.update_tray();
             }
             ID_EXIT => {
+                self.remember_size();
                 self.send_control(Control::Shutdown);
                 unsafe {
                     let _ = DestroyWindow(self.hwnd);
@@ -548,6 +654,27 @@ pub fn run() -> Result<(), String> {
     unsafe { run_inner() }
 }
 
+/// Keeps a restored window fully inside the work area of the nearest monitor,
+/// so unplugging the screen the user left it on cannot strand the window.
+unsafe fn clamp_window_position(x: i32, y: i32, width: i32, height: i32) -> (i32, i32) {
+    let point = POINT {
+        x: x + width / 2,
+        y: y + height / 2,
+    };
+    let monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if GetMonitorInfoW(monitor, &mut info).as_bool() {
+        let work = info.rcWork;
+        let max_x = (work.right - width).max(work.left);
+        let max_y = (work.bottom - height).max(work.top);
+        return (x.clamp(work.left, max_x), y.clamp(work.top, max_y));
+    }
+    (x, y)
+}
+
 unsafe fn run_inner() -> Result<(), String> {
     let instance = GetModuleHandleW(None).map_err(|error| error.to_string())?;
     let class_name = wide(CLASS_NAME);
@@ -569,27 +696,41 @@ unsafe fn run_inner() -> Result<(), String> {
     }
 
     let initial_config = Config::load();
+    let initial_w = initial_config
+        .window_width
+        .clamp(config::WINDOW_WIDTH_MIN, config::WINDOW_WIDTH_MAX);
     let initial_h = if initial_config.lyrics_open {
-        draw::LOGICAL_HEIGHT_LYRICS
+        initial_config
+            .lyrics_height
+            .clamp(config::LYRICS_HEIGHT_MIN, config::LYRICS_HEIGHT_MAX)
     } else {
         draw::LOGICAL_HEIGHT
     };
 
-    let style = WS_POPUP | WS_SYSMENU;
-    let ex_style: WINDOW_EX_STYLE = WS_EX_APPWINDOW;
+    let style = WS_POPUP | WS_SYSMENU | WS_THICKFRAME;
+    let ex_style: WINDOW_EX_STYLE = if initial_config.always_on_top {
+        WS_EX_APPWINDOW | WS_EX_TOPMOST
+    } else {
+        WS_EX_APPWINDOW
+    };
     let dpi = GetDpiForSystem();
     let scale = dpi as f32 / 96.0;
     let mut rect = RECT {
         left: 0,
         top: 0,
-        right: (draw::LOGICAL_WIDTH as f32 * scale) as i32,
+        right: (initial_w as f32 * scale) as i32,
         bottom: (initial_h as f32 * scale) as i32,
     };
     let _ = AdjustWindowRectExForDpi(&mut rect, style, false, ex_style, dpi,);
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
-    let x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
-    let y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
+    let (x, y) = match (initial_config.window_x, initial_config.window_y) {
+        (Some(x), Some(y)) => clamp_window_position(x, y, width, height),
+        _ => (
+            (GetSystemMetrics(SM_CXSCREEN) - width) / 2,
+            (GetSystemMetrics(SM_CYSCREEN) - height) / 2,
+        ),
+    };
 
     let hwnd = CreateWindowExW(
         ex_style,
@@ -615,14 +756,27 @@ unsafe fn run_inner() -> Result<(), String> {
     let mut rect = RECT {
         left: 0,
         top: 0,
-        right: (draw::LOGICAL_WIDTH as f32 * scale) as i32,
+        right: (initial_w as f32 * scale) as i32,
         bottom: (initial_h as f32 * scale) as i32,
     };
     let _ = AdjustWindowRectExForDpi(&mut rect, style, false, ex_style, dpi);
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
-    let x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
-    let y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
+    let (x, y, position_clamped) = match (initial_config.window_x, initial_config.window_y) {
+        (Some(x), Some(y)) => {
+            let (clamped_x, clamped_y) = clamp_window_position(x, y, width, height);
+            (
+                clamped_x,
+                clamped_y,
+                clamped_x != x || clamped_y != y,
+            )
+        }
+        _ => (
+            (GetSystemMetrics(SM_CXSCREEN) - width) / 2,
+            (GetSystemMetrics(SM_CYSCREEN) - height) / 2,
+            false,
+        ),
+    };
     let _ = SetWindowPos(
         hwnd,
         None,
@@ -657,12 +811,23 @@ unsafe fn run_inner() -> Result<(), String> {
         std::mem::size_of_val(&corner) as u32,
     );
 
-    let app = App::new(hwnd)?;
+    let mut app = App::new(hwnd)?;
+    app.position_clamped = position_clamped;
     APP.with(|cell| *cell.borrow_mut() = Some(Box::new(app)));
     with_app(|app| app.start_ble());
 
     let _ = ShowWindow(hwnd, SW_SHOW);
     let _ = UpdateWindow(hwnd);
+    // Apply the remembered pin state once the window is actually on screen.
+    // Toggling OFF then ON (or OFF twice) matches what the user does with the
+    // button, which is the only sequence the shell honors reliably at startup.
+    with_app(|app| {
+        let pinned = app.always_on_top;
+        app.set_topmost(false);
+        if pinned {
+            app.set_topmost(true);
+        }
+    });
     with_app(|app| app.update_timer());
 
     let mut message = MSG::default();
@@ -700,12 +865,38 @@ unsafe extern "system" fn wndproc(
         WM_ERASEBKGND => LRESULT(1),
         WM_SIZE => {
             with_app(|app| {
-                app.buffer = None;
                 if wparam.0 == SIZE_MINIMIZED as usize {
                     app.hide_to_tray();
                 }
             });
             LRESULT(0)
+        }
+        WM_EXITSIZEMOVE => {
+            with_app(|app| {
+                app.position_clamped = false;
+                app.remember_size();
+            });
+            LRESULT(0)
+        }
+        WM_GETMINMAXINFO => {
+            // Minimum size: the player must always fit; width leaves room for
+            // the header buttons and a truncated title.
+            let scale = with_app(|app| app.scale)
+                .unwrap_or_else(|| unsafe { GetDpiForWindow(hwnd) as f32 / 96.0 });
+            let dpi = unsafe { GetDpiForWindow(hwnd) };
+            let style = WS_POPUP | WS_SYSMENU | WS_THICKFRAME;
+            let ex_style = WS_EX_APPWINDOW;
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: (draw::MIN_LOGICAL_WIDTH as f32 * scale) as i32,
+                bottom: (draw::LOGICAL_HEIGHT as f32 * scale) as i32,
+            };
+            let _ = unsafe { AdjustWindowRectExForDpi(&mut rect, style, false, ex_style, dpi) };
+            let info = unsafe { &mut *(lparam.0 as *mut MINMAXINFO) };
+            info.ptMinTrackSize.x = rect.right - rect.left;
+            info.ptMinTrackSize.y = rect.bottom - rect.top;
+            DefWindowProcW(hwnd, message, wparam, lparam)
         }
         WM_TIMER if wparam.0 == TIMER_ID => {
             with_app(|app| {
@@ -720,7 +911,7 @@ unsafe extern "system" fn wndproc(
             with_app(|app| {
                 if app.lyrics_open {
                     let lines = delta / 120;
-                    app.lyrics_scroll -= lines;
+                    app.lyrics_scroll += lines;
                     app.invalidate();
                 }
             });

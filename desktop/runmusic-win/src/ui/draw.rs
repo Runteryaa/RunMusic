@@ -2,10 +2,10 @@
 
 use windows::Win32::Foundation::{COLORREF, RECT};
 use windows::Win32::Graphics::Gdi::{
-    CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, Ellipse, FillRect, SelectObject,
-    SetBkMode, SetTextColor, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT,
-    DT_SINGLELINE, DT_VCENTER, FONT_CHARSET, FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION,
-    FONT_QUALITY, HDC, HFONT, HGDIOBJ,
+    CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, Ellipse, FillRect, IntersectClipRect,
+    RestoreDC, SaveDC, SelectObject, SetBkMode, SetTextColor, DT_CALCRECT, DT_CENTER,
+    DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK,
+    FONT_CHARSET, FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FONT_QUALITY, HDC, HFONT, HGDIOBJ,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
@@ -13,9 +13,9 @@ use super::App;
 use crate::ble::Status;
 
 pub const LOGICAL_WIDTH: i32 = 400;
+pub const MIN_LOGICAL_WIDTH: i32 = 360;
 pub const HEADER_HEIGHT: f32 = 34.0;
 pub const LOGICAL_HEIGHT: i32 = 190;
-pub const LOGICAL_HEIGHT_LYRICS: i32 = 390;
 
 const fn rgb(r: u8, g: u8, b: u8) -> u32 {
     r as u32 | ((g as u32) << 8) | ((b as u32) << 16)
@@ -49,6 +49,8 @@ pub enum Action {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeaderAction {
+    LyricsSmaller,
+    LyricsLarger,
     Lyrics,
     Pin,
     Minimize,
@@ -58,7 +60,8 @@ pub enum HeaderAction {
 pub struct Layout {
     pub header: RECT,
     pub header_title: RECT,
-    pub header_buttons: [(HeaderAction, RECT); 4],
+    pub header_buttons: [(HeaderAction, RECT); 6],
+    pub header_button_count: usize,
     pub title: RECT,
     pub artist: RECT,
     pub status: RECT,
@@ -72,7 +75,7 @@ pub struct Layout {
     pub lyrics_panel: RECT,
 }
 
-pub fn layout(width: i32, height: i32, scale: f32) -> Layout {
+pub fn layout(width: i32, height: i32, scale: f32, lyrics_open: bool) -> Layout {
     let s = scale;
     let pad = (18.0 * s) as i32;
     let icon = (26.0 * s) as i32;
@@ -107,7 +110,7 @@ pub fn layout(width: i32, height: i32, scale: f32) -> Layout {
         bottom: top + (124.0 * s) as i32,
     };
 
-    // Custom caption buttons on the right: lyrics, pin, minimize, close.
+    // Custom caption buttons on the right: (size − +) lyrics, pin, minimize, close.
     let button = (28.0 * s) as i32;
     let gap = (4.0 * s) as i32;
     let right = width - (10.0 * s) as i32;
@@ -133,6 +136,35 @@ pub fn layout(width: i32, height: i32, scale: f32) -> Layout {
         right: pin.left - gap,
         ..close
     };
+    let lyrics_larger = RECT {
+        left: lyrics.left - gap - button,
+        right: lyrics.left - gap,
+        ..close
+    };
+    let lyrics_smaller = RECT {
+        left: lyrics_larger.left - gap - button,
+        right: lyrics_larger.left - gap,
+        ..close
+    };
+
+    // Font-size buttons only exist while the lyrics panel is open.
+    let mut header_buttons = [(HeaderAction::Close, RECT::default()); 6];
+    let mut header_button_count = 0usize;
+    if lyrics_open {
+        header_buttons[0] = (HeaderAction::LyricsSmaller, lyrics_smaller);
+        header_buttons[1] = (HeaderAction::LyricsLarger, lyrics_larger);
+        header_button_count = 2;
+    }
+    header_buttons[header_button_count] = (HeaderAction::Lyrics, lyrics);
+    header_buttons[header_button_count + 1] = (HeaderAction::Pin, pin);
+    header_buttons[header_button_count + 2] = (HeaderAction::Minimize, minimize);
+    header_buttons[header_button_count + 3] = (HeaderAction::Close, close);
+    header_button_count += 4;
+    let header_title_right = if lyrics_open {
+        lyrics_smaller.left
+    } else {
+        lyrics.left
+    } - (10.0 * s) as i32;
 
     let line = (1.0 * s).max(1.0) as i32;
     let divider = RECT {
@@ -158,15 +190,11 @@ pub fn layout(width: i32, height: i32, scale: f32) -> Layout {
         header_title: RECT {
             left: pad,
             top: 0,
-            right: lyrics.left - (10.0 * s) as i32,
+            right: header_title_right,
             bottom: top,
         },
-        header_buttons: [
-            (HeaderAction::Lyrics, lyrics),
-            (HeaderAction::Pin, pin),
-            (HeaderAction::Minimize, minimize),
-            (HeaderAction::Close, close),
-        ],
+        header_buttons,
+        header_button_count,
         title: RECT {
             left: pad,
             top: top + (12.0 * s) as i32,
@@ -229,8 +257,7 @@ pub fn hit_button(layout: &Layout, x: i32, y: i32) -> Option<Action> {
 }
 
 pub fn hit_header(layout: &Layout, x: i32, y: i32) -> Option<HeaderAction> {
-    layout
-        .header_buttons
+    layout.header_buttons[..layout.header_button_count]
         .iter()
         .find(|(_, rect)| contains(rect, x, y))
         .map(|(action, _)| *action)
@@ -243,7 +270,7 @@ pub fn contains(rect: &RECT, x: i32, y: i32) -> bool {
 pub fn paint(hdc: HDC, app: &App) {
     let mut client = RECT::default();
     let _ = unsafe { GetClientRect(app.hwnd, &mut client) };
-    let l = layout(client.right, client.bottom, app.scale);
+    let l = layout(client.right, client.bottom, app.scale, app.lyrics_open);
 
     fill(hdc, &client, BG);
 
@@ -423,42 +450,65 @@ fn draw_lyrics(hdc: HDC, app: &App, panel: &RECT) {
         );
     }
 
-    let line_height = (25.0 * s) as i32;
+    let base = ((app.lyrics_font * 1.95 * s).round() as i32).max(1);
+    let gap = ((app.lyrics_font * 0.30 * s).round() as i32).max(1);
+    let pad = (12.0 * s) as i32;
+    let text_width = (panel.right - panel.left - pad * 2).max(1);
     let total_lines = lyrics.lines.len();
     let position = app.np.position();
     let active_idx = lyrics.active_index(position);
 
-    let visible_lines = ((panel.bottom - panel.top) / line_height).max(1) as usize;
-    let center_row = visible_lines / 2;
+    // Wrapped heights: a line that does not fit on one row takes as many
+    // rows as it needs instead of being cut off with an ellipsis.
+    let mut heights = Vec::with_capacity(total_lines);
+    for (idx, line) in lyrics.lines.iter().enumerate() {
+        let font = if Some(idx) == active_idx {
+            app.fonts.lyrics_bold
+        } else {
+            app.fonts.lyrics
+        };
+        let measured = measure_wrapped(hdc, &line.text, font, text_width);
+        let rows = (measured.max(1) + base - 1) / base;
+        heights.push(rows.max(1) * base);
+    }
 
-    let center_line = if let Some(idx) = active_idx {
-        idx as i32
-    } else {
-        0
+    let panel_center_y = (panel.top + panel.bottom) / 2;
+    let scroll = app
+        .lyrics_scroll
+        .clamp(-(total_lines as i32), total_lines as i32);
+    let scroll_px = scroll * base;
+
+    // Keep the active line centered; without timestamps start at the top.
+    let origin = match active_idx {
+        Some(idx) if idx < total_lines => {
+            let before: i32 = heights[..idx].iter().map(|height| height + gap).sum();
+            panel_center_y - heights[idx] / 2 + scroll_px - before
+        }
+        _ => panel.top + (6.0 * s) as i32 - scroll_px,
     };
 
-    let start_idx = (center_line - center_row as i32 + app.lyrics_scroll)
-        .clamp(-(visible_lines as i32), total_lines as i32);
-    let panel_center_y = (panel.top + panel.bottom) / 2;
-
-    for row in 0..visible_lines {
-        let line_idx = start_idx + row as i32;
-        let line_top = panel.top + (row as i32) * line_height;
-        let line_bottom = line_top + line_height;
-
-        if line_idx >= 0 && (line_idx as usize) < total_lines {
-            let idx = line_idx as usize;
-            let line_item = &lyrics.lines[idx];
+    let mut line_top = origin;
+    // Clip the lyric list to its panel so scrolled lines never paint over the
+    // player controls above the divider.
+    let saved_dc = unsafe { SaveDC(hdc) };
+    unsafe {
+        let _ = IntersectClipRect(hdc, panel.left, panel.top, panel.right, panel.bottom);
+    }
+    for (idx, line) in lyrics.lines.iter().enumerate() {
+        let height = heights[idx];
+        if line_top > panel.bottom {
+            break;
+        }
+        if line_top + height >= panel.top {
             let is_active = Some(idx) == active_idx;
-
             let mut line_rect = RECT {
-                left: panel.left,
+                left: panel.left + pad,
                 top: line_top,
-                right: panel.right,
-                bottom: line_bottom,
+                right: panel.right - pad,
+                bottom: line_top + height,
             };
 
-            let dist_from_center = ((line_top + line_height / 2 - panel_center_y).abs() as f32
+            let dist_from_center = ((line_top + height / 2 - panel_center_y).abs() as f32
                 / ((panel.bottom - panel.top) as f32 / 2.0))
                 .clamp(0.0, 1.0);
 
@@ -471,33 +521,43 @@ fn draw_lyrics(hdc: HDC, app: &App, panel: &RECT) {
             };
 
             let font = if is_active {
-                app.fonts.body_bold
+                app.fonts.lyrics_bold
             } else {
-                app.fonts.body
+                app.fonts.lyrics
             };
 
             text(
                 hdc,
-                &line_item.text,
+                &line.text,
                 &mut line_rect,
                 font,
                 color,
-                DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
+                DT_CENTER | DT_WORDBREAK | DT_NOPREFIX,
             );
         }
+        line_top += height + gap;
+    }
+    unsafe {
+        let _ = RestoreDC(hdc, saved_dc);
     }
 }
 
 fn draw_header_buttons(hdc: HDC, app: &App, l: &Layout) {
-    for (action, rect) in l.header_buttons {
-        let hovered = app.hover_header == Some(action);
-        let (glyph, active) = match action {
-            HeaderAction::Lyrics => ("\u{EC4F}", app.lyrics_open),
-            HeaderAction::Pin => ("\u{E840}", app.always_on_top),
-            HeaderAction::Minimize => ("\u{E921}", false),
-            HeaderAction::Close => ("\u{E8BB}", false),
+    let min_font = crate::config::LYRICS_FONT_MIN;
+    let max_font = crate::config::LYRICS_FONT_MAX;
+    for (action, rect) in l.header_buttons[..l.header_button_count].iter() {
+        let hovered = app.hover_header == Some(*action);
+        let (glyph, active, enabled) = match action {
+            HeaderAction::LyricsSmaller => ("\u{E738}", false, app.lyrics_font > min_font),
+            HeaderAction::LyricsLarger => ("\u{E710}", false, app.lyrics_font < max_font),
+            HeaderAction::Lyrics => ("\u{EC4F}", app.lyrics_open, true),
+            HeaderAction::Pin => ("\u{E840}", app.always_on_top, true),
+            HeaderAction::Minimize => ("\u{E921}", false, true),
+            HeaderAction::Close => ("\u{E8BB}", false, true),
         };
-        let color = if active {
+        let color = if !enabled {
+            MUTED_DIM
+        } else if active {
             app.accent_color()
         } else if hovered {
             TEXT
@@ -505,11 +565,11 @@ fn draw_header_buttons(hdc: HDC, app: &App, l: &Layout) {
             MUTED
         };
 
-        if hovered {
+        if hovered && enabled {
             let cx = (rect.left + rect.right) / 2;
             let cy = (rect.top + rect.bottom) / 2;
             let radius = (rect.right - rect.left) / 2 - (1.0 * app.scale).max(1.0) as i32;
-            let background = if action == HeaderAction::Close {
+            let background = if *action == HeaderAction::Close {
                 rgb(196, 48, 43)
             } else {
                 PANEL_HOVER
@@ -687,12 +747,15 @@ pub struct Fonts {
     pub icon: HFONT,
     pub icon_large: HFONT,
     pub icon_small: HFONT,
+    pub lyrics: HFONT,
+    pub lyrics_bold: HFONT,
 }
 
 impl Fonts {
-    pub fn create(scale: f32) -> Self {
+    pub fn create(scale: f32, lyrics_size: f32) -> Self {
         let face = wide("Segoe UI");
         let icons = wide("Segoe MDL2 Assets");
+        let lyrics = lyrics_size * scale;
         Self {
             title: font(&face, 17.0 * scale, 600),
             body: font(&face, 13.0 * scale, 400),
@@ -701,6 +764,8 @@ impl Fonts {
             icon: font(&icons, 16.0 * scale, 400),
             icon_large: font(&icons, 19.0 * scale, 400),
             icon_small: font(&icons, 14.0 * scale, 400),
+            lyrics: font(&face, lyrics, 400),
+            lyrics_bold: font(&face, lyrics, 600),
         }
     }
 }
@@ -716,6 +781,8 @@ impl Drop for Fonts {
                 self.icon,
                 self.icon_large,
                 self.icon_small,
+                self.lyrics,
+                self.lyrics_bold,
             ] {
                 if !font.is_invalid() {
                     let _ = DeleteObject(font.into());
@@ -748,6 +815,30 @@ fn font(face: &[u16], height: f32, weight: i32) -> HFONT {
 
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Height in pixels a lyric line needs at the given width, wrapped by word.
+fn measure_wrapped(hdc: HDC, value: &str, font: HFONT, width: i32) -> i32 {
+    unsafe {
+        let old = SelectObject(hdc, HGDIOBJ::from(font));
+        let mut buffer: Vec<u16> = value.encode_utf16().collect();
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: width.max(1),
+            bottom: 0,
+        };
+        if !buffer.is_empty() {
+            let _ = DrawTextW(
+                hdc,
+                &mut buffer,
+                &mut rect,
+                DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX,
+            );
+        }
+        let _ = SelectObject(hdc, old);
+        rect.bottom.max(0)
+    }
 }
 
 fn fill(hdc: HDC, rect: &RECT, color: u32) {

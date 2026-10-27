@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Bluetooth address of the last connected host (48-bit).
     #[serde(default)]
@@ -19,6 +19,72 @@ pub struct Config {
     pub always_on_top: bool,
     #[serde(default)]
     pub lyrics_open: bool,
+    /// Remembered client height (logical px) when the lyrics panel is open.
+    #[serde(default = "default_window_width")]
+    pub window_width: i32,
+    #[serde(default = "default_lyrics_height")]
+    pub lyrics_height: i32,
+    /// Lyric font size in logical px.
+    #[serde(default = "default_lyrics_font")]
+    pub lyrics_font: f32,
+    /// Last window position (physical screen px, outer window rect).
+    #[serde(default)]
+    pub window_x: Option<i32>,
+    #[serde(default)]
+    pub window_y: Option<i32>,
+}
+
+pub const LYRICS_FONT_MIN: f32 = 10.0;
+pub const LYRICS_FONT_MAX: f32 = 24.0;
+pub const LYRICS_HEIGHT_MIN: i32 = 260;
+pub const LYRICS_HEIGHT_MAX: i32 = 1600;
+pub const WINDOW_WIDTH_MIN: i32 = 360;
+pub const WINDOW_WIDTH_MAX: i32 = 2400;
+
+fn default_window_width() -> i32 {
+    400
+}
+
+fn default_lyrics_height() -> i32 {
+    390
+}
+
+fn default_lyrics_font() -> f32 {
+    13.0
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            last_address: None,
+            last_name: None,
+            autostart: false,
+            always_on_top: false,
+            lyrics_open: false,
+            window_width: default_window_width(),
+            lyrics_height: default_lyrics_height(),
+            lyrics_font: default_lyrics_font(),
+            window_x: None,
+            window_y: None,
+        }
+    }
+}
+
+fn sanitize(mut config: Config) -> Config {
+    config.window_width = config
+        .window_width
+        .clamp(WINDOW_WIDTH_MIN, WINDOW_WIDTH_MAX);
+    config.lyrics_height = config
+        .lyrics_height
+        .clamp(LYRICS_HEIGHT_MIN, LYRICS_HEIGHT_MAX);
+    config.lyrics_font = if config.lyrics_font.is_finite() {
+        config
+            .lyrics_font
+            .clamp(LYRICS_FONT_MIN, LYRICS_FONT_MAX)
+    } else {
+        default_lyrics_font()
+    };
+    config
 }
 
 impl Config {
@@ -29,7 +95,9 @@ impl Config {
         let Ok(raw) = fs::read_to_string(&path) else {
             return Self::default();
         };
-        serde_json::from_str(&raw).unwrap_or_default()
+        serde_json::from_str(raw.trim_start_matches('\u{feff}'))
+            .map(sanitize)
+            .unwrap_or_default()
     }
 
     pub fn save(&self) {

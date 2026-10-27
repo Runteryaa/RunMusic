@@ -155,17 +155,7 @@ impl Link {
 
         let command = find_characteristic(&service, CHAR_COMMAND_WRITE_UUID)?;
         let state = find_characteristic(&service, CHAR_STATE_NOTIFY_UUID)?;
-
-        let subscribe = state
-            .WriteClientCharacteristicConfigurationDescriptorAsync(
-                GattClientCharacteristicConfigurationDescriptorValue::Notify,
-            )
-            .map_err(error_text)?
-            .join()
-            .map_err(error_text)?;
-        if subscribe != GattCommunicationStatus::Success {
-            return Err(format!("Bildirim aboneliği başarısız: {subscribe:?}"));
-        }
+        let lyrics_char = find_characteristic(&service, CHAR_QUEUE_LYRICS_UUID).ok();
 
         // Friendly name lives on 0xFEE4; the advertisement only carries the UUID.
         let device_name = find_characteristic(&service, CHAR_DEVICE_INFO_UUID)
@@ -173,46 +163,10 @@ impl Link {
             .and_then(|info| read_text(&info))
             .filter(|name| !name.is_empty());
 
-        // 0xFEE3 carries queue and lyrics updates (LYRICS_SYNC).
-        let (lyrics, lyrics_token) = match find_characteristic(&service, CHAR_QUEUE_LYRICS_UUID) {
-            Ok(lyrics_char) => {
-                let sub_status = lyrics_char
-                    .WriteClientCharacteristicConfigurationDescriptorAsync(
-                        GattClientCharacteristicConfigurationDescriptorValue::Notify,
-                    )
-                    .map_err(error_text)?
-                    .join()
-                    .map_err(error_text)?;
-                if sub_status == GattCommunicationStatus::Success {
-                    let lyrics_tx = control.clone();
-                    let token = lyrics_char
-                        .ValueChanged(&TypedEventHandler::new(
-                            move |_sender: Ref<GattCharacteristic>, args: Ref<GattValueChangedEventArgs>| {
-                                if let Some(args) = args.as_ref() {
-                                    if let Ok(buffer) = args.CharacteristicValue() {
-                                        if let Some(bytes) = read_buffer(&buffer) {
-                                            let _ = lyrics_tx.send(Control::LyricsNotification(bytes));
-                                        }
-                                    }
-                                }
-                                Ok(())
-                            },
-                        ))
-                        .map_err(error_text)?;
-                    (Some(lyrics_char), token)
-                } else {
-                    (None, 0)
-                }
-            }
-            Err(_) => (None, 0),
-        };
-
-        let session = GattSession::FromDeviceIdAsync(&device.BluetoothDeviceId().map_err(error_text)?)
-            .map_err(error_text)?
-            .join()
-            .map_err(error_text)?;
-        let _ = session.SetMaintainConnection(true);
-
+        // Register the value handlers *before* enabling notifications. The host
+        // starts sending a multi-chunk INITIAL_STATE right after the CCCD write
+        // completes, and WinRT drops notifications received before a handler
+        // is attached (which used to corrupt the first state payload).
         let notify_tx = control.clone();
         let state_token = state
             .ValueChanged(&TypedEventHandler::new(
@@ -228,6 +182,55 @@ impl Link {
                 },
             ))
             .map_err(error_text)?;
+
+        // 0xFEE3 carries queue and lyrics updates (LYRICS_SYNC).
+        let (lyrics, lyrics_token) = match lyrics_char {
+            Some(lyrics_char) => {
+                let lyrics_tx = control.clone();
+                let token = lyrics_char
+                    .ValueChanged(&TypedEventHandler::new(
+                        move |_sender: Ref<GattCharacteristic>, args: Ref<GattValueChangedEventArgs>| {
+                            if let Some(args) = args.as_ref() {
+                                if let Ok(buffer) = args.CharacteristicValue() {
+                                    if let Some(bytes) = read_buffer(&buffer) {
+                                        let _ = lyrics_tx.send(Control::LyricsNotification(bytes));
+                                    }
+                                }
+                            }
+                            Ok(())
+                        },
+                    ))
+                    .map_err(error_text)?;
+                (Some(lyrics_char), token)
+            }
+            None => (None, 0),
+        };
+
+        let subscribe = state
+            .WriteClientCharacteristicConfigurationDescriptorAsync(
+                GattClientCharacteristicConfigurationDescriptorValue::Notify,
+            )
+            .map_err(error_text)?
+            .join()
+            .map_err(error_text)?;
+        if subscribe != GattCommunicationStatus::Success {
+            return Err(format!("Bildirim aboneliği başarısız: {subscribe:?}"));
+        }
+        if let Some(lyrics_char) = &lyrics {
+            let _ = lyrics_char
+                .WriteClientCharacteristicConfigurationDescriptorAsync(
+                    GattClientCharacteristicConfigurationDescriptorValue::Notify,
+                )
+                .map_err(error_text)?
+                .join();
+        }
+
+        let session = GattSession::FromDeviceIdAsync(&device.BluetoothDeviceId().map_err(error_text)?)
+            .map_err(error_text)?
+            .join()
+            .map_err(error_text)?;
+        let _ = session.SetMaintainConnection(true);
+
 
         let status_tx = control;
         let connection_token = device
