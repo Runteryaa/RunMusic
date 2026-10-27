@@ -59,6 +59,10 @@ To build your own extension, see the [Extension Development Guide](docs/EXTENSIO
 
 ---
 
+### Windows Client
+
+<img src="https://i.ibb.co/BKHsjHjm/image.png"/>
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
