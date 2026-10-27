@@ -20,7 +20,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library/legacy';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import TrackPlayer, {
   useActiveTrack,
   RepeatMode,
@@ -4084,20 +4084,21 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                 accessibilityLabel={playbackModeLabel}
                 accessibilityHint={t('player.playback_mode_hint')}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Ionicons
-                  name={
-                    playbackMode === 'smart'
-                      ? 'sparkles'
-                      : playbackMode === 'shuffle'
-                        ? 'shuffle'
-                        : 'repeat'
-                  }
-                  size={20}
-                  color={theme.primary}
-                />
                 {playbackMode === 'repeat-one' ? (
-                  <Text style={[styles.repeatBadge, { color: theme.primary }]}>1</Text>
-                ) : null}
+                  <MaterialCommunityIcons name="repeat-once" size={20} color={theme.primary} />
+                ) : (
+                  <Ionicons
+                    name={
+                      playbackMode === 'smart'
+                        ? 'sparkles'
+                        : playbackMode === 'shuffle'
+                          ? 'shuffle'
+                          : 'repeat'
+                    }
+                    size={20}
+                    color={theme.primary}
+                  />
+                )}
               </TouchableOpacity>
 
               {/* RunMusic Connecto Butonu (Shuffle ile Sleep Timer arasında) */}
@@ -4925,14 +4926,6 @@ const styles = StyleSheet.create({
   appleSubUtilBtn: {
     padding: 8,
     position: 'relative',
-  },
-  repeatBadge: {
-    position: 'absolute',
-    right: 2,
-    top: 2,
-    color: '#ffffff',
-    fontSize: 9,
-    fontWeight: '900',
   },
   connectClientsBadgeWrapper: {
     position: 'absolute',
