@@ -65,6 +65,24 @@ jobs:
       - name: ✅ Verify Version Consistency
         run: node scripts/version.mjs check
 
+      - name: 📦 Install Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: 🚀 Publish EAS Update (OTA)
+        run: |
+          TARGET_BRANCH="${GITHUB_REF_NAME}"
+          if [ "$TARGET_BRANCH" = "beta" ]; then
+            UPDATE_BRANCH="beta"
+          else
+            UPDATE_BRANCH="production"
+          fi
+          echo "Publishing EAS Update for branch: $UPDATE_BRANCH (${TAG})"
+          npx eas-cli update --branch $UPDATE_BRANCH --platform android --environment production --non-interactive -m "${TAG} (${GITHUB_SHA::7})"
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_SKIP_AUTO_FINGERPRINT: 1
+          EXPO_PUBLIC_APP_VERSION: ${{ env.VERSION }}
+
       - name: 💾 Cache Gradle Packages
         uses: actions/cache@v4
         with:
@@ -112,24 +130,6 @@ jobs:
           done
           echo "Side-by-side NDK directory contents:"
           ls -la "$SDK_DIR/ndk"
-
-      - name: 📦 Install Dependencies
-        run: npm install --legacy-peer-deps
-
-      - name: 🚀 Publish EAS Update (OTA)
-        run: |
-          TARGET_BRANCH="${GITHUB_REF_NAME}"
-          if [ "$TARGET_BRANCH" = "beta" ]; then
-            UPDATE_BRANCH="beta"
-          else
-            UPDATE_BRANCH="production"
-          fi
-          echo "Publishing EAS Update for branch: $UPDATE_BRANCH (${TAG})"
-          npx eas-cli update --branch $UPDATE_BRANCH --platform android --environment production --non-interactive -m "${TAG} (${GITHUB_SHA::7})"
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          EAS_SKIP_AUTO_FINGERPRINT: 1
-          EXPO_PUBLIC_APP_VERSION: ${{ env.VERSION }}
 
       - name: 🛠 Prebuild Android
         run: |
