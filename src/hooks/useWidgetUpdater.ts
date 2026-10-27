@@ -41,10 +41,10 @@ export function useWidgetUpdater() {
     const subscription = MusicWidgetModule.addListener('onWidgetAction', async (event: { action: string }) => {
       try {
         if (event.action === 'shuffle') {
-          // Toggle shuffle
-          const isShuffle = useStore.getState().isShuffle;
+          // Toggle shuffle; enabling keeps the previous Smart Mix choice.
+          const { isShuffle, isSmartShuffle } = useStore.getState();
           const { setShuffle } = await import('../services/queueController');
-          setShuffle(!isShuffle);
+          await setShuffle(!isShuffle, isShuffle ? false : isSmartShuffle);
         } else if (event.action === 'star') {
           // You might have a favorite function, but for now we'll do nothing or a simple toast
           console.log('Star clicked');

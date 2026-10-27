@@ -38,22 +38,78 @@ export function trackKey(track: QueueTrackLike | null | undefined): string {
 }
 
 /** Fisher-Yates: adil, tekrarsız ve girdiyi değiştirmeyen permütasyon. */
-export function shuffleArray<T>(input: T[]): T[] {
+export function shuffleArray<T>(input: T[], random: () => number = Math.random): T[] {
   const out = [...input];
   for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;
 }
 
+/** Dört durumlu oynatma modu; UI ve remote aynı modeli kullanır. */
+export type PlaybackMode = 'repeat-all' | 'shuffle' | 'smart' | 'repeat-one';
+
+export const PLAYBACK_MODE_ORDER: readonly PlaybackMode[] = [
+  'repeat-all',
+  'shuffle',
+  'smart',
+  'repeat-one',
+];
+
+export function getPlaybackMode(params: {
+  isShuffle: boolean;
+  isSmartShuffle: boolean;
+  isRepeatOne: boolean;
+}): PlaybackMode {
+  if (params.isRepeatOne) return 'repeat-one';
+  if (params.isShuffle) return params.isSmartShuffle ? 'smart' : 'shuffle';
+  return 'repeat-all';
+}
+
+export function nextPlaybackMode(mode: PlaybackMode): PlaybackMode {
+  const index = PLAYBACK_MODE_ORDER.indexOf(mode);
+  return PLAYBACK_MODE_ORDER[(index + 1) % PLAYBACK_MODE_ORDER.length];
+}
+
+const UNKNOWN_ARTIST_KEY = '\u0000runmusic_unknown_artist';
+
+/** Sanatçı adını karşılaştırılabilir hale getirir; boş/yer tutucu adları gruplar. */
+function normalizeArtistName(value: string | undefined): string {
+  const artist = (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (
+    !artist ||
+    artist === 'unknown artist' ||
+    artist === 'unknown' ||
+    artist === 'bilinmeyen sanatçı' ||
+    artist === 'bilinmeyen sanatci' ||
+    artist === 'local audio'
+  ) {
+    return UNKNOWN_ARTIST_KEY;
+  }
+  return artist;
+}
+
+function findArtistSafeIndex<T extends QueueTrackLike>(
+  pool: { track: T; artist: string }[],
+  recentArtists: string[]
+): number {
+  for (let i = 0; i < pool.length; i++) {
+    if (!recentArtists.includes(pool[i].artist)) return i;
+  }
+  return -1;
+}
+
 /**
  * Akıllı Karıştırma (Smart Shuffle):
  * 1. Sanatçı Ayrıştırması: Aynı sanatçının şarkılarının arka arkaya gelmesini önler
- *    (araya en az 2 farklı sanatçı yerleştirilmeye çalışılır).
- * 2. Dinleme Geçmişi Ağırlığı: Çok dinlenen parçalara kontrollü bir öncelik verir.
- * 3. Keşif Dengesi: Hiç dinlenmemiş veya az dinlenmiş parçaları da aralara serpiştirir.
- * 4. Kütüphanede tek sanatçı veya az sanatçı varsa sonsuz döngüye girmeden
+ *    (araya en az 2 farklı sanatçı yerleştirilmeye çalışılır). Çalan şarkının
+ *    sanatçısı `seedArtists` ile verilirse sıradaki ilk şarkı da aynı sanatçıdan
+ *    seçilmez.
+ * 2. Dinleme Dengesi: Çok çalınan ve az çalınan parçalar iki havuza ayrılır;
+ *    sıra bu iki havuzdan dönüşümlü seçilerek oluşturulur. Böylece popüler
+ *    parçalar listenin başına yığılmaz, keşif parçaları aralara serpilir.
+ * 3. Kütüphanede tek sanatçı veya az sanatçı varsa sonsuz döngüye girmeden
  *    kısıtları esnetir (graceful fallback).
  */
 export function smartShuffleArray<T extends QueueTrackLike>(
@@ -61,96 +117,83 @@ export function smartShuffleArray<T extends QueueTrackLike>(
   options?: {
     playCounts?: Record<string, number>;
     getArtist?: (track: T) => string | undefined;
+    /** Çalan/son çalınan parçaların sanatçıları; ilk seçimde çakışmayı önler. */
+    seedArtists?: string[];
+    /** Çalan parçanın dinlenme sayısı; ilk havuzu dengeler. */
+    seedPlayCount?: number;
+    /** Testlerde deterministik sonuç için enjekte edilebilir. */
+    random?: () => number;
   }
 ): T[] {
-  if (input.length <= 2) {
-    return shuffleArray(input);
-  }
+  if (input.length <= 1) return [...input];
 
   const playCounts = options?.playCounts ?? {};
   const getArtist =
     options?.getArtist ?? ((t: T) => t.artist || (t as any).artistName || '');
+  const random = options?.random ?? Math.random;
 
-  // 1. Ağırlıklı skorlama ile adayları zenginleştir
-  interface ScoredCandidate {
+  interface Candidate {
     track: T;
     artist: string;
-    score: number;
     playCount: number;
   }
 
-  const scored: ScoredCandidate[] = input.map((track) => {
-    const key = trackKey(track);
-    const count = playCounts[key] || 0;
-    const rawArtist = (getArtist(track) || '').trim().toLowerCase();
+  const candidates: Candidate[] = input.map((track) => ({
+    track,
+    artist: normalizeArtistName(getArtist(track)),
+    playCount: playCounts[trackKey(track)] || 0,
+  }));
 
-    // count > 0 ise dinleme sayısı logaritmik olarak katkı sağlar (1.0 .. 2.2).
-    // count === 0 ise keşif dengesi olarak 1.15 verilir.
-    let weight = 1.0;
-    if (count > 0) {
-      weight = 1.0 + Math.min(Math.log2(count + 1) * 0.35, 1.2);
-    } else {
-      weight = 1.15;
-    }
+  const counts = candidates.map((c) => c.playCount).sort((a, b) => a - b);
+  const hasVariation = counts[0] !== counts[counts.length - 1];
+  const mid = Math.floor(counts.length / 2);
+  const median =
+    counts.length % 2 === 0 ? (counts[mid - 1] + counts[mid]) / 2 : counts[mid];
 
-    const r = Math.max(0.0001, Math.random());
-    const score = Math.pow(r, 1 / weight);
+  const rare = hasVariation
+    ? shuffleArray(candidates.filter((c) => c.playCount <= median), random)
+    : shuffleArray(candidates, random);
+  const frequent = hasVariation
+    ? shuffleArray(candidates.filter((c) => c.playCount > median), random)
+    : [];
 
-    return {
-      track,
-      artist: rawArtist,
-      score,
-      playCount: count,
-    };
-  });
-
-  scored.sort((a, b) => b.score - a.score);
-
-  // 2. Sanatçı Ayrıştırması (Artist De-clustering / Spacing)
-  const result: T[] = [];
-  const pool = [...scored];
   const recentArtists: string[] = [];
-
-  while (pool.length > 0) {
-    let chosenIndex = -1;
-
-    // Önce son 2 sanatçıyla çakışmayan en yüksek skorlu adayı bul
-    for (let i = 0; i < pool.length; i++) {
-      const candidateArtist = pool[i].artist;
-      if (!candidateArtist || !recentArtists.includes(candidateArtist)) {
-        chosenIndex = i;
-        break;
-      }
+  for (const artist of options?.seedArtists ?? []) {
+    const normalized = normalizeArtistName(artist);
+    if (normalized && !recentArtists.includes(normalized)) {
+      recentArtists.push(normalized);
     }
+  }
+  if (recentArtists.length > 2) {
+    recentArtists.splice(0, recentArtists.length - 2);
+  }
 
-    // Bulunamadıysa son 1 sanatçıyla çakışmayanı dene
-    if (chosenIndex === -1 && recentArtists.length > 0) {
-      const lastArtist = recentArtists[recentArtists.length - 1];
-      for (let i = 0; i < pool.length; i++) {
-        const candidateArtist = pool[i].artist;
-        if (!candidateArtist || candidateArtist !== lastArtist) {
-          chosenIndex = i;
-          break;
-        }
-      }
-    }
+  const result: T[] = [];
+  let preferRare = true;
+  if (hasVariation && options?.seedPlayCount !== undefined) {
+    // Çalan parça sık dinleniyorsa nadir, nadir dinleniyorsa sık havuzuyla başla.
+    preferRare = options.seedPlayCount > median;
+  }
 
-    // Kütüphanede tek sanatçı kaldıysa ilk adayı al
-    if (chosenIndex === -1) {
-      chosenIndex = 0;
-    }
+  const takeSafe = (pool: Candidate[]): Candidate | null => {
+    if (pool.length === 0) return null;
+    const index = findArtistSafeIndex(pool, recentArtists);
+    if (index < 0) return null;
+    return pool.splice(index, 1)[0];
+  };
 
-    const [selected] = pool.splice(chosenIndex, 1);
+  while (rare.length > 0 || frequent.length > 0) {
+    const preferred = preferRare ? rare : frequent;
+    const fallback = preferRare ? frequent : rare;
+
+    const selected =
+      takeSafe(preferred) ?? takeSafe(fallback) ?? preferred.shift() ?? fallback.shift();
+    if (!selected) break;
+
     result.push(selected.track);
-
-    if (selected.artist) {
-      recentArtists.push(selected.artist);
-      if (recentArtists.length > 2) {
-        recentArtists.shift();
-      }
-    } else {
-      recentArtists.length = 0;
-    }
+    recentArtists.push(selected.artist);
+    if (recentArtists.length > 2) recentArtists.shift();
+    preferRare = !preferRare;
   }
 
   return result;
@@ -284,6 +327,8 @@ export function buildPlayOrder(
     smartShuffle?: boolean;
     playCounts?: Record<string, number>;
     getArtist?: (id: string) => string | undefined;
+    /** Çalan şarkının sanatçısı; akıllı sıranın ilk parçasını ayrıştırır. */
+    seedArtists?: string[];
   }
 ): string[] {
   // Başlangıç parçası bağlamda yoksa (ya da bağlam boşsa) UYDURMA GİRDİ
@@ -296,6 +341,7 @@ export function buildPlayOrder(
       return smartShuffleArray(items, {
         playCounts: options.playCounts,
         getArtist: (t) => options.getArtist?.(t.id),
+        seedArtists: options.seedArtists,
       }).map((t) => t.id);
     }
     return shuffleArray(contextIds);
@@ -308,6 +354,8 @@ export function buildPlayOrder(
     const shuffledRest = smartShuffleArray(items, {
       playCounts: options.playCounts,
       getArtist: (t) => options.getArtist?.(t.id),
+      seedArtists: options.seedArtists,
+      seedPlayCount: options.playCounts?.[startId],
     }).map((t) => t.id);
     return [startId, ...shuffledRest];
   }
@@ -337,6 +385,8 @@ export function computeUpcomingOrder<T extends QueueTrackLike>(params: {
   smartShuffle?: boolean;
   playCounts?: Record<string, number>;
   getArtist?: (track: T) => string | undefined;
+  seedArtists?: string[];
+  seedPlayCount?: number;
 }): { upcoming: T[]; baselineIds: string[] | null } {
   const {
     enabled,
@@ -347,12 +397,19 @@ export function computeUpcomingOrder<T extends QueueTrackLike>(params: {
     smartShuffle = false,
     playCounts,
     getArtist,
+    seedArtists,
+    seedPlayCount,
   } = params;
 
   if (enabled) {
     const baselineIds = contextIds.length === 0 ? fullQueue.map((t) => trackKey(t)) : null;
     const shuffledContext = smartShuffle
-      ? smartShuffleArray(upcomingContext, { playCounts, getArtist })
+      ? smartShuffleArray(upcomingContext, {
+          playCounts,
+          getArtist,
+          seedArtists,
+          seedPlayCount,
+        })
       : shuffleArray(upcomingContext);
     return { upcoming: [...upNextTracks, ...shuffledContext], baselineIds };
   }

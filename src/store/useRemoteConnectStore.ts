@@ -25,6 +25,7 @@ export interface RemotePlaybackState {
   playbackRate: number;
   repeatMode: RepeatMode;
   isShuffle: boolean;
+  isSmartShuffle: boolean;
   lyrics: RemoteLyricsSummary | null;
   queue: RemoteTrackSummary[];
   upNext: RemoteTrackSummary[];
@@ -118,7 +119,7 @@ interface RemoteConnectStoreState {
   setOptimisticIsPlaying: (playing: boolean) => void;
   setOptimisticPosition: (pos: number) => void;
   setOptimisticRepeatMode: (mode: RepeatMode) => void;
-  setOptimisticShuffle: (shuffle: boolean) => void;
+  setOptimisticShuffle: (shuffle: boolean, smart?: boolean) => void;
 
   resetRemoteState: () => void;
 }
@@ -131,6 +132,7 @@ const initialRemotePlaybackState: RemotePlaybackState = {
   playbackRate: 1.0,
   repeatMode: RepeatMode.Off,
   isShuffle: false,
+  isSmartShuffle: false,
   lyrics: null,
   queue: [],
   upNext: [],
@@ -293,6 +295,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
             playbackRate: msg.playbackRate || 1.0,
             repeatMode: msg.repeatMode,
             isShuffle: msg.isShuffle,
+            isSmartShuffle: Boolean(msg.isSmartShuffle),
             lyrics: msg.lyrics,
             queue: msg.queue,
             upNext: msg.upNext,
@@ -372,6 +375,10 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
             isPlaying: msg.isPlaying !== undefined ? msg.isPlaying : state.remoteState.isPlaying,
             repeatMode: msg.repeatMode !== undefined ? msg.repeatMode : state.remoteState.repeatMode,
             isShuffle: msg.isShuffle !== undefined ? msg.isShuffle : state.remoteState.isShuffle,
+            isSmartShuffle:
+              msg.isSmartShuffle !== undefined
+                ? msg.isSmartShuffle
+                : state.remoteState.isSmartShuffle,
             playbackRate: msg.playbackRate !== undefined ? msg.playbackRate : state.remoteState.playbackRate,
           },
         }));
@@ -449,11 +456,12 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
         }));
       },
 
-      setOptimisticShuffle: (shuffle) => {
+      setOptimisticShuffle: (shuffle, smart = false) => {
         set((state) => ({
           remoteState: {
             ...state.remoteState,
             isShuffle: shuffle,
+            isSmartShuffle: shuffle ? smart : false,
           },
         }));
       },

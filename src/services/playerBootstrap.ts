@@ -5,13 +5,14 @@ import TrackPlayer, {
   Track,
   Event,
   State,
+  RepeatMode,
 } from 'react-native-track-player';
 import { getQueueSnapshot, getLastPlayback } from './playbackStorage';
 import { toPlayableTrack, toPlayableTracks } from './playbackUri';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
-import { handlePlaybackError } from './queueController';
+import { handlePlaybackError, rebuildActiveContextOrderFromCurrentQueue } from './queueController';
 import { initAudioEffects } from './audioEffectsService';
 import { ensureActiveTrackArtwork } from './activeTrackArtwork';
 
@@ -137,10 +138,19 @@ export async function setupTrackPlayerIfNeeded(): Promise<boolean> {
     try {
       await TrackPlayer.updateOptions(getTrackPlayerOptions());
 
-      const savedRepeatMode = useStore.getState().repeatMode;
-      if (savedRepeatMode != null) {
-        await TrackPlayer.setRepeatMode(savedRepeatMode);
+      const store = useStore.getState();
+      let savedRepeatMode = store.repeatMode;
+      // Dört durumlu modelde "tekrarsız" yok: karışık değilken varsayılan
+      // Tümünü Tekrarla'dır; karışıkken ise tekrar kapalı olmalıdır.
+      if (store.isShuffle) {
+        if (savedRepeatMode === RepeatMode.Track) savedRepeatMode = RepeatMode.Off;
+      } else if (savedRepeatMode !== RepeatMode.Track) {
+        savedRepeatMode = RepeatMode.Queue;
       }
+      if (savedRepeatMode !== store.repeatMode) {
+        store.setRepeatMode(savedRepeatMode);
+      }
+      await TrackPlayer.setRepeatMode(savedRepeatMode);
     } catch {
       // ignore
     }
@@ -202,6 +212,7 @@ async function doRestoreQueueIfNeeded(): Promise<boolean> {
           isShuffle: Boolean(snapshot.isShuffle),
         });
       }
+      await rebuildActiveContextOrderFromCurrentQueue();
       return true; // Zaten yüklü
     }
   } catch {
@@ -310,6 +321,7 @@ async function doRestoreQueueIfNeeded(): Promise<boolean> {
         isShuffle: Boolean(snapshot.isShuffle),
         playedHistory: [],
       });
+      await rebuildActiveContextOrderFromCurrentQueue();
 
       // Widget'ı geri yüklenen parçayla güncelle
       const activeTrack = snapshot.queue[targetIndex] || snapshot.queue[0];

@@ -549,7 +549,7 @@ export const useStore = create<AppState>()(
       setIsShuffle: (isShuffle) => set({ isShuffle }),
       isSmartShuffle: false,
       setIsSmartShuffle: (isSmartShuffle) => set({ isSmartShuffle }),
-      repeatMode: RepeatMode.Off,
+      repeatMode: RepeatMode.Queue,
       setRepeatMode: (repeatMode) => set({ repeatMode }),
 
       isHydrated: false,

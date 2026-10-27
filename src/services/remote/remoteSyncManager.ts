@@ -345,12 +345,14 @@ class RemoteSyncManager {
       const progress = await TrackPlayer.getProgress();
       const repeatMode = await TrackPlayer.getRepeatMode();
       const isShuffle = useStore.getState().isShuffle;
+      const isSmartShuffle = isShuffle ? useStore.getState().isSmartShuffle : false;
 
       const stateMsg: StateChangeMessage = {
         type: 'STATE_CHANGE',
         isPlaying,
         repeatMode,
         isShuffle,
+        isSmartShuffle,
       };
       this.broadcastToAll(stateMsg);
 
@@ -364,13 +366,19 @@ class RemoteSyncManager {
       this.broadcastToAll(posMsg);
     });
 
-    // 3. Store change listener for isShuffle & repeatMode on Host
+    // 3. Store change listener for isShuffle, isSmartShuffle & repeatMode on Host
     let lastShuffle = useStore.getState().isShuffle;
+    let lastSmartShuffle = useStore.getState().isSmartShuffle;
     let lastRepeat = useStore.getState().repeatMode;
     const unsubStore = useStore.subscribe((state) => {
       if (!this.isHostActive) return;
-      if (state.isShuffle !== lastShuffle || state.repeatMode !== lastRepeat) {
+      if (
+        state.isShuffle !== lastShuffle ||
+        state.isSmartShuffle !== lastSmartShuffle ||
+        state.repeatMode !== lastRepeat
+      ) {
         lastShuffle = state.isShuffle;
+        lastSmartShuffle = state.isSmartShuffle;
         lastRepeat = state.repeatMode;
         this.broadcastStateChange();
         this.broadcastQueueSync();
@@ -460,6 +468,7 @@ class RemoteSyncManager {
     const progress = await TrackPlayer.getProgress();
     const repeatMode = await TrackPlayer.getRepeatMode();
     const isShuffle = useStore.getState().isShuffle;
+    const isSmartShuffle = isShuffle ? useStore.getState().isSmartShuffle : false;
 
     const trackSummary = activeTrack ? this.formatTrackSummary(activeTrack) : null;
     if (trackSummary && trackSummary.duration <= 0 && progress.duration > 0) {
@@ -479,6 +488,7 @@ class RemoteSyncManager {
         position: progress.position,
         repeatMode,
         isShuffle,
+        isSmartShuffle,
         queue: [],
         upNext: [],
         lyrics: toBleLyrics(lyricsSummary),
@@ -514,6 +524,7 @@ class RemoteSyncManager {
       position: progress.position,
       repeatMode,
       isShuffle,
+      isSmartShuffle,
       queue: queueSummaries,
       upNext: upNextSummaries,
       lyrics: lyricsSummary,
@@ -528,12 +539,14 @@ class RemoteSyncManager {
       const isPlaying = playback.state === State.Playing;
       const repeatMode = await TrackPlayer.getRepeatMode();
       const isShuffle = useStore.getState().isShuffle;
+      const isSmartShuffle = isShuffle ? useStore.getState().isSmartShuffle : false;
 
       const stateMsg: StateChangeMessage = {
         type: 'STATE_CHANGE',
         isPlaying,
         repeatMode,
         isShuffle,
+        isSmartShuffle,
       };
       this.broadcastToAll(stateMsg);
     } catch (e) {
@@ -601,7 +614,7 @@ class RemoteSyncManager {
         break;
 
       case 'COMMAND_SET_SHUFFLE':
-        setShuffle(msg.enabled)
+        setShuffle(msg.enabled, Boolean(msg.smart))
           .then(() => {
             this.broadcastStateChange();
             this.broadcastQueueSync();

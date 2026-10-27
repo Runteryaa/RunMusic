@@ -11,6 +11,8 @@ import {
   computeUpcomingOrder,
   deriveQueueSections,
   findNextPlayableIndex,
+  getPlaybackMode,
+  nextPlaybackMode,
   reorderQueueOnTrackSelect,
   shuffleArray,
   smartShuffleArray,
@@ -26,12 +28,15 @@ export {
   computeUpcomingOrder,
   deriveQueueSections,
   findNextPlayableIndex,
+  getPlaybackMode,
+  nextPlaybackMode,
   reorderQueueOnTrackSelect,
   shuffleArray,
   smartShuffleArray,
   trackKey,
 };
 export type {
+  PlaybackMode,
   QueueEntry,
   QueueRow,
   QueueSections,
@@ -404,6 +409,61 @@ export function setActiveContextOrder(order: string[]): void {
   activeContextOrder = order;
 }
 
+/**
+ * Uygulama yeniden açıldığında veya kuyruk dışarıdan değiştiğinde akıllı/klasik
+ * karışık sırasını yeniden kurar. Böylece `contextIds` (orijinal kütüphane
+ * sırası) kuyruk yenilemesi sırasında akıllı sıranın yerini almaz.
+ */
+export async function rebuildActiveContextOrderFromCurrentQueue(): Promise<void> {
+  try {
+    const { queue, activeIndex } = await readQueueState();
+    if (queue.length === 0) return;
+
+    const store = useStore.getState();
+    const queueKeys = queue.map((track) => trackKey(track)).filter(Boolean);
+    const originalIds = store.contextIds.length > 0 ? store.contextIds : queueKeys;
+
+    if (!store.isShuffle) {
+      setActiveContextOrder(originalIds);
+      return;
+    }
+
+    const queueKeySet = new Set(queueKeys);
+    const remainingIds = originalIds.filter((id) => id && !queueKeySet.has(id));
+    const metadataMap = store.metadataMap;
+
+    if (store.isSmartShuffle) {
+      let playCounts: Record<string, number> | undefined;
+      try {
+        playCounts = await getPlayCountsMap();
+      } catch {
+        // ignore
+      }
+
+      const seedArtists = queue
+        .slice(Math.max(0, activeIndex - 1), activeIndex + 1)
+        .map((track) => metadataMap[trackKey(track)]?.artist || track.artist)
+        .filter((artist): artist is string => Boolean(artist));
+
+      const remaining = smartShuffleArray(
+        remainingIds.map((id) => ({ id, artist: metadataMap[id]?.artist })),
+        {
+          playCounts,
+          getArtist: (track) => track.artist,
+          seedArtists,
+        }
+      ).map((track) => track.id);
+
+      setActiveContextOrder([...queueKeys, ...remaining]);
+      return;
+    }
+
+    setActiveContextOrder([...queueKeys, ...shuffleArray(remainingIds)]);
+  } catch (e) {
+    console.warn('[queueController] rebuildActiveContextOrder error:', e);
+  }
+}
+
 export function getUpcomingContextWindow(
   orderIds: string[],
   startId: string,
@@ -531,6 +591,21 @@ export async function startPlaybackFromLibrary(params: {
   const byId = new Map(tracks.map((t) => [t.id, t]));
   const metadataMap = useStore.getState().metadataMap;
 
+  const currentRepeatMode = useStore.getState().repeatMode;
+  const targetRepeatMode = shuffle
+    ? RepeatMode.Off
+    : currentRepeatMode === RepeatMode.Track
+      ? RepeatMode.Track
+      : RepeatMode.Queue;
+  if (currentRepeatMode !== targetRepeatMode) {
+    useStore.getState().setRepeatMode(targetRepeatMode);
+    try {
+      await TrackPlayer.setRepeatMode(targetRepeatMode);
+    } catch {
+      // Player hazır değilse kuyruk kurulumu tamamlandıktan sonra tekrar denenir.
+    }
+  }
+
   let playCounts: Record<string, number> | undefined;
   if (shuffle && smartShuffle) {
     try {
@@ -544,6 +619,9 @@ export async function startPlaybackFromLibrary(params: {
     smartShuffle,
     playCounts,
     getArtist: (id) => metadataMap[id]?.artist || byId.get(id)?.artist,
+    seedArtists: [
+      metadataMap[startId]?.artist || byId.get(startId)?.artist || '',
+    ].filter(Boolean),
   });
   const ordered = orderIds
     .map((id) => byId.get(id))
@@ -1004,6 +1082,23 @@ export async function moveUpNext(from: number, to: number): Promise<void> {
  */
 export async function setShuffle(enabled: boolean, smart: boolean = false): Promise<void> {
   const store = useStore.getState();
+
+  // Dört durumlu model: karışık modlarda tekrar kapalı, düz modda ise
+  // (tek şarkı tekrarı seçili değilse) Tümünü Tekrarla.
+  const targetRepeatMode = enabled
+    ? RepeatMode.Off
+    : store.repeatMode === RepeatMode.Track
+      ? RepeatMode.Track
+      : RepeatMode.Queue;
+  if (store.repeatMode !== targetRepeatMode) {
+    store.setRepeatMode(targetRepeatMode);
+    try {
+      await TrackPlayer.setRepeatMode(targetRepeatMode);
+    } catch {
+      // Player henüz hazır değilse kuyruk güncellemesi sırasında tekrar dener.
+    }
+  }
+
   const { queue, activeIndex } = await readQueueState();
 
   if (queue.length === 0 || activeIndex < 0) {
@@ -1031,17 +1126,83 @@ export async function setShuffle(enabled: boolean, smart: boolean = false): Prom
     }
   }
   const metadataMap = store.metadataMap;
+  const currentTrack = queue[activeIndex];
+  const currentKey = trackKey(currentTrack);
+  const contextTracks = sections.context.map((e) => e.track);
+  const seedArtists = queue
+    .slice(Math.max(0, activeIndex - 1), activeIndex + 1)
+    .map((track) => metadataMap[trackKey(track)]?.artist || track.artist)
+    .filter((artist): artist is string => Boolean(artist));
 
-  const { upcoming, baselineIds } = computeUpcomingOrder({
-    enabled,
-    upNextTracks: sections.upNext.map((e) => e.track),
-    upcomingContext: sections.context.map((e) => e.track),
-    contextIds: store.contextIds,
-    fullQueue: queue,
-    smartShuffle: smart,
-    playCounts,
-    getArtist: (t) => metadataMap[t.id || '']?.artist || t.artist,
-  });
+  let upcoming: Track[];
+  let baselineIds: string[] | null = null;
+  let nextActiveOrder: string[];
+
+  if (!enabled) {
+    const ordered = computeUpcomingOrder({
+      enabled: false,
+      upNextTracks: sections.upNext.map((e) => e.track),
+      upcomingContext: contextTracks,
+      contextIds: store.contextIds,
+      fullQueue: queue,
+      smartShuffle: false,
+    });
+    upcoming = ordered.upcoming;
+    baselineIds = ordered.baselineIds;
+    nextActiveOrder =
+      store.contextIds.length > 0
+        ? store.contextIds
+        : queue.map((track) => trackKey(track)).filter(Boolean);
+  } else {
+    const originalIds =
+      store.contextIds.length > 0
+        ? store.contextIds
+        : queue.map((track) => trackKey(track)).filter(Boolean);
+    const queueKeySet = new Set(queue.map((track) => trackKey(track)).filter(Boolean));
+    const remainingIds = originalIds.filter((id) => id && !queueKeySet.has(id));
+
+    baselineIds = store.contextIds.length === 0 ? originalIds : null;
+
+    let orderedContextIds: string[];
+    if (smart) {
+      const firstChunk = smartShuffleArray(contextTracks, {
+        playCounts,
+        getArtist: (track) =>
+          metadataMap[trackKey(track)]?.artist || track.artist,
+        seedArtists,
+        seedPlayCount: playCounts?.[currentKey],
+      });
+      const tailArtists = firstChunk
+        .slice(-2)
+        .map((track) => metadataMap[trackKey(track)]?.artist || track.artist)
+        .filter((artist): artist is string => Boolean(artist));
+
+      const remaining = smartShuffleArray(
+        remainingIds.map((id) => ({ id, artist: metadataMap[id]?.artist })),
+        {
+          playCounts,
+          getArtist: (track) => track.artist,
+          seedArtists: tailArtists,
+        }
+      ).map((track) => track.id);
+
+      orderedContextIds = [...firstChunk.map(trackKey), ...remaining];
+      upcoming = [...sections.upNext.map((e) => e.track), ...firstChunk];
+    } else {
+      const firstChunk = shuffleArray(contextTracks);
+      orderedContextIds = [
+        ...firstChunk.map(trackKey),
+        ...shuffleArray(remainingIds),
+      ];
+      upcoming = [...sections.upNext.map((e) => e.track), ...firstChunk];
+    }
+
+    nextActiveOrder = currentKey
+      ? [currentKey, ...orderedContextIds.filter((id) => id && id !== currentKey)]
+      : orderedContextIds;
+  }
+
+  setActiveContextOrder(nextActiveOrder);
 
   try {
     // Çalan parçayı durdurmadan ve sıfırlamadan sıradaki parçaları güncelle
@@ -1084,11 +1245,11 @@ let isCyclingPlaybackMode = false;
 
 /**
  * 4 Aşamalı Oynatma Modu Döngüsü:
- * 1. Sırayla (Sequential): isShuffle = false, repeatMode = RepeatMode.Queue (veya Off)
+ * 1. Tümünü Tekrarla (Repeat All): isShuffle = false, repeatMode = RepeatMode.Queue
  * 2. Karıştır (Classic Shuffle): isShuffle = true, isSmartShuffle = false, repeatMode = RepeatMode.Off
  * 3. Akıllı Karıştır (Smart Shuffle): isShuffle = true, isSmartShuffle = true, repeatMode = RepeatMode.Off
  * 4. Aynı Şarkıyı Tekrarla (Repeat Track): isShuffle = false, repeatMode = RepeatMode.Track
- * Tekrar basıldığında -> 1. Sırayla durumuna döner.
+ * Tekrar basıldığında -> 1. Tümünü Tekrarla durumuna döner.
  */
 export async function cyclePlaybackMode(): Promise<void> {
   if (isCyclingPlaybackMode) return;
@@ -1096,32 +1257,44 @@ export async function cyclePlaybackMode(): Promise<void> {
   try {
     const store = useStore.getState();
     const { isShuffle, isSmartShuffle, repeatMode } = store;
+    const mode = getPlaybackMode({
+      isShuffle,
+      isSmartShuffle,
+      isRepeatOne: repeatMode === RepeatMode.Track,
+    });
 
-    if (isShuffle && !isSmartShuffle) {
-      // 2 (Karıştır) -> 3 (Akıllı Karıştır)
-      store.setRepeatMode(RepeatMode.Off);
-      await TrackPlayer.setRepeatMode(RepeatMode.Off);
-      await setShuffle(true, true);
-    } else if (isShuffle && isSmartShuffle) {
-      // 3 (Akıllı Karıştır) -> 4 (Tek Şarkı Tekrarla)
-      await setShuffle(false, false);
-      store.setRepeatMode(RepeatMode.Track);
-      await TrackPlayer.setRepeatMode(RepeatMode.Track);
-    } else if (repeatMode === RepeatMode.Track) {
-      // 4 (Tek Şarkı Tekrarla) -> 1 (Sırayla)
-      // Mod 4'e geçerken zaten kuyruk sırası normale döndürülmüştü.
-      // Sadece repeatMode'u güncelliyoruz; ses ve sıra kesintisiz kalır.
-      if (isShuffle) {
+    switch (mode) {
+      case 'shuffle':
+        // 2 (Karıştır) -> 3 (Akıllı Karıştır)
+        store.setRepeatMode(RepeatMode.Off);
+        await TrackPlayer.setRepeatMode(RepeatMode.Off);
+        await setShuffle(true, true);
+        break;
+
+      case 'smart':
+        // 3 (Akıllı Karıştır) -> 4 (Tek Şarkı Tekrarla)
         await setShuffle(false, false);
-      }
-      store.setRepeatMode(RepeatMode.Queue);
-      await TrackPlayer.setRepeatMode(RepeatMode.Queue);
-      store.bumpQueueRevision();
-    } else {
-      // 1 (Sırayla) -> 2 (Klasik Karıştır)
-      store.setRepeatMode(RepeatMode.Off);
-      await TrackPlayer.setRepeatMode(RepeatMode.Off);
-      await setShuffle(true, false);
+        store.setRepeatMode(RepeatMode.Track);
+        await TrackPlayer.setRepeatMode(RepeatMode.Track);
+        break;
+
+      case 'repeat-one':
+        // 4 (Tek Şarkı Tekrarla) -> 1 (Tümünü Tekrarla)
+        if (isShuffle) {
+          await setShuffle(false, false);
+        }
+        store.setRepeatMode(RepeatMode.Queue);
+        await TrackPlayer.setRepeatMode(RepeatMode.Queue);
+        store.bumpQueueRevision();
+        break;
+
+      case 'repeat-all':
+      default:
+        // 1 (Tümünü Tekrarla) -> 2 (Klasik Karıştır)
+        store.setRepeatMode(RepeatMode.Off);
+        await TrackPlayer.setRepeatMode(RepeatMode.Off);
+        await setShuffle(true, false);
+        break;
     }
   } finally {
     isCyclingPlaybackMode = false;

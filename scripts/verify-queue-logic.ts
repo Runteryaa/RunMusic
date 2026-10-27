@@ -16,6 +16,8 @@ import {
   computeUpcomingOrder,
   deriveQueueSections,
   findNextPlayableIndex,
+  getPlaybackMode,
+  nextPlaybackMode,
   reorderQueueOnTrackSelect,
   shuffleArray,
   smartShuffleArray,
@@ -37,6 +39,15 @@ function check(name: string, condition: boolean, detail = ''): void {
 
 function section(title: string): void {
   console.log(`\n${title}`);
+}
+
+/** Deterministik testler için küçük LCG. */
+function makeRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
 }
 
 /** Kimliği verilen sahte parça. */
@@ -528,6 +539,134 @@ section('14) smartShuffleArray — sanatçı ayrıştırması ve ağırlıkland�
 
   check('boş dizi güvenli', smartShuffleArray([]).length === 0);
   check('tek elemanlı dizi güvenli', smartShuffleArray([{ id: 'x' }]).length === 1);
+}
+
+section('14b) Akıllı karıştırma — tohum, sanatçı aralığı ve nadir/sık dengeleme');
+{
+  const seedTracks: QueueTrackLike[] = [
+    { id: 'seed-a', artist: 'SeedArtist', title: 'Seed A' },
+    { id: 'seed-b', artist: 'SeedArtist', title: 'Seed B' },
+    { id: 'other-1', artist: 'Artist 1', title: 'Other 1' },
+    { id: 'other-2', artist: 'Artist 2', title: 'Other 2' },
+    { id: 'other-3', artist: 'Artist 3', title: 'Other 3' },
+  ];
+  const seeded = smartShuffleArray(seedTracks, {
+    getArtist: (track) => track.artist,
+    seedArtists: ['SeedArtist'],
+    random: makeRandom(7),
+  });
+  check(
+    'çalan sanatçının başka bir şarkısı ilk sıraya gelmez',
+    seeded[0]?.artist !== 'SeedArtist',
+    seeded.map((track) => `${track.id}:${track.artist}`).join(', ')
+  );
+
+  const spaced = smartShuffleArray(
+    [
+      { id: 'a1', artist: 'A' },
+      { id: 'a2', artist: 'A' },
+      { id: 'b1', artist: 'B' },
+      { id: 'c1', artist: 'C' },
+      { id: 'd1', artist: 'D' },
+    ],
+    { getArtist: (track) => track.artist, random: makeRandom(11) }
+  );
+  let adjacentSameArtist = 0;
+  for (let i = 0; i < spaced.length - 1; i++) {
+    if (spaced[i].artist === spaced[i + 1].artist) adjacentSameArtist++;
+  }
+  check('aynı sanatçı arka arkaya gelmez', adjacentSameArtist === 0);
+
+  const rareTracks = Array.from({ length: 4 }, (_, i) => ({
+    id: `rare-${i}`,
+    artist: `Rare Artist ${i}`,
+    title: `Rare ${i}`,
+  }));
+  const frequentTracks = Array.from({ length: 4 }, (_, i) => ({
+    id: `freq-${i}`,
+    artist: `Frequent Artist ${i}`,
+    title: `Frequent ${i}`,
+  }));
+  const blendCounts: Record<string, number> = {};
+  for (const track of rareTracks) blendCounts[track.id] = 0;
+  for (const track of frequentTracks) blendCounts[track.id] = 50;
+
+  const blended = smartShuffleArray([...rareTracks, ...frequentTracks], {
+    playCounts: blendCounts,
+    getArtist: (track) => track.artist,
+    random: makeRandom(23),
+  });
+  const blendedCounts = blended.map((track) => blendCounts[track.id]);
+  check(
+    'az ve çok çalınan parçalar dönüşümlü seçilir',
+    blendedCounts.every((count, index) => count === (index % 2 === 0 ? 0 : 50)),
+    blendedCounts.join(', ')
+  );
+
+  const rareSeedFirst = smartShuffleArray([...rareTracks, ...frequentTracks], {
+    playCounts: blendCounts,
+    getArtist: (track) => track.artist,
+    seedPlayCount: 0,
+    random: makeRandom(29),
+  });
+  check(
+    'çalan parça nadirse ilk seçim sık havuzdan gelir',
+    blendCounts[rareSeedFirst[0]?.id] === 50,
+    blendCounts[rareSeedFirst[0]?.id]?.toString()
+  );
+
+  const frequentSeedFirst = smartShuffleArray([...rareTracks, ...frequentTracks], {
+    playCounts: blendCounts,
+    getArtist: (track) => track.artist,
+    seedPlayCount: 50,
+    random: makeRandom(31),
+  });
+  check(
+    'çalan parça sık dinleniyorsa ilk seçim nadir havuzdan gelir',
+    blendCounts[frequentSeedFirst[0]?.id] === 0,
+    blendCounts[frequentSeedFirst[0]?.id]?.toString()
+  );
+
+  const order = buildPlayOrder(['seed-a', 'seed-b', 'other-1', 'other-2', 'other-3'], 'seed-a', true, {
+    smartShuffle: true,
+    getArtist: (id) =>
+      id === 'seed-a' || id === 'seed-b' ? 'SeedArtist' : `Artist ${id}`,
+    seedArtists: ['SeedArtist'],
+  });
+  check('buildPlayOrder seçilen parçayı ilk sırada tutar', order[0] === 'seed-a');
+  check('buildPlayOrder tohum sanatçısını ikinci sırada tekrarlamaz', order[1] !== 'seed-b', order.join(', '));
+  check(
+    'buildPlayOrder tüm parçaları tam bir kez içerir',
+    [...order].sort().join(',') === ['seed-a', 'seed-b', 'other-1', 'other-2', 'other-3'].sort().join(',')
+  );
+}
+
+section('14c) Dört durumlu oynatma modu');
+{
+  check(
+    'tekrarsız/karışıksız durum Tümünü Tekrarla olarak okunur',
+    getPlaybackMode({ isShuffle: false, isSmartShuffle: false, isRepeatOne: false }) ===
+      'repeat-all'
+  );
+  check(
+    'klasik karışık doğru okunur',
+    getPlaybackMode({ isShuffle: true, isSmartShuffle: false, isRepeatOne: false }) ===
+      'shuffle'
+  );
+  check(
+    'akıllı karışık doğru okunur',
+    getPlaybackMode({ isShuffle: true, isSmartShuffle: true, isRepeatOne: false }) ===
+      'smart'
+  );
+  check(
+    'tek şarkı tekrarı doğru okunur',
+    getPlaybackMode({ isShuffle: true, isSmartShuffle: true, isRepeatOne: true }) ===
+      'repeat-one'
+  );
+  check('döngü sırası: repeat-all -> shuffle', nextPlaybackMode('repeat-all') === 'shuffle');
+  check('döngü sırası: shuffle -> smart', nextPlaybackMode('shuffle') === 'smart');
+  check('döngü sırası: smart -> repeat-one', nextPlaybackMode('smart') === 'repeat-one');
+  check('döngü sırası: repeat-one -> repeat-all', nextPlaybackMode('repeat-one') === 'repeat-all');
 }
 
 section('15) buildQueueRows — AKILLI KARIŞIK başlığı');

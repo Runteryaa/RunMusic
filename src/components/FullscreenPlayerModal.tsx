@@ -70,6 +70,7 @@ import {
   clearUpNextQueue,
   cyclePlaybackMode,
   deriveQueueSections,
+  getPlaybackMode,
   getQueueSections,
   markUpNextConsumed,
   moveUpNext,
@@ -978,11 +979,18 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const storeIsShuffle = useStore((s) => s.isShuffle);
   const storeIsSmartShuffle = useStore((s) => s.isSmartShuffle);
   const storeRepeatMode = useStore((s) => s.repeatMode);
+  const repeatMode = player.isRemote ? player.repeatMode : storeRepeatMode;
   const isShuffle = player.isRemote ? player.isShuffle : storeIsShuffle;
-  const isSmartShuffle = player.isRemote ? false : storeIsSmartShuffle;
+  const isSmartShuffle = player.isRemote ? player.isSmartShuffle : storeIsSmartShuffle;
+  const playbackModeLabel = isShuffle
+    ? isSmartShuffle
+      ? t('player.playback_mode_smart')
+      : t('player.playback_mode_shuffle')
+    : repeatMode === RepeatMode.Track
+      ? t('player.playback_mode_repeat_one')
+      : t('player.playback_mode_repeat_all');
   const library = useStore((s) => s.library);
   const allAssets = useStore((s) => s.allAssets);
-  const repeatMode = player.isRemote ? player.repeatMode : storeRepeatMode;
   const upNextIds = useStore((s) => s.upNextIds);
   const contextIds = useStore((s) => s.contextIds);
   const playedHistory = useStore((s) => s.playedHistory);
@@ -2834,17 +2842,31 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   const togglePlaybackMode = useCallback(async () => {
     if (player.isRemote) {
-      if (player.isShuffle) {
-        // Karışık -> Tek Şarkı Tekrarla
-        await player.setShuffle(false);
-        await player.setRepeatMode(RepeatMode.Track);
-      } else if (player.repeatMode === RepeatMode.Track) {
-        // Tek Şarkı Tekrarla -> Sırayla (Sequential)
-        await player.setRepeatMode(RepeatMode.Queue);
-      } else {
-        // Sırayla -> Karışık (Shuffle)
-        await player.setRepeatMode(RepeatMode.Off);
-        await player.setShuffle(true);
+      const mode = getPlaybackMode({
+        isShuffle: player.isShuffle,
+        isSmartShuffle: player.isSmartShuffle,
+        isRepeatOne: player.repeatMode === RepeatMode.Track,
+      });
+
+      switch (mode) {
+        case 'repeat-all':
+          await player.setRepeatMode(RepeatMode.Off);
+          await player.setShuffle(true, false);
+          break;
+        case 'shuffle':
+          await player.setRepeatMode(RepeatMode.Off);
+          await player.setShuffle(true, true);
+          break;
+        case 'smart':
+          await player.setShuffle(false, false);
+          await player.setRepeatMode(RepeatMode.Track);
+          break;
+        case 'repeat-one':
+          if (player.isShuffle) {
+            await player.setShuffle(false, false);
+          }
+          await player.setRepeatMode(RepeatMode.Queue);
+          break;
       }
       return;
     }
@@ -4087,6 +4109,9 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
               <TouchableOpacity
                 style={styles.appleSubUtilBtn}
                 onPress={togglePlaybackMode}
+                accessibilityRole="button"
+                accessibilityLabel={playbackModeLabel}
+                accessibilityHint={t('player.playback_mode_hint')}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Ionicons
                   name={isShuffle ? (isSmartShuffle ? 'sparkles' : 'shuffle') : 'repeat'}

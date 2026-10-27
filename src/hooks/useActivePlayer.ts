@@ -30,6 +30,7 @@ export interface ActivePlayerState {
   artworkUri: string | null;
   repeatMode: RepeatMode;
   isShuffle: boolean;
+  isSmartShuffle: boolean;
 
   // Controls
   play: () => Promise<void>;
@@ -39,7 +40,7 @@ export interface ActivePlayerState {
   skipToPrevious: () => Promise<void>;
   seekTo: (position: number) => Promise<void>;
   setRepeatMode: (mode: RepeatMode) => Promise<void>;
-  setShuffle: (enabled: boolean) => Promise<void>;
+  setShuffle: (enabled: boolean, smart?: boolean) => Promise<void>;
   disconnect: () => void;
 }
 
@@ -65,6 +66,7 @@ export function useActivePlayer(): ActivePlayerState {
   const { playing: localIsPlaying } = useIsPlaying();
   const localArtworkMap = useStore((s) => s.artworkMap);
   const localIsShuffle = useStore((s) => s.isShuffle);
+  const localIsSmartShuffle = useStore((s) => s.isSmartShuffle);
   const localRepeatMode = useStore((s) => s.repeatMode);
   const setStoreRepeatMode = useStore((s) => s.setRepeatMode);
 
@@ -152,9 +154,9 @@ export function useActivePlayer(): ActivePlayerState {
     remoteSyncManager.sendClientCommand({ type: 'COMMAND_SET_REPEAT', mode });
   }, []);
 
-  const remoteSetShuffle = useCallback(async (enabled: boolean) => {
-    useRemoteConnectStore.getState().setOptimisticShuffle(enabled);
-    remoteSyncManager.sendClientCommand({ type: 'COMMAND_SET_SHUFFLE', enabled });
+  const remoteSetShuffle = useCallback(async (enabled: boolean, smart = false) => {
+    useRemoteConnectStore.getState().setOptimisticShuffle(enabled, smart);
+    remoteSyncManager.sendClientCommand({ type: 'COMMAND_SET_SHUFFLE', enabled, smart });
   }, []);
 
   const remoteDisconnect = useCallback(() => {
@@ -318,8 +320,8 @@ export function useActivePlayer(): ActivePlayerState {
     setStoreRepeatMode(mode);
   }, [setStoreRepeatMode]);
 
-  const localSetShuffle = useCallback(async (enabled: boolean) => {
-    await setLocalShuffle(enabled);
+  const localSetShuffle = useCallback(async (enabled: boolean, smart = false) => {
+    await setLocalShuffle(enabled, smart);
   }, []);
 
   if (isRemote) {
@@ -337,6 +339,7 @@ export function useActivePlayer(): ActivePlayerState {
       artworkUri: effectiveArtwork,
       repeatMode: remoteState.repeatMode,
       isShuffle: remoteState.isShuffle,
+      isSmartShuffle: remoteState.isSmartShuffle,
 
       play: remotePlay,
       pause: remotePause,
@@ -420,6 +423,7 @@ export function useActivePlayer(): ActivePlayerState {
     artworkUri: effectiveLocalArtwork,
     repeatMode: localRepeatMode,
     isShuffle: localIsShuffle,
+    isSmartShuffle: localIsShuffle ? localIsSmartShuffle : false,
 
     play: localPlay,
     pause: localPause,

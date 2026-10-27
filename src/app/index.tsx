@@ -706,7 +706,12 @@ export default function LibraryScreen() {
   };
 
   const handleRemoteShuffleAll = () => {
-    remoteSyncManager.sendClientCommand({ type: 'COMMAND_SET_SHUFFLE', enabled: true });
+    const remoteSmartShuffle = useRemoteConnectStore.getState().remoteState.isSmartShuffle;
+    remoteSyncManager.sendClientCommand({
+      type: 'COMMAND_SET_SHUFFLE',
+      enabled: true,
+      smart: remoteSmartShuffle,
+    });
     if (remoteLibrary.length > 0) {
       const random = remoteLibrary[Math.floor(Math.random() * remoteLibrary.length)];
       useOptimisticPlayerStore.getState().setOptimisticTrack(random, null);
@@ -720,7 +725,11 @@ export default function LibraryScreen() {
       remoteSyncManager.sendClientCommand({ type: 'COMMAND_PLAY' });
     }
     openFullscreenPlayer();
-    showToast(t('library.shuffle_started'));
+    showToast(
+      remoteSmartShuffle
+        ? t('library.smart_shuffle_started')
+        : t('library.shuffle_started')
+    );
   };
 
   const playTrack = async (selectedAsset: MediaLibrary.Asset) => {
@@ -884,7 +893,13 @@ export default function LibraryScreen() {
     if (fullSortedList.length === 0) return;
     try {
       if (useRemoteConnectStore.getState().isRemoteConnected()) {
-        remoteSyncManager.sendClientCommand({ type: 'COMMAND_SET_SHUFFLE', enabled: true });
+        const remoteSmartShuffle =
+          useRemoteConnectStore.getState().remoteState.isSmartShuffle;
+        remoteSyncManager.sendClientCommand({
+          type: 'COMMAND_SET_SHUFFLE',
+          enabled: true,
+          smart: remoteSmartShuffle,
+        });
         remoteSyncManager.sendClientCommand({ type: 'COMMAND_PLAY' });
         openFullscreenPlayer();
         return;

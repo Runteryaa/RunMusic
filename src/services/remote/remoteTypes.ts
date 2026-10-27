@@ -91,6 +91,7 @@ export interface InitialStateMessage {
   position: number;
   repeatMode: RepeatMode;
   isShuffle: boolean;
+  isSmartShuffle: boolean;
   queue: RemoteTrackSummary[];
   upNext: RemoteTrackSummary[];
   lyrics: RemoteLyricsSummary | null;
@@ -111,6 +112,7 @@ export interface StateChangeMessage {
   isPlaying?: boolean;
   repeatMode?: RepeatMode;
   isShuffle?: boolean;
+  isSmartShuffle?: boolean;
   playbackRate?: number;
 }
 
@@ -186,6 +188,8 @@ export interface CommandSeekMessage {
 export interface CommandSetShuffleMessage {
   type: 'COMMAND_SET_SHUFFLE';
   enabled: boolean;
+  /** true ise akıllı karıştırma; yoksa klasik karıştırma. */
+  smart?: boolean;
 }
 
 export interface CommandSetRepeatMessage {
