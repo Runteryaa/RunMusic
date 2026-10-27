@@ -34,16 +34,16 @@ jobs:
       - name: 🔢 Resolve Version
         shell: pwsh
         run: |
-          # Windows releases carry the commit count in the patch slot:
-          # version = 1.1.<commit count>, tag = win-v1.1.<commit count>.
+          # Windows releases use the Windows workflow's run number:
+          # version = 1.1.<run number>, tag = win-v1.1.<run number>.
           $build = [int](git rev-list --count HEAD)
-          $version = "1.1.$build"
+          $version = "1.1.$($env:GITHUB_RUN_NUMBER)"
           node scripts/version.mjs apply $version --build $build
           node scripts/version.mjs check
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "BUILD=$build" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "TAG=win-v$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "Resolved release: win-v$version (build $build)"
+          Write-Host "Resolved release: win-v$version (commit build $build)"
 
       - name: 🦀 Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
