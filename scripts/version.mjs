@@ -74,24 +74,22 @@ function bumpVersion(version, part) {
 }
 
 function cargoTomlWithVersion(text, version) {
-  const next = text.replace(/^version\s*=\s*"[^"]*"/m, `version = "${version}"`);
-  if (next === text) throw new Error('Cargo.toml icinde version satiri bulunamadi');
-  return next;
+  if (!/^version\s*=\s*"[^"]*"/m.test(text)) {
+    throw new Error('Cargo.toml icinde version satiri bulunamadi');
+  }
+  return text.replace(/^version\s*=\s*"[^"]*"/m, `version = "${version}"`);
 }
 
 function cargoLockWithVersion(text, version) {
-  const next = text.replace(
-    /(\[\[package\]\]\r?\nname = "runmusic-win"\r?\nversion = ")[^"]*(")/,
-    `$1${version}$2`
-  );
-  if (next === text) throw new Error('Cargo.lock icinde runmusic-win paketi bulunamadi');
-  return next;
+  const pattern = /(\[\[package\]\]\r?\nname = "runmusic-win"\r?\nversion = ")[^"]*(")/;
+  if (!pattern.test(text)) throw new Error('Cargo.lock icinde runmusic-win paketi bulunamadi');
+  return text.replace(pattern, `$1${version}$2`);
 }
 
 function installerWithVersion(text, version) {
-  const next = text.replace(/(#define MyAppVersion ")[^"]*(")/, `$1${version}$2`);
-  if (next === text) throw new Error('installer.iss icinde MyAppVersion bulunamadi');
-  return next;
+  const pattern = /(#define MyAppVersion ")[^"]*(")/;
+  if (!pattern.test(text)) throw new Error('installer.iss icinde MyAppVersion bulunamadi');
+  return text.replace(pattern, `$1${version}$2`);
 }
 
 function buildTargets(version) {
