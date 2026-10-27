@@ -35,32 +35,23 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: 🔢 Resolve Version (auto-bump on every push)
-        id: version
+      - name: 🔢 Resolve Version
         run: |
           set -euo pipefail
-          CURRENT=$(node -p "require('./package.json').version")
           if [ "${GITHUB_REF_NAME}" = "beta" ]; then
             SUFFIX="-beta"
           else
             SUFFIX=""
           fi
-          TAG="v${CURRENT}${SUFFIX}"
-
-          # If this version was already released, bump the patch (1.1.0 -> 1.1.1).
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "Tag ${TAG} already exists; bumping patch."
-            node scripts/version.mjs bump patch
-          else
-            node scripts/version.mjs sync
-          fi
-
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION="1.1.${GITHUB_RUN_NUMBER}"
+          BUILD=$(git rev-list --count HEAD)
+          node scripts/version.mjs apply "$VERSION" --build "$BUILD"
           TAG="v${VERSION}${SUFFIX}"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "BUILD=${BUILD}" >> "$GITHUB_ENV"
           echo "SUFFIX=${SUFFIX}" >> "$GITHUB_ENV"
           echo "TAG=${TAG}" >> "$GITHUB_ENV"
-          echo "Resolved release: ${TAG}"
+          echo "Resolved release: ${TAG} (build ${BUILD})"
 
       - name: ✅ Verify Version Consistency
         run: node scripts/version.mjs check
@@ -176,23 +167,6 @@ jobs:
           APK=$(ls android/app/build/outputs/apk/release/*.apk | head -n 1)
           mv "$APK" "RunMusic-${VERSION}${SUFFIX}.apk"
           ls -lh "RunMusic-${VERSION}${SUFFIX}.apk"
-
-      - name: 🏷 Commit Version Bump, Tag & Push
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json app.json desktop/runmusic-win/Cargo.toml desktop/Cargo.lock desktop/installer.iss
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(release): ${TAG}"
-          fi
-          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            echo "Tag ${TAG} already exists locally."
-          else
-            git tag "${TAG}"
-            git push origin "${TAG}"
-          fi
-          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: 📤 Upload APK Artifact
         uses: actions/upload-artifact@v4

@@ -1,7 +1,7 @@
 {
   "name": "runmusic",
   "main": "expo-router/entry",
-  "version": "1.1.1",
+  "version": "1.1.0",
   "dependencies": {
     "@expo/ui": "~57.0.22",
     "@expo/vector-icons": "^15.0.2",

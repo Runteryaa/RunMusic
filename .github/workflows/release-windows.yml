@@ -31,24 +31,22 @@ jobs:
         with:
           node-version: 22
 
-      - name: 🔢 Resolve Version (auto-bump if already released)
+      - name: 🔢 Resolve Version
         shell: pwsh
         run: |
-          $version = node -p "require('./package.json').version"
-          $tag = "win-v$version"
-          git ls-remote --exit-code --tags origin "refs/tags/$tag" 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Tag $tag already exists; bumping patch."
-            node scripts/version.mjs bump patch
-            $version = node -p "require('./package.json').version"
-            $tag = "win-v$version"
+          $latestTag = git tag -l 'v1.1.*' --sort=-v:refname | Select-Object -First 1
+          if ($latestTag) {
+            $version = $latestTag.TrimStart('v')
           } else {
-            node scripts/version.mjs sync
+            $version = node -p "require('./package.json').version"
           }
+          $build = [int](git rev-list --count HEAD)
+          node scripts/version.mjs apply $version --build $build
           node scripts/version.mjs check
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "Resolved release: $tag"
+          "BUILD=$build" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TAG=win-v$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Resolved release: win-v$version (build $build)"
 
       - name: 🦀 Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -110,25 +108,6 @@ jobs:
           }
           $lines | Out-File -FilePath installer_output\checksums.txt -Encoding utf8
           Get-Content installer_output\checksums.txt
-
-      - name: 🏷 Commit Version Bump, Tag & Push
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json app.json desktop/runmusic-win/Cargo.toml desktop/Cargo.lock desktop/installer.iss
-          git diff --cached --quiet
-          if ($LASTEXITCODE -ne 0) {
-            git commit -m "chore(release): $env:TAG"
-          }
-          git rev-parse -q --verify "refs/tags/$env:TAG" | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            git tag "$env:TAG"
-            git push origin "$env:TAG"
-          } else {
-            Write-Host "Tag $env:TAG already exists locally."
-          }
-          git push origin "HEAD:$env:GITHUB_REF_NAME"
 
       - name: 📤 Upload Build Artifacts
         uses: actions/upload-artifact@v4

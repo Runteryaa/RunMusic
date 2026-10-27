@@ -1,12 +1,19 @@
 # Release & Versioning
 
 RunMusic uses one version number for the whole ecosystem (Android, iOS, Windows,
-installer and OTA updates). The scheme is `MAJOR.MINOR.PATCH`; the first release
-under this scheme is **1.1.0**.
+installer and OTA updates).
+
+- **Version name**: `1.1.<workflow run number>` (e.g. `1.1.248`).
+- **Build number** (`versionCode` / `CFBundleVersion`): total git commit count
+  (e.g. `276`).
+
+The version is **not committed** on every release. The workflow patches the
+workspace before building, so `app.json`, `package.json`, `Cargo.toml` and
+`installer.iss` keep the `1.1.0` baseline in git.
 
 ## Source of truth
 
-`package.json` holds the version. `scripts/version.mjs` propagates it to:
+`package.json` holds the baseline version. `scripts/version.mjs` propagates it to:
 
 | File | Field |
 |---|---|
@@ -18,50 +25,33 @@ under this scheme is **1.1.0**.
 ```bash
 npm run version:sync    # package.json -> every target
 npm run version:check   # fail if a target drifted
-npm run version:bump -- patch   # 1.1.0 -> 1.1.1 (then sync)
-npm run version:bump -- minor   # 1.1.0 -> 1.2.0
-npm run version:bump -- major   # 1.1.0 -> 2.0.0
+npm run version:bump -- minor   # 1.1.0 -> 1.2.0 (only for minor/major work)
 ```
 
-Never edit the generated fields by hand.
+CI uses an extra command that also stamps the build number:
 
-## Automatic patch bump (CI)
+```bash
+node scripts/version.mjs apply 1.1.248 --build 276
+```
 
-You do **not** bump versions locally. On every push to `main`/`master`, the
-Android workflow:
+## Version assignment (CI)
 
-1. reads the current version;
-2. if tag `v<version>` already exists, runs `version.mjs bump patch`;
+On every push to `main`/`master`, the Android workflow:
+
+1. sets `VERSION=1.1.${GITHUB_RUN_NUMBER}` and `BUILD=$(git rev-list --count HEAD)`;
+2. runs `version.mjs apply $VERSION --build $BUILD` in the workspace;
 3. publishes the OTA update with message `v<version> (<sha>)`;
 4. builds the APK;
-5. commits the synced version files (`chore(release): v<version>`), tags the
-   commit and pushes both.
+5. creates the GitHub release + tag `v<version>` for the pushed commit.
 
-So the first push produces `v1.1.0`, the next `v1.1.1`, and so on. The workflow
-pushes with `GITHUB_TOKEN`, which does not re-trigger workflows, so there is no
-loop. One workflow run (one push) produces one patch increment, even if that push
-contains several commits.
+No version commit is pushed, so you never need to pull before pushing again.
+One workflow run (one push) produces one version; if a push contains several
+commits they share the same version. The patch comes from the workflow run
+number, which is monotonic per workflow.
 
-> Because CI pushes a release commit, pull before pushing the next change:
-> `git pull --rebase`.
-
-The Windows workflow follows the same rule with `win-v<version>` tags and bumps
-the patch if that tag already exists. iOS is manual and attaches the IPA to the
-mobile release tag.
-
-## versionCode / buildNumber
-
-```
-versionCode = major * 10000 + minor * 100 + patch
-1.1.0 -> 10100
-1.1.1 -> 10101
-```
-
-`app.json` `android.versionCode` and `ios.buildNumber` are generated from the
-version. `eas.json` production **does not** use `autoIncrement`, so the APK from
-GitHub Actions and the Play Store AAB share the same, deterministic
-`versionCode`. Play requires a strictly increasing `versionCode`; the CI patch
-bump guarantees that (minor/patch must stay below 100).
+The Windows workflow mirrors the latest mobile release version (`v1.1.*`) and
+uses the same commit count as its build number. iOS is manual and attaches the
+IPA to the mobile release tag.
 
 ## runtimeVersion (OTA gate)
 
@@ -95,10 +85,10 @@ and `versionCode`); OTA cannot change it. The in-app *About* section shows both:
 
 | Platform | File |
 |---|---|
-| Android APK | `RunMusic-1.1.0.apk` (beta: `RunMusic-1.1.0-beta.apk`) |
-| iOS IPA | `RunMusic-1.1.0.ipa` |
-| Windows installer | `RunMusic-Remote-Setup-1.1.0.exe` (+ stable alias) |
-| Windows portable | `runmusic-win-1.1.0.exe` (+ stable alias `runmusic-win.exe`) |
+| Android APK | `RunMusic-1.1.248.apk` (beta: `RunMusic-1.1.248-beta.apk`) |
+| iOS IPA | `RunMusic-1.1.248.ipa` |
+| Windows installer | `RunMusic-Remote-Setup-1.1.248.exe` (+ stable alias) |
+| Windows portable | `runmusic-win-1.1.248.exe` (+ stable alias `runmusic-win.exe`) |
 
 The stable (`unversioned`) copies exist so a future auto-updater and direct
 download links can use a fixed URL. The executable itself carries a VERSIONINFO
@@ -125,12 +115,17 @@ uploads the versioned installer and portable executable.
 
 ### Google Play (manual)
 
+Play builds must carry the same patched version. Either add an AAB build to the
+CI workflow, or patch locally before running EAS:
+
 ```bash
+node scripts/version.mjs apply 1.1.248 --build 276
 eas build --platform android --profile production
 ```
 
-The AAB uses the same `versionCode` as `app.json`. After a successful upload,
-the CI bump commit determines the next patch. Never reuse a `versionCode`.
+`eas.json` production **does not** use `autoIncrement`; the `versionCode` is the
+commit count. Never reuse a `versionCode` for Play, and never force-push `main`
+(that could lower the commit count).
 
 ## OTA updates
 
@@ -138,7 +133,7 @@ CI publishes on every push to `main`:
 
 ```bash
 eas update --branch production --platform android --environment production \
-  -m "v1.1.0 (abc1234)"
+  -m "v1.1.248 (abc1234)"
 ```
 
 `runtimeVersion` must match the installed binary. Publish manually (from the
@@ -147,8 +142,8 @@ so the bundle reports the right version:
 
 ```bash
 # PowerShell
-$env:EXPO_PUBLIC_APP_VERSION = "1.1.5"
-eas update --branch production --platform android --environment production -m "v1.1.5"
+$env:EXPO_PUBLIC_APP_VERSION = "1.1.248"
+eas update --branch production --platform android --environment production -m "v1.1.248"
 ```
 
 ## Rollback
@@ -165,8 +160,8 @@ eas update --branch production --platform android --environment production -m "v
 
 | Symptom | Cause / fix |
 |---|---|
-| APK still shows 1.0.0 | Installed binary predates the scheme; install the 1.1.0 APK. |
-| About shows OTA 1.1.3 but APK 1.1.0 | Expected: JS updated over the air, native did not. |
+| APK still shows 1.0.0 | Installed binary predates the scheme; install a current APK. |
+| About shows OTA 1.1.249 but APK 1.1.248 | Expected: JS updated over the air, native did not. |
 | OTA not delivered after a native change | `runtimeVersion` differs from the installed binary; ship a new APK. |
-| CI fails with `Tag vX already exists` | Version was not bumped; CI handles this automatically. |
 | `version:check` fails locally | Run `npm run version:sync`. |
+| New APK will not install over the old one | `versionCode` went backwards (commit count decreased, e.g. after a force-push). Rebuild from a newer commit or reinstall. |

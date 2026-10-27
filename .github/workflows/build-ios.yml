@@ -30,9 +30,18 @@ jobs:
       - name: 🔢 Resolve Version
         run: |
           set -euo pipefail
-          VERSION=$(node -p "require('./package.json').version")
+          git fetch --tags --force || true
+          LATEST_TAG=$(git tag -l 'v1.1.*' --sort=-v:refname | head -n 1 || true)
+          if [ -n "$LATEST_TAG" ]; then
+            VERSION="${LATEST_TAG#v}"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+          fi
+          BUILD=$(git rev-list --count HEAD)
+          node scripts/version.mjs apply "$VERSION" --build "$BUILD"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
-          echo "Building iOS ${VERSION}"
+          echo "BUILD=${BUILD}" >> "$GITHUB_ENV"
+          echo "Building iOS ${VERSION} (build ${BUILD})"
 
       - name: ✅ Verify Version Consistency
         run: node scripts/version.mjs check

@@ -1,6 +1,6 @@
 [package]
 name = "runmusic-win"
-version = "1.1.1"
+version = "1.1.0"
 edition = "2021"
 description = "RunMusic Remote - BLE remote control for the RunMusic Android host"
 

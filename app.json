@@ -2,7 +2,7 @@
   "expo": {
     "name": "RunMusic",
     "slug": "RunMusic",
-    "version": "1.1.1",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "runmusic",
@@ -25,7 +25,7 @@
         "UIFileSharingEnabled": true,
         "LSSupportsOpeningDocumentsInPlace": true
       },
-      "buildNumber": "10101"
+      "buildNumber": "274"
     },
     "android": {
       "adaptiveIcon": {
@@ -35,7 +35,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "versionCode": 10101,
+      "versionCode": 274,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",

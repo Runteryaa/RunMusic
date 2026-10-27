@@ -67,15 +67,7 @@ node .tmp-verify/scripts/verify-persist-migration.js
 
 ## Versioning & releases
 
-One version for the whole ecosystem (`MAJOR.MINOR.PATCH`), starting at **1.1.0**. `package.json` is the source of truth; never edit the generated fields in `app.json`, `desktop/runmusic-win/Cargo.toml`, `desktop/Cargo.lock` or `desktop/installer.iss` by hand. Use:
-
-```bash
-npm run version:sync   # package.json -> all targets
-npm run version:check  # verify they match
-npm run version:bump -- patch
-```
-
-CI bumps the patch automatically on every push to `main` and tags `v<version>` (Windows: `win-v<version>`), so **pull before pushing** (`git pull --rebase`). `runtimeVersion` is intentionally decoupled from the app version (`"1.1"`): bump it only when native code changes, otherwise OTA updates stop reaching installed APKs. Full details: `docs/RELEASE.md`.
+One version for the whole ecosystem. **You do not bump version files in git.** `package.json` / `app.json` keep the `1.1.0` baseline; the release workflow sets `version = 1.1.<workflow run number>` and `buildNumber = git commit count` in the workspace before building. Use `npm run version:sync` / `npm run version:check` only when changing the baseline or debugging. `runtimeVersion` is intentionally decoupled from the app version (`"1.1"`): bump it only when native code changes, otherwise OTA updates stop reaching installed APKs. The Android workflow publishes the OTA before the Gradle/NDK setup so updates can be tested quickly. Full details: `docs/RELEASE.md`.
 
 ## Rules
 
