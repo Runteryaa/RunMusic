@@ -79,6 +79,8 @@ export default function SettingsScreen() {
 
   const isRemoteEnabled = useRemoteConnectStore((s) => s.isServiceEnabled);
   const setRemoteEnabled = useRemoteConnectStore((s) => s.setServiceEnabled);
+  const startOnLaunch = useRemoteConnectStore((s) => s.startOnLaunch);
+  const setStartOnLaunch = useRemoteConnectStore((s) => s.setStartOnLaunch);
   const customDeviceName = useRemoteConnectStore((s) => s.customDeviceName);
   const setCustomDeviceName = useRemoteConnectStore((s) => s.setCustomDeviceName);
   const trustedDevices = useRemoteConnectStore((s) => s.trustedDevices);
@@ -575,6 +577,16 @@ export default function SettingsScreen() {
           value={isRemoteEnabled}
           onChange={(v) => {
             setRemoteEnabled(v);
+          }}
+        />
+
+        <ToggleRow
+          theme={theme}
+          label={t('settings.connecto_start_on_launch')}
+          hint={t('settings.connecto_start_on_launch_hint')}
+          value={startOnLaunch}
+          onChange={(v) => {
+            setStartOnLaunch(v);
           }}
         />
 

@@ -44,6 +44,7 @@ interface RemoteConnectStoreState {
   // Persisted
   localDeviceId: string;
   isServiceEnabled: boolean;
+  startOnLaunch: boolean;
   customDeviceName: string;
   trustedDevices: TrustedClient[];
   pairedHosts: Record<string, string>;
@@ -82,6 +83,7 @@ interface RemoteConnectStoreState {
 
   isRemoteConnected: () => boolean;
   setServiceEnabled: (enabled: boolean) => void;
+  setStartOnLaunch: (enabled: boolean) => void;
   setCustomDeviceName: (name: string) => void;
   addTrustedDevice: (client: TrustedClient) => void;
   removeTrustedDevice: (deviceId: string) => void;
@@ -179,6 +181,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       // Persisted defaults
       localDeviceId: `device_${Platform.OS}_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`,
       isServiceEnabled: false,
+      startOnLaunch: false,
       customDeviceName: DEFAULT_DEVICE_NAME,
       trustedDevices: [],
       pairedHosts: {},
@@ -218,6 +221,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
           set({ discoveredHosts: [], discoveredBlePeers: [], connectedClients: [] });
         }
       },
+      setStartOnLaunch: (enabled) => set({ startOnLaunch: enabled }),
       setCustomDeviceName: (name) => set({ customDeviceName: name }),
 
       addTrustedDevice: (client) => {
@@ -489,11 +493,14 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
     {
       name: 'runmusic_remote_connect_storage',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 4,
+      version: 5,
       migrate: (persistedState: any, version: number) => {
         if (!persistedState) return persistedState;
         if (version < 2 || persistedState.isServiceEnabled === undefined) {
           persistedState.isServiceEnabled = false;
+        }
+        if (version < 5 || persistedState.startOnLaunch === undefined) {
+          persistedState.startOnLaunch = false;
         }
         if (version < 3 || !persistedState.localDeviceId) {
           persistedState.localDeviceId = `device_${Platform.OS}_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`;
@@ -509,11 +516,16 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       },
       onRehydrateStorage: () => (state) => {
         if (state) {
-          state.isServiceEnabled = false;
+          // Connecto is off by default, but a user who enabled "start on
+          // launch" expects it active as soon as the app opens.
+          useRemoteConnectStore.setState({
+            isServiceEnabled: state.startOnLaunch,
+          });
         }
       },
       partialize: (state) => ({
         localDeviceId: state.localDeviceId,
+        startOnLaunch: state.startOnLaunch,
         customDeviceName: state.customDeviceName.trim() || DEFAULT_DEVICE_NAME,
         trustedDevices: state.trustedDevices,
         pairedHosts: state.pairedHosts,
