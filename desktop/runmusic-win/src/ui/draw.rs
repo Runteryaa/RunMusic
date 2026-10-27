@@ -479,12 +479,14 @@ fn draw_lyrics(hdc: HDC, app: &App, panel: &RECT) {
     let scroll_px = scroll * base;
 
     // Keep the active line centered; without timestamps start at the top.
+    // Both branches use the same sign so the wheel direction is identical for
+    // synced and plain lyrics: wheel up moves the text down (earlier lines).
     let origin = match active_idx {
         Some(idx) if idx < total_lines => {
             let before: i32 = heights[..idx].iter().map(|height| height + gap).sum();
             panel_center_y - heights[idx] / 2 + scroll_px - before
         }
-        _ => panel.top + (6.0 * s) as i32 - scroll_px,
+        _ => panel.top + (6.0 * s) as i32 + scroll_px,
     };
 
     let mut line_top = origin;
