@@ -102,6 +102,24 @@ export function usePlayTracker() {
     };
   }, [playing, activeTrack?.id, shouldSkipTracking]);
 
+  // Uzun dinlemelerde süre yalnızca duraklatma/parça değişiminde değil,
+  // periyodik olarak da yazılsın. Uygulama arka planda öldürülürse veri kaybı
+  // en fazla bu aralık kadar olur ve istatistikler çalarken de güncellenir.
+  useEffect(() => {
+    if (shouldSkipTracking) return;
+
+    const interval = setInterval(() => {
+      const startedAt = sessionStartTimeRef.current;
+      if (!startedAt) return;
+      const diffSecs = Math.floor((Date.now() - startedAt) / 1000);
+      if (diffSecs <= 0) return;
+      addListeningTime(diffSecs);
+      sessionStartTimeRef.current = Date.now();
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [shouldSkipTracking]);
+
   // Çalma konumu ve parça durumunu periyodik ve duraklatmada kaydet
   useEffect(() => {
     if (shouldSkipTracking || !activeTrack) return;

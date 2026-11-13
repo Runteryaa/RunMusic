@@ -14,6 +14,7 @@ import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { restoreQueueIfNeeded, syncAppKilledPlaybackBehavior, attachGlobalPlayerEventListeners } from '../services/playerBootstrap';
 import { refreshReplayGainForActiveTrack } from '../services/audioEffectsService';
+import { initStatsDB } from '../services/statsDatabase';
 import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { ensureActiveTrackArtwork } from '../services/activeTrackArtwork';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
@@ -460,6 +461,9 @@ export default function TabLayout() {
       });
       initSleepTimerService();
       initAdService().catch((adErr) => console.warn('Ad service init notice:', adErr));
+      // İstatistik şemasını ilk çalmadan önce hazırla; eski/yarım kalmış
+      // veritabanları da böylece açılışta onarılır.
+      initStatsDB().catch((statsErr) => console.warn('Stats DB init notice:', statsErr));
       attachGlobalPlayerEventListeners();
 
       // Kuyruğu arka planda geri yükle; arayüz hazır olduğu için splash beklemez.
