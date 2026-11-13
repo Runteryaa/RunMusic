@@ -243,6 +243,7 @@ async function persistQueue(): Promise<void> {
     upNextIds: s.upNextIds,
     contextIds: s.contextIds,
     isShuffle: s.isShuffle,
+    manualOnlyQueue: isManualOnlyQueue,
   });
   s.bumpQueueRevision();
 }
@@ -398,6 +399,27 @@ export function getContextReplenishThreshold(): number {
 
 let activeContextOrder: string[] = [];
 
+/**
+ * "Temizle" sonrası ilk senkronda, çalan parçadan önceki eski kitaplık
+ * geçmişini de kuyruktan düşür. Aksi halde Tümünü Tekrarla, temizlenen eski
+ * parçaları da döngüye sokar.
+ */
+let trimHistoryOnNextSync = false;
+
+/**
+ * Kuyruk "yalnızca manuel" modda mı?
+ *
+ * Kullanıcı sıradaki listesini temizlediğinde kütüphane bağlamı da bırakılır.
+ * Bu modda otomatik kuyruk yenileme yapılmaz; tekrar (loop) yalnızca kalan ve
+ * elle eklenen parçalar arasında döner. Kütüphaneden yeni bir parça çalınca
+ * mod otomatik olarak kapanır.
+ */
+let isManualOnlyQueue = false;
+
+export function setManualOnlyQueueMode(value: boolean): void {
+  isManualOnlyQueue = value;
+}
+
 export function getActiveContextOrder(): string[] {
   if (activeContextOrder.length === 0) {
     activeContextOrder = useStore.getState().contextIds || [];
@@ -416,6 +438,12 @@ export function setActiveContextOrder(order: string[]): void {
  */
 export async function rebuildActiveContextOrderFromCurrentQueue(): Promise<void> {
   try {
+    // Manuel modda kütüphane bağlamı yoktur; yeniden kurulacak bir sıra da yoktur.
+    if (isManualOnlyQueue) {
+      setActiveContextOrder([]);
+      return;
+    }
+
     const { queue, activeIndex } = await readQueueState();
     if (queue.length === 0) return;
 
@@ -491,7 +519,8 @@ let isReplenishing = false;
 
 /** Son 10 parça kaldığında kütüphaneden 10 parça daha ekleyerek kuyruğu 20 parçaya tamamlar. */
 export async function replenishUpcomingQueueIfNeeded(): Promise<void> {
-  if (isReplenishing) return;
+  // Manuel modda kuyruk kütüphaneden asla yeniden doldurulmaz.
+  if (isManualOnlyQueue || isReplenishing) return;
   isReplenishing = true;
   try {
     const { queue, activeIndex } = await readQueueState();
@@ -587,6 +616,8 @@ export async function startPlaybackFromLibrary(params: {
   smartShuffle?: boolean;
 }): Promise<void> {
   const { tracks, startId, shuffle, smartShuffle = false } = params;
+  // Kütüphaneden çalma normal (bağlamlı) kuyruğa geri döner.
+  isManualOnlyQueue = false;
   const contextIds = tracks.map((t) => t.id);
   const byId = new Map(tracks.map((t) => [t.id, t]));
   const metadataMap = useStore.getState().metadataMap;
@@ -789,6 +820,24 @@ export function schedulePersistQueue(): void {
 let pendingSyncIds: string[] | null = null;
 let pendingExtraTracks: Track[] = [];
 let isSyncing = false;
+let syncIdleWaiters: (() => void)[] = [];
+
+/**
+ * Devam eden native kuyruk senkronizasyonunun bitmesini bekler. "Temizle"
+ * gibi yapısal işlemlerden sonra anlık görüntünün doğru yazılması için kullanılır.
+ */
+export function flushNativeQueueSync(): Promise<void> {
+  if (!isSyncing && pendingSyncIds === null) return Promise.resolve();
+  return new Promise((resolve) => {
+    syncIdleWaiters.push(resolve);
+  });
+}
+
+function notifySyncIdle(): void {
+  const waiters = syncIdleWaiters;
+  syncIdleWaiters = [];
+  for (const resolve of waiters) resolve();
+}
 
 /**
  * Arka planda native TrackPlayer kuyruğunu asenkron olarak günceller.
@@ -819,6 +868,7 @@ function enqueueNativeSync(newUpNextIds: string[], extraTracks: Track[] = []): v
     }
     isSyncing = false;
     schedulePersistQueue();
+    notifySyncIdle();
   })();
 }
 
@@ -830,18 +880,30 @@ async function executeNativeUpcomingSync(
   newUpNextIds: string[],
   extraTracks: Track[] = []
 ): Promise<void> {
-  const { queue, activeIndex } = await readQueueState();
-  if (queue.length === 0 || activeIndex < 0) {
-    if (extraTracks.length > 0) {
-      // First added track becomes active; only that one may keep artwork.
-      const sanitized = extraTracks.map((track, index) => ({
-        ...track,
-        artwork: index === 0 ? track.artwork : undefined,
-      }));
-      await TrackPlayer.add(toPlayableTracks(sanitized));
+  let { queue, activeIndex } = await readQueueState();
+
+  if (trimHistoryOnNextSync) {
+    trimHistoryOnNextSync = false;
+    if (queue.length > 0 && activeIndex > 0) {
+      // Yalnızca çalan parçadan ÖNCEKİ indeksler kaldırılır; aktif parça ve
+      // konumu korunur, böylece ses kesilmez.
+      const historyIndexes = Array.from({ length: activeIndex }, (_, i) => i);
+      try {
+        // Sahte "aktif parça değişti" olaylarının geçmişe/upNext'e yazılmasını önle.
+        setIsMutatingQueue(true);
+        await TrackPlayer.remove(historyIndexes);
+        const refreshed = await readQueueState();
+        queue = refreshed.queue;
+        activeIndex = refreshed.activeIndex;
+      } catch (err) {
+        console.warn('[queueController] Geçmiş kuyruğu temizlenemedi:', err);
+      }
     }
-    return;
   }
+
+  const allAssets = useStore.getState().allAssets;
+  const metadataMap = useStore.getState().metadataMap;
+  const artworkMap = useStore.getState().artworkMap;
 
   // Havuz: Mevcut kuyruktaki tüm parçalar + dışarıdan gelen parçalar
   const pool = new Map<string, Track>();
@@ -853,10 +915,6 @@ async function executeNativeUpcomingSync(
     const k = trackKey(t);
     if (k && !pool.has(k)) pool.set(k, t);
   }
-
-  const allAssets = useStore.getState().allAssets;
-  const metadataMap = useStore.getState().metadataMap;
-  const artworkMap = useStore.getState().artworkMap;
 
   const upNextTracks: Track[] = [];
   const validUpNextIds: string[] = [];
@@ -883,19 +941,39 @@ async function executeNativeUpcomingSync(
     }
   }
 
+  if (queue.length === 0 || activeIndex < 0) {
+    setIsMutatingQueue(false);
+    const initialTracks = upNextTracks.length > 0 ? upNextTracks : extraTracks;
+    if (initialTracks.length > 0) {
+      // First added track becomes active; only that one may keep artwork.
+      const sanitized = initialTracks.map((track, index) => ({
+        ...track,
+        artwork: index === 0 ? track.artwork : undefined,
+      }));
+      await TrackPlayer.add(toPlayableTracks(sanitized));
+    }
+    return;
+  }
+
   const upNextSet = new Set(validUpNextIds);
   const activeTrackKey = trackKey(queue[activeIndex]);
 
   // Mevcut çalan parçanın ardındaki kütüphane bağlamı parçaları
-  // (Öncelikli sırada olanlar ve çalan parça elenir)
+  // (Öncelikli sırada olanlar ve çalan parça elenir).
+  //
+  // Manuel modda kütüphane bağlamı KORUNMAZ: aksi halde "Temizle" ile boşaltılan
+  // kuyruk her senkronizasyonda yeniden dolar ve tekrar sadece manuel parçalar
+  // arasında dönmez.
   const remainingContext: Track[] = [];
-  const seenContext = new Set<string>();
-  for (let i = activeIndex + 1; i < queue.length; i++) {
-    const t = queue[i];
-    const k = trackKey(t);
-    if (k && !upNextSet.has(k) && k !== activeTrackKey && !seenContext.has(k)) {
-      seenContext.add(k);
-      remainingContext.push(t);
+  if (!isManualOnlyQueue) {
+    const seenContext = new Set<string>();
+    for (let i = activeIndex + 1; i < queue.length; i++) {
+      const t = queue[i];
+      const k = trackKey(t);
+      if (k && !upNextSet.has(k) && k !== activeTrackKey && !seenContext.has(k)) {
+        seenContext.add(k);
+        remainingContext.push(t);
+      }
     }
   }
 
@@ -1040,13 +1118,28 @@ export async function removeQueueItem(index: number, trackId?: string): Promise<
 }
 
 /**
- * Manuel "Sırada" öğelerinin TAMAMINI kuyruktan çıkarır.
+ * Sıradaki ("up next") öğelerinin TAMAMINI kuyruktan çıkarır.
+ *
+ * Bu işlem kütüphane bağlamını da bırakır ve kuyruğu "yalnızca manuel" moda
+ * geçirir: çalan parçadan sonra otomatik olarak kütüphaneden yeni parça
+ * eklenmez. Kullanıcı elle 2-3 parça ekleyip tekrar (loop) açtığında yalnızca
+ * bu parçalar arasında döner. Kütüphaneden yeniden çalma başlatılınca mod
+ * kendiliğinden kapanır.
  */
 export async function clearUpNextQueue(): Promise<void> {
+  isManualOnlyQueue = true;
+  trimHistoryOnNextSync = true;
   // 1. ANINDA (0ms) İyimser Güncelleme
   useStore.getState().clearUpNext();
+  useStore.setState({ contextIds: [] });
+  setActiveContextOrder([]);
   useStore.getState().bumpQueueRevision();
+  // 2. Native kuyrukta çalan parçanın ardındaki her şeyi kaldır.
   enqueueNativeSync([]);
+  // 3. Kuyruk anlık görüntüsünü hemen güncelle; uygulama hemen kapatılsa bile
+  //    açılışta eski kitaplık bağlamı geri gelmez.
+  await flushNativeQueueSync();
+  await persistQueue();
 }
 
 /** "Sırada" bölümü içinde yeniden sıralama (indeksler bölüme görelidir). */

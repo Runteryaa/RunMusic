@@ -6,7 +6,13 @@ import { useExtensionStore } from '../store/useExtensionStore';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useOptimisticPlayerStore } from '../store/useOptimisticPlayerStore';
 import { startDownload, cancelDownload } from './downloadManager';
-import { skipToPreviousTrack, addTracksToQueue, trackKey } from './queueController';
+import {
+  skipToPreviousTrack,
+  addTracksToQueue,
+  trackKey,
+  setActiveContextOrder,
+  setManualOnlyQueueMode,
+} from './queueController';
 import { setupTrackPlayerIfNeeded } from './playerBootstrap';
 import type { InstalledExtension, ExtensionBridgeRequest } from '../types/extension';
 
@@ -313,6 +319,9 @@ export async function handleBridgeMessage(
             contextIds: [trackId],
             upNextIds: preservedUpNextTracks.map((t) => trackKey(t)),
           });
+          // Yeni bir bağlam kuruldu; manuel moddan çık.
+          setManualOnlyQueueMode(false);
+          setActiveContextOrder([trackId]);
 
           // Arayüzün 0ms anında güncellenmesi için iyimser (optimistic) modeli tetikle
           const summary = {
@@ -358,6 +367,8 @@ export async function handleBridgeMessage(
                 contextIds: tracksToAdd.map((t) => t.id),
                 upNextIds: [],
               });
+              setManualOnlyQueueMode(false);
+              setActiveContextOrder(tracksToAdd.map((t) => t.id));
             } else {
               // Yüksek öncelikli sıraya (Up Next) ekle
               await addTracksToQueue(

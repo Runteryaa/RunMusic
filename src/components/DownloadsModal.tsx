@@ -21,10 +21,14 @@ import { useTranslation } from '../services/i18n';
 import { setupTrackPlayerIfNeeded } from '../services/playerBootstrap';
 import { toPlayableTrack } from '../services/playbackUri';
 import {
-  cancelDownload,
   addDownloadToLibrary,
+  cancelDownload,
   deleteDownloadedFile,
 } from '../services/downloadManager';
+import {
+  setActiveContextOrder,
+  setManualOnlyQueueMode,
+} from '../services/queueController';
 import type { DownloadTask } from '../types/download';
 
 export const DownloadsModal: React.FC = () => {
@@ -72,6 +76,9 @@ export const DownloadsModal: React.FC = () => {
         contextIds: [item.id],
         upNextIds: [],
       });
+      // Tek parçalık yeni bir bağlam kuruldu; manuel moddan çık.
+      setManualOnlyQueueMode(false);
+      setActiveContextOrder([item.id]);
     } catch (err: any) {
       console.warn('[DownloadsModal] Oynatma hatası:', err);
       Alert.alert(t('downloads.play_error_title'), err?.message || t('downloads.play_error_msg'));

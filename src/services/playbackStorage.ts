@@ -101,6 +101,8 @@ export interface SavedQueueModel {
   upNextIds: string[];
   contextIds: string[];
   isShuffle: boolean;
+  /** Kuyruk yalnızca elle eklenen parçalardan mı oluşuyor? */
+  manualOnlyQueue?: boolean;
 }
 
 export interface SavedQueueState extends SavedQueueModel {
@@ -149,6 +151,7 @@ export async function saveQueueSnapshot(model: SavedQueueModel): Promise<void> {
       upNextIds: model.upNextIds,
       contextIds: model.contextIds,
       isShuffle: model.isShuffle,
+      manualOnlyQueue: Boolean(model.manualOnlyQueue),
     };
 
     await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(payload));

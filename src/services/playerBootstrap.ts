@@ -12,7 +12,11 @@ import { toPlayableTrack, toPlayableTracks } from './playbackUri';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
-import { handlePlaybackError, rebuildActiveContextOrderFromCurrentQueue } from './queueController';
+import {
+  handlePlaybackError,
+  rebuildActiveContextOrderFromCurrentQueue,
+  setManualOnlyQueueMode,
+} from './queueController';
 import { initAudioEffects } from './audioEffectsService';
 import { ensureActiveTrackArtwork } from './activeTrackArtwork';
 
@@ -205,6 +209,9 @@ async function doRestoreQueueIfNeeded(): Promise<boolean> {
     const currentQueue = await TrackPlayer.getQueue();
     if (currentQueue && currentQueue.length > 0) {
       const snapshot = await getQueueSnapshot().catch(() => null);
+      if (snapshot) {
+        setManualOnlyQueueMode(Boolean(snapshot.manualOnlyQueue));
+      }
       if (snapshot && useStore.getState().contextIds.length === 0) {
         useStore.setState({
           contextIds: snapshot.contextIds ?? currentQueue.map((t) => t.id),
@@ -310,8 +317,11 @@ async function doRestoreQueueIfNeeded(): Promise<boolean> {
         }
       }
 
-      const restoredContextIds =
-        snapshot.contextIds && snapshot.contextIds.length > 0
+      setManualOnlyQueueMode(Boolean(snapshot.manualOnlyQueue));
+
+      const restoredContextIds = snapshot.manualOnlyQueue
+        ? []
+        : snapshot.contextIds && snapshot.contextIds.length > 0
           ? snapshot.contextIds
           : snapshot.queue.map((t) => t.id);
 
