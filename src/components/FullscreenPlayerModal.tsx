@@ -103,6 +103,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { useIsAppActive } from '../hooks/useIsAppActive';
 import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
+import { LyricShareModal, type LyricShareLine } from './LyricShareModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
@@ -174,7 +175,9 @@ const LYRIC_ACTIVE_VIEW_POSITION = 0.32;
 const LYRIC_FALLOFF_ALPHA = [1, 0.74, 0.6, 0.48, 0.4, 0.34];
 const LYRIC_EASING = Easing.bezier(0.41, 0, 0.12, 0.99);
 const GAP_DOT_REST_ALPHA = 0.25;
-const GAP_ROW_HEIGHT = 42;
+const GAP_ROW_HEIGHT = 48;
+/** Henüz söylenmemiş kelimenin parlaklığı (aktif satır içinde). */
+const WORD_DIM_OPACITY = 0.3;
 
 function getLyricsSourceLabel(
   lyrics: LyricsResult | null,
@@ -191,35 +194,39 @@ function getLyricsSourceLabel(
       ? 'Genius'
       : fallback;
   if (lyrics.source === 'custom') return base;
+  const hasLines = (lyrics.parsedLines?.length ?? 0) > 0;
   const kind = hasWordSync
     ? 'Word Sync'
-    : lyrics.syncedLyrics || lyrics.parsedLines.length > 0
+    : lyrics.syncedLyrics || hasLines
     ? 'Sync'
     : 'Plain Text';
   return `${base} (${kind})`;
 }
 
 /**
- * Tek hece. Süresi boyunca sönükten beyaza yumuşakça geçer; satırın kelimeleri
- * sırayla aydınlandığı için Apple Music'teki hece süpürmesi gibi okunur.
+ * Tek kelime/hece. Satırın kendi saatiyle soldan sağa değil, kelimenin kendi
+ * süresi boyunca aydınlanır: Apple Music'teki gibi söylendikçe parlar.
+ *
+ * `clock` satır içinde 60 fps'e yumuşatılmış ortak bir saattir; böylece 4 Hz'lik
+ * oynatma konumu güncellemeleri kelime geçişlerini sıçratmaz.
  */
-function SweepToken({
+function TimedWord({
+  clock,
+  start,
+  end,
   text,
-  sung,
-  durationMs,
 }: {
+  clock: { value: number };
+  start: number;
+  end: number;
   text: string;
-  sung: boolean;
-  durationMs: number;
 }) {
-  const opacity = useSharedValue(sung ? 1 : 0.32);
-  useEffect(() => {
-    opacity.value = withTiming(sung ? 1 : 0.32, {
-      duration: sung ? Math.min(Math.max(durationMs, 180), 900) : 160,
-      easing: sung ? Easing.out(Easing.quad) : Easing.linear,
-    });
-  }, [sung, durationMs, opacity]);
-  const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const animatedStyle = useAnimatedStyle(() => {
+    const span = Math.max(0.08, end - start);
+    // Kelimenin ilk %70'inde tam parlaklığa ulaşır; kalan süre okunaklı kalır.
+    const progress = Math.max(0, Math.min(1, (clock.value - start) / (span * 0.7)));
+    return { opacity: WORD_DIM_OPACITY + (1 - WORD_DIM_OPACITY) * progress };
+  });
   return <Reanimated.Text style={animatedStyle}>{text}</Reanimated.Text>;
 }
 
@@ -256,6 +263,29 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
     });
   }, [alpha, scale, targetAlpha, isActive]);
 
+  /**
+   * Oynatma konumu 4 Hz gelir; kelime geçişleri bu yüzden sıçrar. Satıra özel
+   * bu saat, bir sonraki güncellemeye kadar gerçek zamanlı ilerler ve hece
+   * aydınlanmasını akıcı hale getirir.
+   */
+  const clock = useSharedValue(position);
+  const wasActiveRef = useRef(isActive);
+  useEffect(() => {
+    const becameActive = isActive && !wasActiveRef.current;
+    wasActiveRef.current = isActive;
+    const step = position - clock.value;
+    // Satır yeni aktifleştiyse, geri sarıldıysa veya şarkı değiştiyse sıçramak
+    // yerine doğrudan gerçek konuma otur.
+    if (becameActive || step < 0 || step > 2) {
+      clock.value = position;
+      return;
+    }
+    clock.value = withTiming(position, {
+      duration: Math.max(120, Math.min(420, step * 1000)),
+      easing: Easing.linear,
+    });
+  }, [position, isActive, clock]);
+
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: alpha.value,
     transform: [{ scale: scale.value }],
@@ -263,6 +293,26 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
 
   const alignEnd = line.alignment === 'end';
   const words = isActive ? line.words : undefined;
+  const backgroundWords = isActive ? line.background?.words : undefined;
+
+  const renderWords = (
+    list: NonNullable<LyricLine['words']>,
+    keyPrefix: string
+  ) =>
+    list.map((word, index) => {
+      const next = list[index + 1];
+      const needsSpace = !word.text.endsWith(' ') && (!next || !next.text.startsWith(' '));
+      const end = word.endTime ?? next?.time ?? word.time + 0.4;
+      return (
+        <TimedWord
+          key={`${keyPrefix}-${index}`}
+          clock={clock}
+          start={word.time}
+          end={end}
+          text={needsSpace ? `${word.text} ` : word.text}
+        />
+      );
+    });
 
   return (
     <Reanimated.View style={animatedStyle} layout={LinearTransition.duration(240)}>
@@ -277,23 +327,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
             isActive && { textShadowColor: theme.glowColor },
             alignEnd && styles.lyricTextEnd,
           ]}>
-          {words && words.length > 0
-            ? words.map((word, index) => {
-                const next = words[index + 1];
-                const needsSpace =
-                  !word.text.endsWith(' ') && (!next || !next.text.startsWith(' '));
-                const durationMs =
-                  word.endTime !== undefined ? (word.endTime - word.time) * 1000 : 240;
-                return (
-                  <SweepToken
-                    key={`word-${index}`}
-                    text={needsSpace ? `${word.text} ` : word.text}
-                    sung={position >= word.time}
-                    durationMs={durationMs}
-                  />
-                );
-              })
-            : line.text}
+          {words && words.length > 0 ? renderWords(words, 'word') : line.text}
         </Text>
 
         {/* Arka vokal (cevap vokali) ana satırın altından açılır. */}
@@ -303,7 +337,9 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
             style={[styles.lyricBackgroundWrap, alignEnd && styles.lyricBackgroundWrapEnd]}>
             <Text
               style={[styles.lyricBackgroundText, alignEnd && styles.lyricTextEnd]}>
-              {line.background.text}
+              {backgroundWords && backgroundWords.length > 0
+                ? renderWords(backgroundWords, 'bg')
+                : line.background.text}
             </Text>
           </Reanimated.View>
         ) : null}
@@ -322,7 +358,7 @@ function GapDot({ index, progress }: { index: number; progress: number }) {
     const lit = Math.max(0, Math.min(1, value.value * 3 - index));
     return {
       opacity: GAP_DOT_REST_ALPHA + (1 - GAP_DOT_REST_ALPHA) * lit,
-      transform: [{ scale: 0.76 + 0.24 * lit }],
+      transform: [{ scale: 0.7 + 0.3 * lit }],
     };
   });
   return <Reanimated.View style={[styles.lyricGapDot, animatedStyle]} />;
@@ -483,6 +519,7 @@ function LyricsPanel({
   const isAppActive = useIsAppActive();
   const [isAutoScrollPaused, setIsAutoScrollPaused] = useState(false);
   const [isOffsetOpen, setIsOffsetOpen] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);
 
   const progress = useActiveProgress(
     isFullscreenPlayerOpen && isLyricsMode && !isOffsetOpen
@@ -555,6 +592,30 @@ function LyricsPanel({
     }
     return { activeRowIndex: row, activeLineRowIndex: lineRow };
   }, [displayRows, lyricPosition]);
+
+  /** Paylaşım kartı için satır listesi (boşluk işaretleri hariç). */
+  const shareLines = useMemo<LyricShareLine[]>(() => {
+    const list: LyricShareLine[] = [];
+    for (const row of displayRows) {
+      if (row.kind !== 'line') continue;
+      list.push({
+        key: row.key,
+        text: row.line.text,
+        background: row.line.background?.text,
+      });
+    }
+    return list;
+  }, [displayRows]);
+
+  /** Panel açılırken çalan satır ve ardından gelen üç satır seçili gelir. */
+  const shareInitialKeys = useMemo(() => {
+    if (activeLineRowIndex < 0) return [];
+    const keys: string[] = [];
+    for (let i = activeLineRowIndex; i < displayRows.length && keys.length < 4; i++) {
+      if (displayRows[i].kind === 'line') keys.push(displayRows[i].key);
+    }
+    return keys;
+  }, [activeLineRowIndex, displayRows]);
 
   // Kaydırma hedefi: ara sürerken noktalara, satır gelmeden hemen önce ise bir
   // sonraki satıra. Böylece panel satırı söylenirken yerine oturur.
@@ -843,6 +904,18 @@ function LyricsPanel({
             </TouchableOpacity>
           ) : null}
 
+          {hasLyricsContent && shareLines.length > 0 ? (
+            <TouchableOpacity
+              style={[styles.lyricsActionBtn, { backgroundColor: theme.surface }]}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={t('player.share_lyrics')}
+              onPress={() => setIsShareOpen(true)}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+              <Ionicons name="share-outline" size={12} color={theme.primary} />
+            </TouchableOpacity>
+          ) : null}
+
           <TouchableOpacity
             style={[styles.lyricsSearchBtn, { backgroundColor: theme.surface }]}
             activeOpacity={0.7}
@@ -1062,6 +1135,19 @@ function LyricsPanel({
           </Pressable>
         </Pressable>
       </Modal>
+
+      <LyricShareModal
+        visible={isShareOpen}
+        onClose={() => setIsShareOpen(false)}
+        title={player.activeTrack?.title || ''}
+        artist={player.activeTrack?.artist || ''}
+        artworkUri={player.artworkUri ?? null}
+        sourceLabel={getLyricsSourceLabel(currentLyrics, hasWordSync, t('player.lyrics'))}
+        lines={shareLines}
+        initialKeys={shareInitialKeys}
+        theme={theme}
+        t={t}
+      />
     </>
   );
 }
@@ -2504,11 +2590,12 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       rawTitle: localActiveTrack.title,
     });
     if (!item) return null;
-    if ((item.syncedLyrics || item.lyricsfile || item.ttml) && (!item.parsedLines || item.parsedLines.length === 0)) {
-      return {
-        ...item,
-        parsedLines: parseAnySyncedLyrics(item.lyricsfile, item.syncedLyrics, item.ttml),
-      };
+    // `parsedLines` kalıcı kayda yazılmıyor (slimLyrics); burada her zaman bir
+    // dizi olduğundan emin oluyoruz. Aksi halde düz metin sözlerde `undefined`
+    // kalıp arayüzde `.length` okumasında çöküyordu.
+    if (!item.parsedLines || item.parsedLines.length === 0) {
+      const rebuilt = parseAnySyncedLyrics(item.lyricsfile, item.syncedLyrics, item.ttml);
+      return { ...item, parsedLines: rebuilt };
     }
     return item;
   }, [player.isRemote, player.lyrics, player.activeTrack, localActiveTrack, lyricsCache, getLyricsFromCache, displayTitle, displayArtist]);
@@ -5392,10 +5479,10 @@ const styles = StyleSheet.create({
     paddingLeft: 4,
   },
   lyricGapDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    marginRight: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
     backgroundColor: '#ffffff',
   },
   plainLyricsScroll: {
