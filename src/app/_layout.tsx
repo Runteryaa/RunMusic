@@ -1,4 +1,4 @@
-import { Tabs, router } from 'expo-router';
+import { Tabs, router, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Linking from 'expo-linking';
 import * as SystemUI from 'expo-system-ui';
@@ -159,6 +159,15 @@ function MainAppLayout({ onFirstLayout }: { onFirstLayout: () => void }) {
 
   const theme = useThemeStore((s) => s.theme);
   const keepPlayingWhenAppKilled = useStore((s) => s.preferences.keepPlayingWhenAppKilled);
+  const extensionsEnabled = useStore((s) => s.preferences.extensionsEnabled === true);
+  const pathname = usePathname();
+
+  // Sekme kapatıldığında o an açık olan Eklentiler ekranından çık.
+  useEffect(() => {
+    if (!extensionsEnabled && pathname?.startsWith('/extensions')) {
+      router.replace('/');
+    }
+  }, [extensionsEnabled, pathname]);
 
   // Uygulama kapatılınca çalma davranışını native servise senkronize et
   useEffect(() => {
@@ -230,6 +239,9 @@ function MainAppLayout({ onFirstLayout }: { onFirstLayout: () => void }) {
           <Tabs.Screen
             name="extensions"
             options={{
+              // Eklentiler varsayılan olarak kapalı: sekme yalnızca Ayarlar'dan
+              // etkinleştirildiğinde alt çubukta görünür.
+              href: extensionsEnabled ? undefined : null,
               title: t('tabs.extensions'),
               headerShown: false,
               tabBarIcon: ({ color }) => <Ionicons name="extension-puzzle-outline" size={24} color={color} />,
@@ -317,6 +329,9 @@ export async function handleAppDeepLink(url: string | null): Promise<void> {
 
       // Eklentiyi otomatik yükle
       try {
+        // Derin bağlantıyla eklenti kuruluyorsa eklenti sekmesini de etkinleştir;
+        // aksi halde kurulum sonrası sekme görünmez kalırdı.
+        useStore.getState().updatePreferences({ extensionsEnabled: true });
         const ext = await useExtensionStore.getState().installExtension(cleanUrl);
         Alert.alert(
           t('extensions.install_success'),

@@ -1070,6 +1070,17 @@ export default function SettingsScreen() {
         ) : null}
       </View>
 
+      {/* ── EKLENTİLER ─────────────────────────────────────────────────────── */}
+      <Section icon="extension-puzzle-outline" title={t('settings.extensions_section')} theme={theme}>
+        <ToggleRow
+          theme={theme}
+          label={t('settings.extensions_enable')}
+          hint={t('settings.extensions_enable_hint')}
+          value={preferences.extensionsEnabled === true}
+          onChange={(v) => updatePreferences({ extensionsEnabled: v })}
+        />
+      </Section>
+
       {/* ── VERİ VE BAKIM ─────────────────────────────────────────────────── */}
       <Section icon="server-outline" title={t('settings.data_section')} theme={theme}>
         <View style={styles.row}>

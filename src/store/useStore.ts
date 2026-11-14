@@ -88,6 +88,11 @@ export interface AppPreferences {
    * seçilen bağlamın ilk penceresiyle sınırlı kalır.
    */
   autoAddToQueue: boolean;
+  /**
+   * Eklentiler sekmesi etkin mi (varsayılan: false). Kapalıyken eklenti sekmesi
+   * alt gezinme çubuğunda GÖRÜNMEZ; Ayarlar'dan açılabilir.
+   */
+  extensionsEnabled: boolean;
   /** Kullanıcıya ait ekolayzer ve ReplayGain ayarları. */
   audioEffects: AudioEffectsSettings;
 }
@@ -111,6 +116,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   queueBufferTarget: 20,
   queueReplenishThreshold: 10,
   autoAddToQueue: true,
+  extensionsEnabled: false,
   audioEffects: {
     ...DEFAULT_AUDIO_EFFECTS,
     equalizerBands: [...DEFAULT_AUDIO_EFFECTS.equalizerBands],
@@ -243,7 +249,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 16;
+const PERSIST_VERSION = 17;
 
 export const useStore = create<AppState>()(
   persist(
@@ -662,6 +668,12 @@ export const useStore = create<AppState>()(
               typeof incomingPrefs.autoAddToQueue === 'boolean'
                 ? incomingPrefs.autoAddToQueue
                 : DEFAULT_PREFERENCES.autoAddToQueue,
+            // v17: eklentiler sekmesi. Varsayılan KAPALI; kullanıcı Ayarlar'dan
+            // açana kadar sekme ve eklenti yükleme devre dışıdır.
+            extensionsEnabled:
+              typeof incomingPrefs.extensionsEnabled === 'boolean'
+                ? incomingPrefs.extensionsEnabled
+                : DEFAULT_PREFERENCES.extensionsEnabled,
             // v14: ekolayzer + ReplayGain. v15: kullanıcı presetleri.
             // Eski kayıtlarda yok; güvenli varsayılanlarla doldurulur,
             // mevcut değerler aralığa sıkıştırılır.

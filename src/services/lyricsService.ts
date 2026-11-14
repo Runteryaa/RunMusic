@@ -1171,7 +1171,24 @@ export async function searchGenius(title: string, artist = ''): Promise<LyricsRe
       geniusUrl: h.result.url,
     }));
 
-    const bestHit = songSection.hits[0].result;
+    const bestHit = (() => {
+      // İlk isabet her zaman doğru değil: sanatçı + parça adı uyumuna göre seç.
+      const scored = songSection.hits
+        .map((h: any) => ({
+          result: h.result,
+          score: scoreResult(
+            {
+              artistName: h.result?.primary_artist?.name,
+              trackName: h.result?.title,
+            },
+            expectedArtist,
+            expectedTrack
+          ),
+        }))
+        .sort((a: any, b: any) => b.score - a.score);
+      return scored[0] && scored[0].score >= 0.1 ? scored[0].result : null;
+    })();
+    if (!bestHit) return null;
     const songUrl = bestHit.url;
     if (!songUrl) return null;
 
@@ -1203,11 +1220,39 @@ export async function searchGenius(title: string, artist = ''): Promise<LyricsRe
  */
 export type LyricsSourcePreference = 'lrclib_first' | 'genius_first' | 'lrclib_only';
 
+/** "İyi eşleşme" sayılan puan eşiği; üzerindeyse diğer kaynak hiç sorulmaz. */
+const LYRICS_STRONG_MATCH = 0.72;
+/** Bunun altındaki eşleşme "şüpheli" sayılır (ör. sanatçı hiç tutmuyor). */
+const LYRICS_WEAK_MATCH = 0.5;
+/** Neredeyse birebir eşleşme; zayıf sonucu her durumda geçer. */
+const LYRICS_EXACT_MATCH = 0.9;
+/** İki kaynak arasında bu kadar fark varsa daha iyi eşleşen kazanır. */
+const LYRICS_MATCH_MARGIN = 0.18;
+
 /**
- * Çevrimiçi söz arar. Kaynak sırası tercihe göre değişir.
+ * Bir söz sonucunun, aranan parçayla ne kadar uyuştuğunu 0..1 arasında puanlar.
  *
- * - `lrclib_first` (varsayılan): önce LRCLIB, bulunamazsa Genius.
- * - `genius_first`: önce Genius, bulunamazsa LRCLIB.
+ * `similarity` kelime kümesi örtüşmesine bakar; burada LRCLIB eşleştirmesiyle
+ * aynı ağırlıklar kullanılır (sanatçı %65, parça adı %35).
+ */
+function scoreLyricsResult(result: LyricsResult, title: string, artist: string): number {
+  const { expectedArtist, expectedTrack } = getSearchKeywords(title, artist);
+  const artistSim = expectedArtist ? similarity(result.artistName || '', expectedArtist) : 0.8;
+  const trackSim = expectedTrack ? similarity(result.trackName || '', expectedTrack) : 0.8;
+  return expectedArtist ? artistSim * 0.65 + trackSim * 0.35 : trackSim;
+}
+
+/**
+ * Çevrimiçi söz arar. Tercih edilen kaynak önceliklidir, ancak sonuç aranan
+ * parçayla zayıf uyuşuyorsa ve diğer kaynak belirgin şekilde daha iyi
+ * eşleşiyorsa daha iyi eşleşen kullanılır.
+ *
+ * Örnek: "Khontkar GOT" aramasında LRCLIB yalnızca başka sanatçıların "GOT"
+ * parçalarını döndürürse (sanatçı uyuşmuyor) Genius'un Khontkar sonucu tercih
+ * edilir; LRCLIB sonucu iyi eşleşiyorsa Genius'a hiç gidilmez.
+ *
+ * - `lrclib_first` (varsayılan): iyi eşleşen LRCLIB sonucu öncelikli.
+ * - `genius_first`: iyi eşleşen Genius sonucu öncelikli.
  * - `lrclib_only`: yalnızca LRCLIB; Genius'a hiç sorulmaz.
  */
 export async function fetchLyricsOnline(
@@ -1215,29 +1260,48 @@ export async function fetchLyricsOnline(
   artist = '',
   preference: LyricsSourcePreference = 'lrclib_first'
 ): Promise<LyricsResult | null> {
-  if (preference === 'genius_first') {
-    const geniusRes = await searchGenius(title, artist);
-    if (geniusRes) return geniusRes;
+  if (preference === 'lrclib_only') {
     return searchLrclib(title, artist);
   }
 
-  // 1. Mutlak öncelik LRCLIB
+  if (preference === 'genius_first') {
+    const geniusRes = await searchGenius(title, artist);
+    if (geniusRes) {
+      const geniusScore = scoreLyricsResult(geniusRes, title, artist);
+      if (geniusScore >= LYRICS_STRONG_MATCH) return geniusRes;
+      const lrclibRes = await searchLrclib(title, artist);
+      if (lrclibRes) {
+        const lrclibScore = scoreLyricsResult(lrclibRes, title, artist);
+        if (lrclibScore >= geniusScore + LYRICS_MATCH_MARGIN) return lrclibRes;
+      }
+      return geniusRes;
+    }
+    return searchLrclib(title, artist);
+  }
+
+  // lrclib_first
   const lrclibRes = await searchLrclib(title, artist);
   if (lrclibRes) {
+    const lrclibScore = scoreLyricsResult(lrclibRes, title, artist);
+    // LRCLIB sonucu aranan parçayla iyi uyuşuyorsa Genius'a hiç sorma.
+    if (lrclibScore >= LYRICS_STRONG_MATCH) return lrclibRes;
+
+    // Zayıf eşleşme (ör. yalnızca parça adı tutuyor): Genius daha iyiyse onu kullan.
+    const geniusRes = await searchGenius(title, artist);
+    if (geniusRes) {
+      const geniusScore = scoreLyricsResult(geniusRes, title, artist);
+      const clearlyBetter = geniusScore >= lrclibScore + LYRICS_MATCH_MARGIN;
+      const lrclibSuspicious = lrclibScore < LYRICS_WEAK_MATCH;
+      const geniusExact = geniusScore >= LYRICS_EXACT_MATCH;
+      // Sanatçı hiç tutmuyorsa ya da diğer kaynak neredeyse birebir eşleşiyorsa
+      // daha iyi olanı kullan. Aksi halde (ör. doğru parça ama senkron sözler
+      // LRCLIB'de) LRCLIB korunur.
+      if (clearlyBetter && (lrclibSuspicious || geniusExact)) return geniusRes;
+    }
     return lrclibRes;
   }
 
-  // 2. Yalnızca LRCLIB tamamen boş dönerse Genius'a sor
-  if (preference === 'lrclib_only') {
-    return null;
-  }
-
-  const geniusRes = await searchGenius(title, artist);
-  if (geniusRes) {
-    return geniusRes;
-  }
-
-  return null;
+  return searchGenius(title, artist);
 }
 
 /**
