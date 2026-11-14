@@ -16,6 +16,7 @@ import {
   PanResponder,
   BackHandler,
   Alert,
+  Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -67,6 +68,7 @@ import {
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import {
   buildQueueRows,
+  clearPlaybackQueue,
   clearUpNextQueue,
   deriveQueueSections,
   getQueueSections,
@@ -76,6 +78,7 @@ import {
   promoteContextTrackToUpNext,
   removeQueueItem,
   playHistoryTrack,
+  replenishUpcomingQueueIfNeeded,
   resolveTrackId,
   trackKey,
   type QueueEntry,
@@ -1007,6 +1010,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const isDynamicColorUnlocked = useStore((s) => s.preferences.isDynamicColorUnlocked);
   const isDevModeActive = useStore((s) => s.preferences.isDevModeActive);
   const hasDismissedDynamicColorBanner = useStore((s) => s.preferences.hasDismissedDynamicColorBanner);
+  const autoAddToQueue = useStore((s) => s.preferences.autoAddToQueue !== false);
   const unlockDynamicColor = useStore((s) => s.unlockDynamicColor);
   const dismissDynamicColorBanner = useStore((s) => s.dismissDynamicColorBanner);
 
@@ -1438,6 +1442,34 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     }
     clearUpNextQueue();
   }, [player.isRemote]);
+
+  const handleToggleAutoAdd = useCallback((value: boolean) => {
+    useStore.getState().updatePreferences({ autoAddToQueue: value });
+    if (value) {
+      // Açılır açılmaz kuyruğu hedefe tamamla; sonraki parça değişimini bekleme.
+      replenishUpcomingQueueIfNeeded().catch(() => {});
+    }
+  }, []);
+
+  const handleClearQueue = useCallback(() => {
+    if (player.isRemote) {
+      return;
+    }
+    Alert.alert(
+      t('player.clear_queue_title'),
+      t('player.clear_queue_msg'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('player.clear_queue'),
+          style: 'destructive',
+          onPress: () => {
+            clearPlaybackQueue().catch(() => {});
+          },
+        },
+      ]
+    );
+  }, [player.isRemote, t]);
 
   const handleQueueItemPress = useCallback(
     async (queueIndex: number, trackId?: string, title?: string, artist?: string) => {
@@ -3217,6 +3249,36 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                 </TouchableOpacity>
               </View>
             </View>
+
+            {!player.isRemote ? (
+              <View style={styles.queueToolbar}>
+                <View style={styles.queueToolbarToggle}>
+                  <Ionicons
+                    name={autoAddToQueue ? 'sync-outline' : 'pause-circle-outline'}
+                    size={14}
+                    color={autoAddToQueue ? theme.primary : '#71717a'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={styles.queueToolbarLabel}>{t('player.auto_add_queue')}</Text>
+                  <Switch
+                    value={autoAddToQueue}
+                    onValueChange={handleToggleAutoAdd}
+                    trackColor={{ false: 'rgba(255, 255, 255, 0.16)', true: 'rgba(255, 255, 255, 0.3)' }}
+                    thumbColor={autoAddToQueue ? theme.primary : '#9ca3af'}
+                    ios_backgroundColor="rgba(255, 255, 255, 0.16)"
+                    style={styles.queueToolbarSwitch}
+                  />
+                </View>
+                <TouchableOpacity
+                  style={styles.queueClearButton}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  onPress={handleClearQueue}>
+                  <Ionicons name="trash-outline" size={13} color="#ef4444" style={{ marginRight: 4 }} />
+                  <Text style={styles.queueClearButtonText}>{t('player.clear_queue')}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
             <FlatList
               ref={queueListRef}
@@ -5269,6 +5331,39 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  queueToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    paddingBottom: 6,
+  },
+  queueToolbarToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  queueToolbarLabel: {
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  queueToolbarSwitch: {
+    marginLeft: 4,
+    transform: [{ scaleX: 0.78 }, { scaleY: 0.78 }],
+  },
+  queueClearButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  queueClearButtonText: {
+    color: '#ef4444',
+    fontSize: 11,
+    fontWeight: '700',
   },
   queueScrollContent: {
     paddingBottom: 24,

@@ -209,8 +209,8 @@ async function doRestoreQueueIfNeeded(): Promise<boolean> {
     const currentQueue = await TrackPlayer.getQueue();
     if (currentQueue && currentQueue.length > 0) {
       const snapshot = await getQueueSnapshot().catch(() => null);
-      if (snapshot) {
-        setManualOnlyQueueMode(Boolean(snapshot.manualOnlyQueue));
+      if (snapshot?.manualOnlyQueue) {
+        setManualOnlyQueueMode(true);
       }
       if (snapshot && useStore.getState().contextIds.length === 0) {
         useStore.setState({
@@ -317,7 +317,9 @@ async function doRestoreQueueIfNeeded(): Promise<boolean> {
         }
       }
 
-      setManualOnlyQueueMode(Boolean(snapshot.manualOnlyQueue));
+      if (snapshot.manualOnlyQueue) {
+        setManualOnlyQueueMode(true);
+      }
 
       const restoredContextIds = snapshot.manualOnlyQueue
         ? []

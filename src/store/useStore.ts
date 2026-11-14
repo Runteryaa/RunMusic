@@ -82,6 +82,12 @@ export interface AppPreferences {
   queueBufferTarget: number;
   /** Kütüphaneden yeni parça tamamlama eşiği (varsayılan: 10). */
   queueReplenishThreshold: number;
+  /**
+   * Kuyruk eksildiğinde otomatik olarak kütüphaneden yeni parça eklensin mi
+   * (varsayılan: true). Kapalıyken kuyruk yalnızca elle eklenen parçalarla ve
+   * seçilen bağlamın ilk penceresiyle sınırlı kalır.
+   */
+  autoAddToQueue: boolean;
   /** Kullanıcıya ait ekolayzer ve ReplayGain ayarları. */
   audioEffects: AudioEffectsSettings;
 }
@@ -104,6 +110,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   clearQueueOnTrackSelect: false,
   queueBufferTarget: 20,
   queueReplenishThreshold: 10,
+  autoAddToQueue: true,
   audioEffects: {
     ...DEFAULT_AUDIO_EFFECTS,
     equalizerBands: [...DEFAULT_AUDIO_EFFECTS.equalizerBands],
@@ -236,7 +243,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 15;
+const PERSIST_VERSION = 16;
 
 export const useStore = create<AppState>()(
   persist(
@@ -631,6 +638,12 @@ export const useStore = create<AppState>()(
               typeof incomingPrefs.queueReplenishThreshold === 'number' && incomingPrefs.queueReplenishThreshold > 0
                 ? incomingPrefs.queueReplenishThreshold
                 : DEFAULT_PREFERENCES.queueReplenishThreshold,
+            // v16: kuyruğa otomatik şarkı ekleme anahtarı. Eski kayıtlarda yok;
+            // varsayılan açık kabul edilir.
+            autoAddToQueue:
+              typeof incomingPrefs.autoAddToQueue === 'boolean'
+                ? incomingPrefs.autoAddToQueue
+                : DEFAULT_PREFERENCES.autoAddToQueue,
             // v14: ekolayzer + ReplayGain. v15: kullanıcı presetleri.
             // Eski kayıtlarda yok; güvenli varsayılanlarla doldurulur,
             // mevcut değerler aralığa sıkıştırılır.

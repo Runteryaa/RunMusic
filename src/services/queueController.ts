@@ -243,7 +243,7 @@ async function persistQueue(): Promise<void> {
     upNextIds: s.upNextIds,
     contextIds: s.contextIds,
     isShuffle: s.isShuffle,
-    manualOnlyQueue: isManualOnlyQueue,
+    manualOnlyQueue: !isAutoAddToQueueEnabled(),
   });
   s.bumpQueueRevision();
 }
@@ -407,17 +407,30 @@ let activeContextOrder: string[] = [];
 let trimHistoryOnNextSync = false;
 
 /**
- * Kuyruk "yalnızca manuel" modda mı?
- *
- * Kullanıcı sıradaki listesini temizlediğinde kütüphane bağlamı da bırakılır.
- * Bu modda otomatik kuyruk yenileme yapılmaz; tekrar (loop) yalnızca kalan ve
- * elle eklenen parçalar arasında döner. Kütüphaneden yeni bir parça çalınca
- * mod otomatik olarak kapanır.
+ * Kuyruk tamamen temizlendiğinde, bir sonraki senkronda çalan parçanın
+ * ardındaki eski kütüphane parçalarının yeniden eklenmesini engeller.
  */
-let isManualOnlyQueue = false;
+let dropContextOnNextSync = false;
 
+/**
+ * Kuyruğa otomatik şarkı ekleme açık mı?
+ *
+ * Tek doğruluk kaynağı kalıcı tercih `preferences.autoAddToQueue`. Kapalıyken
+ * kuyruk kütüphaneden yenilenmez; yalnızca seçilen bağlamın ilk penceresi ve
+ * kullanıcının elle eklediği parçalar çalar.
+ */
+function isAutoAddToQueueEnabled(): boolean {
+  return useStore.getState().preferences?.autoAddToQueue !== false;
+}
+
+/**
+ * Eski "yalnızca manuel kuyruk" API'si. `true` otomatik eklemeyi kapatır,
+ * `false` normal kütüphane davranışına döner.
+ */
 export function setManualOnlyQueueMode(value: boolean): void {
-  isManualOnlyQueue = value;
+  const store = useStore.getState();
+  if (store.preferences.autoAddToQueue === !value) return;
+  store.updatePreferences({ autoAddToQueue: !value });
 }
 
 export function getActiveContextOrder(): string[] {
@@ -438,9 +451,9 @@ export function setActiveContextOrder(order: string[]): void {
  */
 export async function rebuildActiveContextOrderFromCurrentQueue(): Promise<void> {
   try {
-    // Manuel modda kütüphane bağlamı yoktur; yeniden kurulacak bir sıra da yoktur.
-    if (isManualOnlyQueue) {
-      setActiveContextOrder([]);
+    // Otomatik ekleme kapalıysa karışık sıra yeniden kurulmaz; mevcut sıra korunur.
+    if (!isAutoAddToQueueEnabled()) {
+      setActiveContextOrder(useStore.getState().contextIds || []);
       return;
     }
 
@@ -519,8 +532,8 @@ let isReplenishing = false;
 
 /** Son 10 parça kaldığında kütüphaneden 10 parça daha ekleyerek kuyruğu 20 parçaya tamamlar. */
 export async function replenishUpcomingQueueIfNeeded(): Promise<void> {
-  // Manuel modda kuyruk kütüphaneden asla yeniden doldurulmaz.
-  if (isManualOnlyQueue || isReplenishing) return;
+  // Otomatik ekleme kapalıyken kuyruk kütüphaneden asla yeniden doldurulmaz.
+  if (!isAutoAddToQueueEnabled() || isReplenishing) return;
   isReplenishing = true;
   try {
     const { queue, activeIndex } = await readQueueState();
@@ -616,8 +629,9 @@ export async function startPlaybackFromLibrary(params: {
   smartShuffle?: boolean;
 }): Promise<void> {
   const { tracks, startId, shuffle, smartShuffle = false } = params;
-  // Kütüphaneden çalma normal (bağlamlı) kuyruğa geri döner.
-  isManualOnlyQueue = false;
+  // Kütüphaneden çalma normal (bağlamlı) kuyruğa geri döner ve otomatik
+  // eklemeyi yeniden açar.
+  setManualOnlyQueueMode(false);
   const contextIds = tracks.map((t) => t.id);
   const byId = new Map(tracks.map((t) => [t.id, t]));
   const metadataMap = useStore.getState().metadataMap;
@@ -882,6 +896,9 @@ async function executeNativeUpcomingSync(
 ): Promise<void> {
   let { queue, activeIndex } = await readQueueState();
 
+  const dropContext = dropContextOnNextSync;
+  dropContextOnNextSync = false;
+
   if (trimHistoryOnNextSync) {
     trimHistoryOnNextSync = false;
     if (queue.length > 0 && activeIndex > 0) {
@@ -961,11 +978,11 @@ async function executeNativeUpcomingSync(
   // Mevcut çalan parçanın ardındaki kütüphane bağlamı parçaları
   // (Öncelikli sırada olanlar ve çalan parça elenir).
   //
-  // Manuel modda kütüphane bağlamı KORUNMAZ: aksi halde "Temizle" ile boşaltılan
-  // kuyruk her senkronizasyonda yeniden dolar ve tekrar sadece manuel parçalar
-  // arasında dönmez.
+  // Kuyruk tamamen temizlendiyse bu senkronda bağlam KORUNMAZ; aksi halde
+  // "Temizle" ile boşaltılan kuyruk yeniden dolar ve tekrar yalnızca manuel
+  // parçalar arasında dönmez.
   const remainingContext: Track[] = [];
-  if (!isManualOnlyQueue) {
+  if (!dropContext) {
     const seenContext = new Set<string>();
     for (let i = activeIndex + 1; i < queue.length; i++) {
       const t = queue[i];
@@ -1108,36 +1125,54 @@ export async function removeQueueItem(index: number, trackId?: string): Promise<
     enqueueNativeSync(newUpNextIds);
   } else {
     // Kütüphane bağlamından silme
-    const { activeIndex } = await readQueueState();
+    const { queue, activeIndex } = await readQueueState();
     if (index > activeIndex) {
       TrackPlayer.remove(index).catch(() => {});
       schedulePersistQueue();
       useStore.getState().bumpQueueRevision();
+
+      // Kullanıcı bağlamdaki son parçayı da elle sildiyse kuyruk kendiliğinden
+      // yeniden dolmasın: otomatik eklemeyi kapat.
+      const remainingUpcoming = queue.length - 1 - activeIndex;
+      if (remainingUpcoming <= 1 && useStore.getState().upNextIds.length === 0) {
+        setManualOnlyQueueMode(true);
+      }
     }
   }
 }
 
 /**
- * Sıradaki ("up next") öğelerinin TAMAMINI kuyruktan çıkarır.
- *
- * Bu işlem kütüphane bağlamını da bırakır ve kuyruğu "yalnızca manuel" moda
- * geçirir: çalan parçadan sonra otomatik olarak kütüphaneden yeni parça
- * eklenmez. Kullanıcı elle 2-3 parça ekleyip tekrar (loop) açtığında yalnızca
- * bu parçalar arasında döner. Kütüphaneden yeniden çalma başlatılınca mod
- * kendiliğinden kapanır.
+ * Yalnızca manuel "Sırada" öğelerini kuyruktan çıkarır. Kütüphane bağlamı ve
+ * otomatik ekleme davranışı değişmez.
  */
 export async function clearUpNextQueue(): Promise<void> {
-  isManualOnlyQueue = true;
+  useStore.getState().clearUpNext();
+  useStore.getState().bumpQueueRevision();
+  enqueueNativeSync([]);
+}
+
+/**
+ * Kuyruğun TAMAMINI temizler: manuel "Sırada" öğeleri, kütüphane bağlamı ve
+ * çalan parçanın ardındaki tüm parçalar kaldırılır. Ayrıca otomatik ekleme
+ * kapatılır; böylece kuyruk kendiliğinden yeniden dolmaz ve Tümünü Tekrarla
+ * yalnızca çalan parça + elle eklenen parçalar arasında döner.
+ *
+ * Kütüphaneden yeni bir parça çalındığında otomatik ekleme yeniden açılır.
+ */
+export async function clearPlaybackQueue(): Promise<void> {
+  setManualOnlyQueueMode(true);
   trimHistoryOnNextSync = true;
-  // 1. ANINDA (0ms) İyimser Güncelleme
+  dropContextOnNextSync = true;
+
   useStore.getState().clearUpNext();
   useStore.setState({ contextIds: [] });
   setActiveContextOrder([]);
   useStore.getState().bumpQueueRevision();
-  // 2. Native kuyrukta çalan parçanın ardındaki her şeyi kaldır.
+
   enqueueNativeSync([]);
-  // 3. Kuyruk anlık görüntüsünü hemen güncelle; uygulama hemen kapatılsa bile
-  //    açılışta eski kitaplık bağlamı geri gelmez.
+
+  // Anlık görüntüyü hemen güncelle; uygulama kapatılsa bile açılışta eski
+  // kitaplık bağlamı geri gelmez.
   await flushNativeQueueSync();
   await persistQueue();
 }
