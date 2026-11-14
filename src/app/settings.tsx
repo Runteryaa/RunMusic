@@ -102,9 +102,9 @@ export default function SettingsScreen() {
 
   const lyricsSources = useMemo(
     () => [
+      { value: 'lrc_red_first' as const, label: t('settings.source_lrc_red_first') },
       { value: 'lrclib_first' as const, label: t('settings.source_lrclib_first') },
       { value: 'genius_first' as const, label: t('settings.source_genius_first') },
-      { value: 'lrclib_only' as const, label: t('settings.source_lrclib_only') },
     ],
     [t]
   );

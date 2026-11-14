@@ -64,6 +64,11 @@ import {
   getSearchKeywords,
   LRCLIB_HEADERS,
   fetchGeniusLyricsByUrl,
+  buildLyricRows,
+  splitBackgroundVocals,
+  isGeniusSectionHeader,
+  getGeniusSectionLabel,
+  type LyricDisplayRow,
 } from '../services/lyricsService';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import {
@@ -88,6 +93,14 @@ import {
 } from '../services/queueController';
 import { UpNextRow, type UpNextItem } from './QueueUpNextList';
 import { Swipeable } from 'react-native-gesture-handler';
+import Reanimated, {
+  Easing,
+  FadeInDown,
+  LinearTransition,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useIsAppActive } from '../hooks/useIsAppActive';
 import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 
@@ -106,6 +119,31 @@ type QueueDisplayRow =
   | QueueRow<Track>
   | { kind: 'upnext-item'; key: string; item: UpNextItem; upNextIndex: number };
 
+/** Manuel arama listesi: sağlayıcı başlıkları + aday satırları. */
+type CandidateListRow =
+  | {
+      kind: 'header';
+      key: string;
+      source: LyricsCandidate['source'];
+      label: string;
+      count: number;
+    }
+  | { kind: 'candidate'; key: string; item: LyricsCandidate };
+
+type CandidateFilter = 'all' | LyricsCandidate['source'];
+
+const CANDIDATE_SOURCE_ORDER: LyricsCandidate['source'][] = [
+  'lrc.red',
+  'lrclib',
+  'genius',
+];
+
+function getCandidateSourceLabel(source: LyricsCandidate['source']): string {
+  if (source === 'lrc.red') return 'lrc.red';
+  if (source === 'lrclib') return 'LRCLIB';
+  return 'Genius';
+}
+
 /** Söz ofsetini işaretli, tek ondalıklı saniye olarak gösterir. */
 function formatLyricsOffset(value: number): string {
   const normalized = Math.abs(value) < 0.05 ? 0 : value;
@@ -118,6 +156,208 @@ function formatTime(secs: number): string {
   const s = Math.floor(secs % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Apple Music tarzı söz paneli yardımcıları
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Satırların yeni aktif satıra geçiş süresi (BitChord: LYRIC_SETTLE_MS). */
+const LYRIC_SETTLE_MS = 400;
+/** Kaydırma, satır gelmeden bu kadar önce başlar. */
+const LYRIC_SCROLL_LEAD_SECONDS = 0.5;
+/** Aktif satırın dikey konumu; Apple Music'te satır üstte üçte birlik bölgede durur. */
+const LYRIC_ACTIVE_VIEW_POSITION = 0.32;
+/**
+ * Aktif satırdan uzaklaştıkça sönükleşme. Telefon düzeninde (şarkı söylenen
+ * satır üstte, kalanı aşağıda) BitChord'un kullandığı seri.
+ */
+const LYRIC_FALLOFF_ALPHA = [1, 0.74, 0.6, 0.48, 0.4, 0.34];
+const LYRIC_EASING = Easing.bezier(0.41, 0, 0.12, 0.99);
+const GAP_DOT_REST_ALPHA = 0.25;
+const GAP_ROW_HEIGHT = 42;
+
+function getLyricsSourceLabel(
+  lyrics: LyricsResult | null,
+  hasWordSync: boolean,
+  fallback: string
+): string {
+  if (!lyrics) return fallback;
+  const base =
+    lyrics.source === 'lrc.red'
+      ? 'lrc.red'
+      : lyrics.source === 'lrclib'
+      ? 'LRCLIB'
+      : lyrics.source === 'genius'
+      ? 'Genius'
+      : fallback;
+  if (lyrics.source === 'custom') return base;
+  const kind = hasWordSync
+    ? 'Word Sync'
+    : lyrics.syncedLyrics || lyrics.parsedLines.length > 0
+    ? 'Sync'
+    : 'Plain Text';
+  return `${base} (${kind})`;
+}
+
+/**
+ * Tek hece. Süresi boyunca sönükten beyaza yumuşakça geçer; satırın kelimeleri
+ * sırayla aydınlandığı için Apple Music'teki hece süpürmesi gibi okunur.
+ */
+function SweepToken({
+  text,
+  sung,
+  durationMs,
+}: {
+  text: string;
+  sung: boolean;
+  durationMs: number;
+}) {
+  const opacity = useSharedValue(sung ? 1 : 0.32);
+  useEffect(() => {
+    opacity.value = withTiming(sung ? 1 : 0.32, {
+      duration: sung ? Math.min(Math.max(durationMs, 180), 900) : 160,
+      easing: sung ? Easing.out(Easing.quad) : Easing.linear,
+    });
+  }, [sung, durationMs, opacity]);
+  const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return <Reanimated.Text style={animatedStyle}>{text}</Reanimated.Text>;
+}
+
+/** Bir söz satırı: sola hizalı, mesafeye göre sönükleşen, aktifken hece süpürmeli. */
+const LyricLineRowView = React.memo(function LyricLineRowView({
+  line,
+  isActive,
+  distance,
+  position,
+  theme,
+  onSeek,
+}: {
+  line: LyricLine;
+  isActive: boolean;
+  distance: number;
+  position: number;
+  theme: ThemeColors;
+  onSeek: (time: number) => void;
+}) {
+  const targetAlpha = isActive
+    ? 1
+    : LYRIC_FALLOFF_ALPHA[Math.min(distance, LYRIC_FALLOFF_ALPHA.length - 1)];
+  const alpha = useSharedValue(targetAlpha);
+  const scale = useSharedValue(isActive ? 1 : 0.98);
+
+  useEffect(() => {
+    alpha.value = withTiming(targetAlpha, {
+      duration: LYRIC_SETTLE_MS,
+      easing: LYRIC_EASING,
+    });
+    scale.value = withTiming(isActive ? 1 : 0.98, {
+      duration: LYRIC_SETTLE_MS,
+      easing: LYRIC_EASING,
+    });
+  }, [alpha, scale, targetAlpha, isActive]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: alpha.value,
+    transform: [{ scale: scale.value }],
+  }));
+
+  const alignEnd = line.alignment === 'end';
+  const words = isActive ? line.words : undefined;
+
+  return (
+    <Reanimated.View style={animatedStyle} layout={LinearTransition.duration(240)}>
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={() => onSeek(line.time)}
+        style={[styles.lyricRow, alignEnd && styles.lyricRowEnd]}>
+        <Text
+          style={[
+            styles.lyricText,
+            isActive && styles.lyricTextActive,
+            isActive && { textShadowColor: theme.glowColor },
+            alignEnd && styles.lyricTextEnd,
+          ]}>
+          {words && words.length > 0
+            ? words.map((word, index) => {
+                const next = words[index + 1];
+                const needsSpace =
+                  !word.text.endsWith(' ') && (!next || !next.text.startsWith(' '));
+                const durationMs =
+                  word.endTime !== undefined ? (word.endTime - word.time) * 1000 : 240;
+                return (
+                  <SweepToken
+                    key={`word-${index}`}
+                    text={needsSpace ? `${word.text} ` : word.text}
+                    sung={position >= word.time}
+                    durationMs={durationMs}
+                  />
+                );
+              })
+            : line.text}
+        </Text>
+
+        {/* Arka vokal (cevap vokali) ana satırın altından açılır. */}
+        {isActive && line.background ? (
+          <Reanimated.View
+            entering={FadeInDown.duration(220)}
+            style={[styles.lyricBackgroundWrap, alignEnd && styles.lyricBackgroundWrapEnd]}>
+            <Text
+              style={[styles.lyricBackgroundText, alignEnd && styles.lyricTextEnd]}>
+              {line.background.text}
+            </Text>
+          </Reanimated.View>
+        ) : null}
+      </TouchableOpacity>
+    </Reanimated.View>
+  );
+});
+
+/** Boşluktaki üç noktadan biri; boşluğun ilerlemesine göre sırayla yanar. */
+function GapDot({ index, progress }: { index: number; progress: number }) {
+  const value = useSharedValue(progress);
+  useEffect(() => {
+    value.value = withTiming(progress, { duration: 260, easing: Easing.linear });
+  }, [progress, value]);
+  const animatedStyle = useAnimatedStyle(() => {
+    const lit = Math.max(0, Math.min(1, value.value * 3 - index));
+    return {
+      opacity: GAP_DOT_REST_ALPHA + (1 - GAP_DOT_REST_ALPHA) * lit,
+      transform: [{ scale: 0.76 + 0.24 * lit }],
+    };
+  });
+  return <Reanimated.View style={[styles.lyricGapDot, animatedStyle]} />;
+}
+
+/** Enstrümantal aranın üç noktası; yalnızca ara sürerken açılır. */
+const LyricGapRowView = React.memo(function LyricGapRowView({
+  active,
+  progress,
+}: {
+  active: boolean;
+  progress: number;
+}) {
+  const height = useSharedValue(active ? GAP_ROW_HEIGHT : 0);
+  useEffect(() => {
+    height.value = withTiming(active ? GAP_ROW_HEIGHT : 0, {
+      duration: 320,
+      easing: LYRIC_EASING,
+    });
+  }, [active, height]);
+  const animatedStyle = useAnimatedStyle(() => ({ height: height.value }));
+
+  return (
+    <Reanimated.View style={[styles.lyricGapRow, animatedStyle]}>
+      {active ? (
+        <View style={styles.lyricGapDots}>
+          {[0, 1, 2].map((index) => (
+            <GapDot key={index} index={index} progress={progress} />
+          ))}
+        </View>
+      ) : null}
+    </Reanimated.View>
+  );
+});
+
 
 /**
  * Isolated 4 Hz scrubber. The old fullscreen component polled progress at the
@@ -248,9 +488,10 @@ function LyricsPanel({
     isFullscreenPlayerOpen && isLyricsMode && !isOffsetOpen
   );
 
-  const lyricsFlatListRef = useRef<FlatList<LyricLine>>(null);
+  const lyricsFlatListRef = useRef<FlatList<LyricDisplayRow>>(null);
   const isUserScrollingRef = useRef(false);
   const scrollTimeoutRef = useRef<any>(null);
+  const scrollToIndexFallbackRef = useRef<any>(null);
 
   const plainLyricsScrollRef = useRef<ScrollView>(null);
   const plainContentHeightRef = useRef(0);
@@ -296,25 +537,84 @@ function LyricsPanel({
   // bu yüzden karşılaştırmada ses konumundan ofset çıkarılır.
   const lyricPosition = progress.position - appliedLyricsOffset;
 
-  const activeLineIndex = useMemo(() => {
-    if (!parsedLines || parsedLines.length === 0) return -1;
-    for (let i = parsedLines.length - 1; i >= 0; i--) {
-      if (lyricPosition >= parsedLines[i].time) {
-        return i;
+  // Görüntülenecek satırlar: enstrümantal aralar + parantezden ayrılan arka
+  // vokaller. `parsedLines` saf kalır (önbellek ve uzaktan senkron bozulmasın).
+  const displayRows = useMemo<LyricDisplayRow[]>(
+    () => buildLyricRows(splitBackgroundVocals(parsedLines)),
+    [parsedLines]
+  );
+
+  const { activeRowIndex, activeLineRowIndex } = useMemo(() => {
+    let row = -1;
+    let lineRow = -1;
+    for (let i = 0; i < displayRows.length; i++) {
+      if (lyricPosition >= displayRows[i].time) {
+        row = i;
+        if (displayRows[i].kind === 'line') lineRow = i;
       }
     }
-    return -1;
-  }, [parsedLines, lyricPosition]);
+    return { activeRowIndex: row, activeLineRowIndex: lineRow };
+  }, [displayRows, lyricPosition]);
+
+  // Kaydırma hedefi: ara sürerken noktalara, satır gelmeden hemen önce ise bir
+  // sonraki satıra. Böylece panel satırı söylenirken yerine oturur.
+  const scrollTargetIndex = useMemo(() => {
+    if (activeRowIndex < 0) return -1;
+    const next = displayRows[activeRowIndex + 1];
+    if (
+      next &&
+      next.kind === 'line' &&
+      next.time - lyricPosition <= LYRIC_SCROLL_LEAD_SECONDS
+    ) {
+      return activeRowIndex + 1;
+    }
+    return activeRowIndex;
+  }, [activeRowIndex, displayRows, lyricPosition]);
+
+  const plainLyricsSource = currentLyrics?.plainLyrics ?? '';
+
+  /**
+   * Düz metin sözleri Apple Music'teki gibi satır satır işler: Genius'un
+   * `[Verse 2: Artist]` başlıkları ham köşeli parantez yerine küçük bir bölüm
+   * etiketi olarak çizilir.
+   */
+  const plainLyricRows = useMemo(() => {
+    if (!plainLyricsSource) return [];
+    return plainLyricsSource.split('\n').map((raw, index) => {
+      const text = raw.trim();
+      if (!text) return { kind: 'blank' as const, key: `plain-${index}`, text: '' };
+      if (isGeniusSectionHeader(text)) {
+        return {
+          kind: 'section' as const,
+          key: `plain-${index}`,
+          text: getGeniusSectionLabel(text),
+        };
+      }
+      return { kind: 'text' as const, key: `plain-${index}`, text: raw };
+    });
+  }, [plainLyricsSource]);
+
+  /**
+   * Satıra dokununca o ana atla. Tüm satırlar AYNI fonksiyonu paylaşır; her
+   * render'da yeni bir ok fonksiyonu üretmek `React.memo`'yu boşa çıkarıp
+   * yüzlerce satırı gereksiz yeniden çizdirirdi.
+   */
+  const seekToLyricTime = useCallback(
+    (time: number) => {
+      player.seekTo(Math.max(0, time + appliedLyricsOffset));
+    },
+    [player, appliedLyricsOffset]
+  );
 
   const toggleAutoScroll = useCallback(() => {
     setIsAutoScrollPaused((prev) => {
       const next = !prev;
-      if (!next && activeLineIndex >= 0 && parsedLines.length > 0) {
+      if (!next && scrollTargetIndex >= 0 && displayRows.length > 0) {
         try {
           lyricsFlatListRef.current?.scrollToIndex({
-            index: activeLineIndex,
+            index: scrollTargetIndex,
             animated: true,
-            viewPosition: 0.35,
+            viewPosition: LYRIC_ACTIVE_VIEW_POSITION,
           });
         } catch {
           // Fallback
@@ -322,7 +622,7 @@ function LyricsPanel({
       }
       return next;
     });
-  }, [activeLineIndex, parsedLines.length]);
+  }, [displayRows.length, scrollTargetIndex]);
 
   useEffect(() => {
     if (
@@ -331,28 +631,28 @@ function LyricsPanel({
       isLyricsMode &&
       !isOffsetOpen &&
       !isAutoScrollPaused &&
-      activeLineIndex >= 0 &&
-      parsedLines.length > 0 &&
+      scrollTargetIndex >= 0 &&
+      displayRows.length > 0 &&
       !isUserScrollingRef.current
     ) {
       try {
         lyricsFlatListRef.current?.scrollToIndex({
-          index: activeLineIndex,
+          index: scrollTargetIndex,
           animated: true,
-          viewPosition: 0.35,
+          viewPosition: LYRIC_ACTIVE_VIEW_POSITION,
         });
       } catch {
         // Fallback
       }
     }
   }, [
-    activeLineIndex,
+    scrollTargetIndex,
     isAppActive,
     isFullscreenPlayerOpen,
     isLyricsMode,
     isOffsetOpen,
     isAutoScrollPaused,
-    parsedLines.length,
+    displayRows.length,
   ]);
 
   useEffect(() => {
@@ -443,6 +743,13 @@ function LyricsPanel({
     setIsOffsetOpen(false);
   }, [activeTrackKey, isRemote]);
 
+  useEffect(() => {
+    return () => {
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      if (scrollToIndexFallbackRef.current) clearTimeout(scrollToIndexFallbackRef.current);
+    };
+  }, []);
+
   const adjustLyricsOffset = useCallback(
     (delta: number) => {
       if (lyricsOffsetKeys.length === 0 || isRemote) return;
@@ -488,15 +795,7 @@ function LyricsPanel({
           <Text
             numberOfLines={1}
             style={[styles.lyricsSourceText, { color: hasWordSync ? '#10b981' : theme.textAccent }]}>
-            {hasWordSync
-              ? 'LRCLIB (Word Sync)'
-              : currentLyrics?.syncedLyrics || parsedLines.length > 0
-              ? 'LRCLIB (Sync)'
-              : currentLyrics?.source === 'lrclib'
-              ? 'LRCLIB (Plain Text)'
-              : currentLyrics?.source === 'genius'
-              ? 'Genius (Plain Text)'
-              : t('player.lyrics')}
+            {getLyricsSourceLabel(currentLyrics, hasWordSync, t('player.lyrics'))}
           </Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -530,6 +829,10 @@ function LyricsPanel({
                 isAutoScrollPaused && { backgroundColor: 'rgba(239, 68, 68, 0.18)' },
               ]}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isAutoScrollPaused ? t('player.auto_scroll') : t('player.pause_scroll')
+              }
               onPress={toggleAutoScroll}
               hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
               <Ionicons
@@ -537,13 +840,6 @@ function LyricsPanel({
                 size={12}
                 color={isAutoScrollPaused ? '#ef4444' : theme.primary}
               />
-              <Text
-                style={[
-                  styles.lyricsActionBtnText,
-                  { color: isAutoScrollPaused ? '#ef4444' : theme.primary },
-                ]}>
-                {isAutoScrollPaused ? t('player.auto_scroll') : t('player.pause_scroll')}
-              </Text>
             </TouchableOpacity>
           ) : null}
 
@@ -567,11 +863,30 @@ function LyricsPanel({
       ) : parsedLines.length > 0 ? (
         <FlatList
           ref={lyricsFlatListRef}
-          data={parsedLines}
-          keyExtractor={(_, index) => `lyric-line-${index}`}
+          data={displayRows}
+          keyExtractor={(row) => row.key}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.lyricsListContent}
-          extraData={`${activeLineIndex}-${lyricPosition}-${appliedLyricsOffset}`}
+          extraData={`${activeRowIndex}-${activeLineRowIndex}-${lyricPosition}-${appliedLyricsOffset}`}
+          onScrollToIndexFailed={(info) => {
+            // Satırlar farklı yükseklikte; hedef henüz ölçülmediyse yaklaşık
+            // konuma git, bir sonraki karede gerçek satıra hizala.
+            lyricsFlatListRef.current?.scrollToOffset({
+              offset: info.averageItemLength * info.index,
+              animated: true,
+            });
+            scrollToIndexFallbackRef.current = setTimeout(() => {
+              try {
+                lyricsFlatListRef.current?.scrollToIndex({
+                  index: info.index,
+                  animated: true,
+                  viewPosition: LYRIC_ACTIVE_VIEW_POSITION,
+                });
+              } catch {
+                // Görünür alana gelene kadar bekle; sonraki güncelleme dener.
+              }
+            }, 120);
+          }}
           onScrollBeginDrag={() => {
             isUserScrollingRef.current = true;
             if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
@@ -583,56 +898,30 @@ function LyricsPanel({
             }, 4000);
           }}
           renderItem={({ item, index }) => {
-            const isActive = index === activeLineIndex;
+            if (item.kind === 'gap') {
+              const span = Math.max(0.001, item.endTime - item.time);
+              const isActive =
+                index === activeRowIndex &&
+                lyricPosition >= item.time &&
+                lyricPosition < item.endTime;
+              const gapProgress = !isActive
+                ? 0
+                : Math.max(0, Math.min(1, (lyricPosition - item.time) / span));
+              return <LyricGapRowView active={isActive} progress={gapProgress} />;
+            }
+
+            const isActive = index === activeLineRowIndex;
             return (
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() => player.seekTo(Math.max(0, item.time + appliedLyricsOffset))}
-                style={[styles.lyricRow, isActive && styles.lyricRowActive]}>
-                {isActive && item.words && item.words.length > 0 ? (
-                  <Text
-                    style={[
-                      styles.lyricText,
-                      styles.lyricTextActive,
-                      { textShadowColor: theme.glowColor },
-                    ]}>
-                    {item.words.map((word, wIdx) => {
-                      const isSung = lyricPosition >= word.time;
-                      const displayWord =
-                        wIdx < item.words!.length - 1 &&
-                        !word.text.endsWith(' ') &&
-                        !item.words![wIdx + 1].text.startsWith(' ')
-                          ? word.text + ' '
-                          : word.text;
-                      return (
-                        <Text
-                          key={`word-${wIdx}`}
-                          style={
-                            isSung
-                              ? [
-                                  styles.lyricWordSung,
-                                  { textShadowColor: theme.glowColor },
-                                ]
-                              : styles.lyricWordUpcoming
-                          }>
-                          {displayWord}
-                        </Text>
-                      );
-                    })}
-                  </Text>
-                ) : (
-                  <Text
-                    style={[
-                      styles.lyricText,
-                      isActive && [
-                        styles.lyricTextActive,
-                        { textShadowColor: theme.glowColor },
-                      ],
-                    ]}>
-                    {item.text}
-                  </Text>
-                )}
-              </TouchableOpacity>
+              <LyricLineRowView
+                line={item.line}
+                isActive={isActive}
+                distance={Math.abs(index - activeLineRowIndex)}
+                // Konum yalnızca aktif satıra geçer: diğer satırların prop'ları
+                // sabit kalır ve `React.memo` onları yeniden çizmez.
+                position={isActive ? lyricPosition : 0}
+                theme={theme}
+                onSeek={seekToLyricTime}
+              />
             );
           }}
         />
@@ -640,7 +929,7 @@ function LyricsPanel({
         <ScrollView
           ref={plainLyricsScrollRef}
           style={styles.plainLyricsScroll}
-          contentContainerStyle={styles.lyricsListContent}
+          contentContainerStyle={styles.plainLyricsContent}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={(_, h) => {
             plainContentHeightRef.current = h;
@@ -668,7 +957,20 @@ function LyricsPanel({
               isPlainUserScrollingRef.current = false;
             }, 4000);
           }}>
-          <Text style={styles.plainLyricsText}>{currentLyrics.plainLyrics}</Text>
+          {plainLyricRows.map((row) =>
+            row.kind === 'section' ? (
+              <View key={row.key} style={styles.plainLyricsSectionPill}>
+                <Text style={styles.plainLyricsSectionText}>{row.text}</Text>
+              </View>
+            ) : row.kind === 'blank' ? (
+              <View key={row.key} style={styles.plainLyricsBlankLine} />
+            ) : (
+              <Text key={row.key} style={styles.plainLyricsText}>
+                {row.text}
+              </Text>
+            )
+          )}
+          {plainLyricRows.length > 0 ? <View style={styles.plainLyricsTailSpacer} /> : null}
         </ScrollView>
       ) : (
         <View style={styles.lyricsEmptyState}>
@@ -1126,6 +1428,52 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const [candidatesList, setCandidatesList] = useState<LyricsCandidate[]>([]);
   const [isSearchingCandidates, setIsSearchingCandidates] = useState(false);
   const [resolvingCandidateId, setResolvingCandidateId] = useState<string | null>(null);
+  const [candidateFilter, setCandidateFilter] = useState<CandidateFilter>('all');
+  const [syncedOnly, setSyncedOnly] = useState(false);
+
+  /**
+   * Sağlayıcı sayısı arttıkça düz liste okunamıyor: sonuçlar sağlayıcıya göre
+   * gruplanır (lrc.red → LRCLIB → Genius) ve sayaçlı filtre çipleri listeyi
+   * daraltır. Filtreleme istemci tarafındadır; arama tek seferde tüm
+   * sağlayıcılara gider, filtre değiştirmek ağ isteği üretmez.
+   */
+  const candidateCounts = useMemo(() => {
+    const counts: Record<CandidateFilter, number> = {
+      all: 0,
+      'lrc.red': 0,
+      lrclib: 0,
+      genius: 0,
+    };
+    for (const candidate of candidatesList) {
+      if (syncedOnly && !candidate.hasSynced && !candidate.hasWordSync) continue;
+      counts.all += 1;
+      counts[candidate.source] += 1;
+    }
+    return counts;
+  }, [candidatesList, syncedOnly]);
+
+  const candidateRows = useMemo<CandidateListRow[]>(() => {
+    const rows: CandidateListRow[] = [];
+    for (const source of CANDIDATE_SOURCE_ORDER) {
+      if (candidateFilter !== 'all' && candidateFilter !== source) continue;
+      const items = candidatesList.filter(
+        (candidate) =>
+          candidate.source === source && (!syncedOnly || candidate.hasSynced || candidate.hasWordSync)
+      );
+      if (items.length === 0) continue;
+      rows.push({
+        kind: 'header',
+        key: `header-${source}`,
+        source,
+        label: getCandidateSourceLabel(source),
+        count: items.length,
+      });
+      for (const item of items) {
+        rows.push({ kind: 'candidate', key: item.id, item });
+      }
+    }
+    return rows;
+  }, [candidatesList, candidateFilter, syncedOnly]);
 
   const refreshQueue = useCallback(async () => {
     if (player.isRemote) return;
@@ -2156,10 +2504,10 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       rawTitle: localActiveTrack.title,
     });
     if (!item) return null;
-    if ((item.syncedLyrics || item.lyricsfile) && (!item.parsedLines || item.parsedLines.length === 0)) {
+    if ((item.syncedLyrics || item.lyricsfile || item.ttml) && (!item.parsedLines || item.parsedLines.length === 0)) {
       return {
         ...item,
-        parsedLines: parseAnySyncedLyrics(item.lyricsfile, item.syncedLyrics),
+        parsedLines: parseAnySyncedLyrics(item.lyricsfile, item.syncedLyrics, item.ttml),
       };
     }
     return item;
@@ -2170,7 +2518,11 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     if (currentLyrics.parsedLines && currentLyrics.parsedLines.length > 0) {
       return currentLyrics.parsedLines;
     }
-    return parseAnySyncedLyrics(currentLyrics.lyricsfile, currentLyrics.syncedLyrics);
+    return parseAnySyncedLyrics(
+      currentLyrics.lyricsfile,
+      currentLyrics.syncedLyrics,
+      currentLyrics.ttml
+    );
   }, [currentLyrics]);
 
   const remoteLyrics = player.lyrics;
@@ -2244,6 +2596,18 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const loadLyricsForTrack = async (title: string, artist?: string, force = false) => {
     if (player.isRemote || !localActiveTrack) return;
     const cleanArtist = artist && artist !== 'Local Audio' && artist !== 'Bilinmeyen Sanatçı' ? artist : '';
+    // lrc.red doğru kaydı süreyle eşler: aynı başlığın canlı/remix sürümleri
+    // arasında stüdyo kaydı ancak süre yakınlığıyla ayırt edilebiliyor.
+    const durationForLyrics =
+      (typeof activeMeta?.duration === 'number' && activeMeta.duration > 0
+        ? activeMeta.duration
+        : undefined) ||
+      (typeof localActiveTrack.duration === 'number' && localActiveTrack.duration > 0
+        ? localActiveTrack.duration
+        : undefined) ||
+      (typeof player.activeTrack?.duration === 'number' && player.activeTrack.duration > 0
+        ? player.activeTrack.duration
+        : undefined);
 
     if (!force) {
       const cached = getLyricsFromCache({
@@ -2269,7 +2633,8 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       const result = await fetchLyricsOnline(
         title,
         cleanArtist,
-        useStore.getState().preferences.lyricsSourcePreference
+        useStore.getState().preferences.lyricsSourcePreference,
+        durationForLyrics
       );
       if (result) {
         // Asenkron istek dönerken kullanıcı manuel bir seçim yaptıysa veya cache'e lyric kaydedildiyse ezme!
@@ -4373,83 +4738,170 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                 </TouchableOpacity>
               </View>
 
+              <View style={styles.candidateFilterRow}>
+                {(
+                  [
+                    { key: 'all' as const, label: t('player.filter_all') },
+                    { key: 'lrc.red' as const, label: 'lrc.red' },
+                    { key: 'lrclib' as const, label: 'LRCLIB' },
+                    { key: 'genius' as const, label: 'Genius' },
+                  ] as { key: CandidateFilter; label: string }[]
+                ).map((chip) => {
+                  const active = candidateFilter === chip.key;
+                  const empty = chip.key !== 'all' && candidateCounts[chip.key] === 0;
+                  return (
+                    <TouchableOpacity
+                      key={chip.key}
+                      activeOpacity={0.7}
+                      disabled={empty && !active}
+                      onPress={() => setCandidateFilter(chip.key)}
+                      style={[
+                        styles.candidateFilterChip,
+                        active && { backgroundColor: theme.primary, borderColor: theme.primary },
+                        empty && !active && styles.candidateFilterChipEmpty,
+                      ]}>
+                      <Text
+                        style={[
+                          styles.candidateFilterChipText,
+                          active && styles.candidateFilterChipTextActive,
+                        ]}>
+                        {chip.label}
+                        {candidateCounts[chip.key] > 0 ? ` ${candidateCounts[chip.key]}` : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => setSyncedOnly((prev) => !prev)}
+                  style={[
+                    styles.candidateFilterChip,
+                    syncedOnly && { backgroundColor: '#10b981', borderColor: '#10b981' },
+                  ]}>
+                  <Ionicons
+                    name={syncedOnly ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={11}
+                    color={syncedOnly ? '#ffffff' : '#a1a1aa'}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text
+                    style={[
+                      styles.candidateFilterChipText,
+                      syncedOnly && styles.candidateFilterChipTextActive,
+                    ]}>
+                    {t('player.filter_synced_only')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               <Text style={styles.candidatesSectionTitle}>{t('player.search_results_title')}</Text>
 
               {candidatesList.length > 0 ? (
-                <FlatList
-                  data={candidatesList}
-                  keyExtractor={(item) => item.id}
-                  style={{ maxHeight: 280 }}
-                  renderItem={({ item }) => {
-                    const isSelected =
-                      (currentLyrics?.selectedCandidateId && currentLyrics.selectedCandidateId === item.id) ||
-                      (currentLyrics?.id && currentLyrics.id === item.id) ||
-                      (currentLyrics?.source === item.source &&
-                        currentLyrics?.trackName?.trim().toLowerCase() === item.trackName?.trim().toLowerCase() &&
-                        currentLyrics?.artistName?.trim().toLowerCase() === item.artistName?.trim().toLowerCase() &&
-                        Boolean(currentLyrics?.syncedLyrics || currentLyrics?.lyricsfile) === Boolean(item.syncedLyrics || item.lyricsfile));
-
-                    return (
-                      <TouchableOpacity
-                        style={[
-                          styles.candidateRow,
-                          isSelected && [
-                            styles.candidateRowSelected,
-                            { borderColor: theme.primary, backgroundColor: `${theme.primary}20` },
-                          ],
-                        ]}
-                        activeOpacity={0.7}
-                        onPress={() => handleSelectCandidate(item)}>
-                        <View style={{ flex: 1, marginRight: 8 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                            <Text
-                              style={[
-                                styles.candidateTrack,
-                                isSelected && { color: theme.primary, fontWeight: '700' },
-                              ]}
-                              numberOfLines={1}>
-                              {item.trackName}
-                            </Text>
-                            {isSelected ? (
-                              <View style={[styles.candidateSelectedBadge, { backgroundColor: theme.primary }]}>
-                                <Ionicons name="checkmark-sharp" size={10} color="#ffffff" style={{ marginRight: 2 }} />
-                                <Text style={styles.candidateSelectedBadgeText}>{t('player.candidate_selected')}</Text>
-                              </View>
-                            ) : null}
+                candidateRows.length > 0 ? (
+                  <FlatList
+                    data={candidateRows}
+                    keyExtractor={(row) => row.key}
+                    style={{ maxHeight: 280 }}
+                    keyboardShouldPersistTaps="handled"
+                    renderItem={({ item: row }) => {
+                      if (row.kind === 'header') {
+                        return (
+                          <View style={styles.candidateGroupHeader}>
+                            <Text style={styles.candidateGroupHeaderText}>{row.label}</Text>
+                            <View style={styles.candidateGroupHeaderLine} />
+                            <Text style={styles.candidateGroupHeaderCount}>{row.count}</Text>
                           </View>
-                          <Text style={styles.candidateArtist} numberOfLines={1}>
-                            {item.artistName}
-                          </Text>
-                        </View>
-                        <View style={styles.candidateBadgeBox}>
-                          {item.hasWordSync ? (
-                            <View style={[styles.candidateSyncedBadge, { backgroundColor: '#10b981' }]}>
-                              <Text style={styles.candidateSyncedBadgeText}>WORD SYNC ✨</Text>
+                        );
+                      }
+
+                      const item = row.item;
+                      const isSelected =
+                        (currentLyrics?.selectedCandidateId && currentLyrics.selectedCandidateId === item.id) ||
+                        (currentLyrics?.id && currentLyrics.id === item.id) ||
+                        (currentLyrics?.source === item.source &&
+                          currentLyrics?.trackName?.trim().toLowerCase() === item.trackName?.trim().toLowerCase() &&
+                          currentLyrics?.artistName?.trim().toLowerCase() === item.artistName?.trim().toLowerCase() &&
+                          Boolean(currentLyrics?.syncedLyrics || currentLyrics?.lyricsfile) === Boolean(item.syncedLyrics || item.lyricsfile));
+
+                      return (
+                        <TouchableOpacity
+                          style={[
+                            styles.candidateRow,
+                            isSelected && [
+                              styles.candidateRowSelected,
+                              { borderColor: theme.primary, backgroundColor: `${theme.primary}20` },
+                            ],
+                          ]}
+                          activeOpacity={0.7}
+                          onPress={() => handleSelectCandidate(item)}>
+                          <View style={{ flex: 1, marginRight: 8 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                              <Text
+                                style={[
+                                  styles.candidateTrack,
+                                  isSelected && { color: theme.primary, fontWeight: '700' },
+                                ]}
+                                numberOfLines={1}>
+                                {item.trackName}
+                              </Text>
+                              {isSelected ? (
+                                <View style={[styles.candidateSelectedBadge, { backgroundColor: theme.primary }]}>
+                                  <Ionicons name="checkmark-sharp" size={10} color="#ffffff" style={{ marginRight: 2 }} />
+                                  <Text style={styles.candidateSelectedBadgeText}>{t('player.candidate_selected')}</Text>
+                                </View>
+                              ) : null}
                             </View>
-                          ) : item.hasSynced ? (
-                            <View style={[styles.candidateSyncedBadge, { backgroundColor: theme.primary }]}>
-                              <Text style={styles.candidateSyncedBadgeText}>SYNC</Text>
-                            </View>
-                          ) : (
-                            <View style={[styles.candidateSyncedBadge, { backgroundColor: 'rgba(255, 255, 255, 0.12)' }]}>
-                              <Text style={[styles.candidateSyncedBadgeText, { color: '#a1a1aa' }]}>{t('player.plain_lyrics_badge')}</Text>
-                            </View>
-                          )}
-                          <Text style={styles.candidateSourceText}>
-                            {item.source.toUpperCase()}
-                          </Text>
-                        </View>
-                        {resolvingCandidateId === item.id ? (
-                          <ActivityIndicator
-                            size="small"
-                            color={theme.primary}
-                            style={{ marginLeft: 8 }}
-                          />
-                        ) : null}
-                      </TouchableOpacity>
-                    );
-                  }}
-                />
+                            <Text style={styles.candidateArtist} numberOfLines={1}>
+                              {item.artistName}
+                            </Text>
+                          </View>
+                          <View style={styles.candidateBadgeBox}>
+                            {item.hasWordSync ? (
+                              <View style={[styles.candidateSyncedBadge, { backgroundColor: '#10b981' }]}>
+                                <Text style={styles.candidateSyncedBadgeText}>WORD SYNC ✨</Text>
+                              </View>
+                            ) : item.hasSynced ? (
+                              <View style={[styles.candidateSyncedBadge, { backgroundColor: theme.primary }]}>
+                                <Text style={styles.candidateSyncedBadgeText}>SYNC</Text>
+                              </View>
+                            ) : (
+                              <View style={[styles.candidateSyncedBadge, { backgroundColor: 'rgba(255, 255, 255, 0.12)' }]}>
+                                <Text style={[styles.candidateSyncedBadgeText, { color: '#a1a1aa' }]}>{t('player.plain_lyrics_badge')}</Text>
+                              </View>
+                            )}
+                            <Text style={styles.candidateSourceText}>
+                              {getCandidateSourceLabel(item.source)}
+                            </Text>
+                          </View>
+                          {resolvingCandidateId === item.id ? (
+                            <ActivityIndicator
+                              size="small"
+                              color={theme.primary}
+                              style={{ marginLeft: 8 }}
+                            />
+                          ) : null}
+                        </TouchableOpacity>
+                      );
+                    }}
+                  />
+                ) : (
+                  <View style={styles.candidateFilterEmpty}>
+                    <Text style={styles.candidateFilterEmptyText}>
+                      {t('player.filter_empty')}
+                    </Text>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        setCandidateFilter('all');
+                        setSyncedOnly(false);
+                      }}>
+                      <Text style={[styles.candidateFilterClearText, { color: theme.primary }]}>
+                        {t('player.filter_clear')}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )
               ) : (
                 <View style={{ paddingVertical: 24, alignItems: 'center' }}>
                   <Text style={{ color: '#71717a', fontSize: 14 }}>
@@ -4876,57 +5328,114 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
   lyricsListContent: {
-    paddingVertical: 24,
-    paddingHorizontal: 8,
-    alignItems: 'center',
+    paddingTop: 18,
+    paddingBottom: 96,
+    paddingHorizontal: 6,
+    alignItems: 'stretch',
   },
   lyricRow: {
-    paddingVertical: 12,
-    alignItems: 'center',
+    paddingVertical: 9,
+    alignItems: 'flex-start',
     justifyContent: 'center',
     width: '100%',
   },
-  lyricRowActive: {
-    transform: [{ scale: 1.02 }],
+  lyricRowEnd: {
+    alignItems: 'flex-end',
   },
   lyricText: {
-    color: 'rgba(255, 255, 255, 0.35)',
-    fontSize: 22,
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontSize: 21,
     fontWeight: '700',
-    lineHeight: 32,
-    textAlign: 'center',
+    lineHeight: 30,
+    letterSpacing: -0.2,
+    textAlign: 'left',
   },
   lyricTextActive: {
     color: '#ffffff',
-    fontSize: 27,
+    fontSize: 25,
     fontWeight: '800',
-    lineHeight: 38,
-    textAlign: 'center',
+    lineHeight: 34,
+    letterSpacing: -0.4,
+    textAlign: 'left',
     textShadowColor: 'rgba(255, 255, 255, 0.3)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 8,
   },
-  lyricWordSung: {
-    color: '#ffffff',
-    fontWeight: '800',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 10,
+  lyricTextEnd: {
+    textAlign: 'right',
   },
-  lyricWordUpcoming: {
-    color: 'rgba(255, 255, 255, 0.38)',
+  lyricBackgroundWrap: {
+    marginTop: 4,
+    paddingLeft: 2,
+    alignSelf: 'flex-start',
+  },
+  lyricBackgroundWrapEnd: {
+    alignSelf: 'flex-end',
+  },
+  lyricBackgroundText: {
+    color: 'rgba(255, 255, 255, 0.62)',
+    fontSize: 15,
     fontWeight: '600',
-    textShadowRadius: 0,
+    lineHeight: 21,
+    letterSpacing: -0.1,
+    textAlign: 'left',
+  },
+  lyricGapRow: {
+    width: '100%',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  lyricGapDots: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 4,
+  },
+  lyricGapDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    marginRight: 5,
+    backgroundColor: '#ffffff',
   },
   plainLyricsScroll: {
     flex: 1,
     width: '100%',
   },
+  plainLyricsContent: {
+    paddingTop: 20,
+    paddingBottom: 96,
+    paddingHorizontal: 6,
+  },
   plainLyricsText: {
     color: '#e4e4e7',
-    fontSize: 16,
+    fontSize: 19,
+    fontWeight: '600',
     lineHeight: 28,
-    textAlign: 'center',
+    letterSpacing: -0.2,
+    textAlign: 'left',
+  },
+  plainLyricsSectionPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.14)',
+    borderRadius: 6,
     paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 24,
+    marginBottom: 10,
+  },
+  plainLyricsSectionText: {
+    color: 'rgba(255, 255, 255, 0.82)',
+    fontSize: 11.5,
+    fontWeight: '700',
+    letterSpacing: 1.3,
+    textTransform: 'uppercase',
+  },
+  plainLyricsBlankLine: {
+    height: 12,
+  },
+  plainLyricsTailSpacer: {
+    height: 24,
   },
   lyricsLoadingCenter: {
     flex: 1,
@@ -5307,6 +5816,76 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     marginBottom: 10,
+  },
+  candidateFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    marginBottom: 12,
+  },
+  candidateFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    backgroundColor: '#18181b',
+  },
+  candidateFilterChipEmpty: {
+    opacity: 0.45,
+  },
+  candidateFilterChipText: {
+    color: '#d4d4d8',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  candidateFilterChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  candidateGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    marginBottom: 4,
+    paddingHorizontal: 2,
+  },
+  candidateGroupHeaderText: {
+    color: '#a1a1aa',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  candidateGroupHeaderLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    marginHorizontal: 8,
+  },
+  candidateGroupHeaderCount: {
+    color: '#71717a',
+    fontSize: 11,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  candidateFilterEmpty: {
+    paddingVertical: 24,
+    alignItems: 'center',
+    gap: 8,
+  },
+  candidateFilterEmptyText: {
+    color: '#71717a',
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  candidateFilterClearText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
   candidateRow: {
     flexDirection: 'row',

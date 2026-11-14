@@ -126,10 +126,21 @@ export function isLyricsCacheRef(entry: LyricsCacheEntry | undefined): entry is 
  *    gerektiğinde yeniden çekilir.
  *  - `parsedLines`: `parseAnySyncedLyrics` ile söz metninden yeniden üretilir.
  *
- * Ölçüm: bu iki alan, kalıcı kaydın yaklaşık %85'ini oluşturuyordu.
+ * lrc.red'in ham TTML'i ise yeniden indirilmeden satırlara çevrilebilsin diye
+ * korunur (`syncedLyrics` ile aynı sınıf veri). Yalnızca tek kayıt sınırını
+ * korumak için 64 KB'ı aşan belgeler kalıcı kayda yazılmaz; o oturumda
+ * bellekteki `parsedLines` kullanılmaya devam eder.
+ *
+ * Ölçüm: aday listesi ve parsedLines, kalıcı kaydın yaklaşık %85'ini
+ * oluşturuyordu.
  */
+const MAX_PERSISTED_TTML_CHARS = 64 * 1024;
+
 export function slimLyrics(lyrics: LyricsResult): LyricsResult {
   const { candidates: _candidates, parsedLines: _parsedLines, ...rest } = lyrics;
+  if (typeof rest.ttml === 'string' && rest.ttml.length > MAX_PERSISTED_TTML_CHARS) {
+    rest.ttml = null;
+  }
   return rest as LyricsResult;
 }
 

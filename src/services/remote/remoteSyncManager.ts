@@ -310,7 +310,15 @@ class RemoteSyncManager {
           const title = meta?.title || track.title || '';
           const artist = meta?.artist || track.artist || '';
           if (title) {
-            fetchLyricsOnline(title, artist, useStore.getState().preferences.lyricsSourcePreference)
+            const durationForLyrics =
+              (typeof meta?.duration === 'number' && meta.duration > 0 ? meta.duration : undefined) ||
+              (typeof track.duration === 'number' && track.duration > 0 ? track.duration : undefined);
+            fetchLyricsOnline(
+              title,
+              artist,
+              useStore.getState().preferences.lyricsSourcePreference,
+              durationForLyrics
+            )
               .then((result) => {
                 if (result) {
                   const altKeys = getLyricsCacheKeys({
@@ -1286,6 +1294,7 @@ class RemoteSyncManager {
         syncedLyrics: candidate.syncedLyrics,
         plainLyrics: candidate.plainLyrics,
         lyricsfile: candidate.lyricsfile,
+        isrc: candidate.isrc,
         geniusUrl: candidate.geniusUrl,
       },
     };
@@ -1506,8 +1515,8 @@ class RemoteSyncManager {
     if (!result) return null;
 
     let lines: LyricLine[] = result.parsedLines || [];
-    if (lines.length === 0 && (result.syncedLyrics || result.lyricsfile)) {
-      lines = parseAnySyncedLyrics(result.lyricsfile, result.syncedLyrics);
+    if (lines.length === 0 && (result.syncedLyrics || result.lyricsfile || result.ttml)) {
+      lines = parseAnySyncedLyrics(result.lyricsfile, result.syncedLyrics, result.ttml);
     }
 
     let lrclibId: string | number | null = null;
@@ -1536,7 +1545,8 @@ class RemoteSyncManager {
       trackId: track.id,
       lines,
       source: result.source || null,
-      isSynced: (!!result.syncedLyrics || !!result.lyricsfile) && lines.length > 0,
+      isSynced:
+        (!!result.syncedLyrics || !!result.lyricsfile || !!result.ttml) && lines.length > 0,
       plainLyrics: result.plainLyrics || undefined,
       syncedLyrics: result.syncedLyrics || undefined,
       lyricsfile: result.lyricsfile || undefined,

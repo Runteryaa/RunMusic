@@ -5,6 +5,7 @@ import { RepeatMode } from 'react-native-track-player';
 import {
   LyricsResult,
   getLyricsCacheKeys,
+  normalizeLyricsSourcePreference,
   type LyricsSourcePreference,
 } from '../services/lyricsService';
 import type { SortOption } from '../services/librarySort';
@@ -103,7 +104,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   restoreQueueOnLaunch: true,
   keepPlayingWhenAppKilled: true,
   autoFetchLyrics: true,
-  lyricsSourcePreference: 'lrclib_first',
+  lyricsSourcePreference: 'lrc_red_first',
   openPlayerWithLyrics: false,
   dynamicColorFromArtwork: false,
   presetThemeColor: '#3b82f6',
@@ -249,7 +250,7 @@ interface AppState {
 }
 
 /** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 17;
+const PERSIST_VERSION = 18;
 
 export const useStore = create<AppState>()(
   persist(
@@ -678,6 +679,11 @@ export const useStore = create<AppState>()(
             // Eski kayıtlarda yok; güvenli varsayılanlarla doldurulur,
             // mevcut değerler aralığa sıkıştırılır.
             audioEffects: normalizeAudioEffects(incomingPrefs.audioEffects),
+            // v18: lrc.red ana sağlayıcı oldu; `lrclib_only` seçeneği kaldırıldı.
+            lyricsSourcePreference: normalizeLyricsSourcePreference(
+              incomingPrefs.lyricsSourcePreference,
+              fromVersion
+            ),
           },
           isSmartShuffle: Boolean(incoming.isSmartShuffle),
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),

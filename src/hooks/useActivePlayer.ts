@@ -406,8 +406,8 @@ export function useActivePlayer(): ActivePlayerState {
     const cached = findLyricsInCache(useStore.getState().lyricsCache, keys);
     if (cached) {
       let lines: LyricLine[] = cached.parsedLines || [];
-      if (lines.length === 0 && (cached.syncedLyrics || cached.lyricsfile)) {
-        lines = parseAnySyncedLyrics(cached.lyricsfile, cached.syncedLyrics);
+      if (lines.length === 0 && (cached.syncedLyrics || cached.lyricsfile || cached.ttml)) {
+        lines = parseAnySyncedLyrics(cached.lyricsfile, cached.syncedLyrics, cached.ttml);
       }
       let lrclibId: string | number | null = null;
       let geniusId: string | number | null = null;
@@ -425,7 +425,8 @@ export function useActivePlayer(): ActivePlayerState {
         trackId: localActiveTrack.id,
         lines,
         source: cached.source || null,
-        isSynced: (!!cached.syncedLyrics || !!cached.lyricsfile) && lines.length > 0,
+        isSynced:
+          (!!cached.syncedLyrics || !!cached.lyricsfile || !!cached.ttml) && lines.length > 0,
         plainLyrics: cached.plainLyrics || undefined,
         syncedLyrics: cached.syncedLyrics || undefined,
         lyricsfile: cached.lyricsfile || undefined,

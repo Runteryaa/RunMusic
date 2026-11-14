@@ -239,7 +239,7 @@ export interface CommandSelectLyricsMessage {
   trackId: string;
   candidate: {
     id: string;
-    source: 'lrclib' | 'genius';
+    source: 'lrc.red' | 'lrclib' | 'genius';
     trackName: string;
     artistName: string;
     hasSynced: boolean;
@@ -247,6 +247,8 @@ export interface CommandSelectLyricsMessage {
     syncedLyrics?: string | null;
     plainLyrics?: string | null;
     lyricsfile?: string | null;
+    /** lrc.red seçiminde host'un TTML belgesini bulabilmesi için ISRC. */
+    isrc?: string;
     geniusUrl?: string;
   };
 }

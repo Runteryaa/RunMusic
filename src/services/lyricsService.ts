@@ -1,46 +1,22 @@
+import { parseTtml, type LyricDisplayRow } from './lyricsTtml';
+import {
+  fetchLrcRedTtml,
+  scoreLrcRedHit,
+  searchLrcRed,
+  type LrcRedHit,
+} from './lrcRed';
+import type {
+  LyricLine,
+  LyricWord,
+  LyricsCandidate,
+  LyricsResult,
+  LyricsSource,
+} from './lyricsTypes';
 
-export interface LyricWord {
-  time: number;
-  endTime?: number;
-  text: string;
-}
-
-export interface LyricLine {
-  time: number;
-  endTime?: number;
-  text: string;
-  words?: LyricWord[];
-}
-
-export interface LyricsCandidate {
-  id: string;
-  trackName: string;
-  artistName: string;
-  albumName?: string;
-  duration?: number;
-  hasSynced: boolean;
-  hasWordSync?: boolean;
-  syncedLyrics?: string | null;
-  plainLyrics?: string | null;
-  lyricsfile?: string | null;
-  source: 'lrclib' | 'genius';
-  geniusUrl?: string;
-}
-
-export interface LyricsResult {
-  id?: string;
-  trackName: string;
-  artistName: string;
-  syncedLyrics: string | null;
-  plainLyrics: string | null;
-  lyricsfile?: string | null;
-  hasWordSync?: boolean;
-  parsedLines: LyricLine[];
-  source: 'lrclib' | 'genius' | 'custom';
-  candidates?: LyricsCandidate[];
-  isUserSelected?: boolean;
-  selectedCandidateId?: string;
-}
+export type { LyricLine, LyricWord, LyricsCandidate, LyricsResult, LyricsSource };
+export type { LyricDisplayRow };
+export { parseTtml, buildLyricRows, splitBackgroundVocals, isGeniusSectionHeader, getGeniusSectionLabel } from './lyricsTtml';
+export { searchLrcRed, fetchLrcRedTtml, scoreLrcRedHit } from './lrcRed';
 
 /**
  * Parse an LRC string into an array of { time: number, text: string, words?: LyricWord[] } objects.
@@ -215,12 +191,20 @@ export function parseLyricsFile(yaml: string): LyricLine[] {
 }
 
 /**
- * Parses either LRCLIB YAML lyricsfile or LRC string, prioritizing whichever has word-level sync.
+ * Parses Apple TTML first when present, then LRCLIB's YAML lyricsfile, then an
+ * LRC string, prioritizing whichever has word-level sync.
  */
 export function parseAnySyncedLyrics(
   lyricsfile?: string | null,
-  syncedLyrics?: string | null
+  syncedLyrics?: string | null,
+  ttml?: string | null
 ): LyricLine[] {
+  // lrc.red sonuçları ham TTML taşır; satırlar her açılışta buradan üretilir.
+  if (ttml && ttml.trim()) {
+    const fromTtml = parseTtml(ttml);
+    if (fromTtml.length > 0) return fromTtml;
+  }
+
   let fromYaml: LyricLine[] = [];
   if (lyricsfile && lyricsfile.trim()) {
     fromYaml = parseLyricsFile(lyricsfile);
@@ -1218,7 +1202,31 @@ export async function searchGenius(title: string, artist = ''): Promise<LyricsRe
  * etmez ve Node üzerinde test edilebilir kalmalıdır; store ise native modüller
  * çeker. Store bu tipi buradan import eder.
  */
-export type LyricsSourcePreference = 'lrclib_first' | 'genius_first' | 'lrclib_only';
+export type LyricsSourcePreference = 'lrc_red_first' | 'lrclib_first' | 'genius_first';
+
+/**
+ * Eski söz kaynağı tercihlerini yeni üçlü listeye taşır (persist v18).
+ *
+ * `lrclib_only` kaldırıldı; bu seçenekteki kullanıcı artık `lrclib_first`
+ * (LRCLIB öncelikli, yedekler yine denenir) olarak devam eder. Eski varsayılan
+ * `lrclib_first` ise bilinçli bir tercih sayılmaz: kayıt v18'den eskiyse yeni
+ * varsayılana (lrc.red) taşınır. v18 ve sonrasında kullanıcının açıkça seçtiği
+ * `lrclib_first` korunur; bilinmeyen/bozuk değerler varsayılana düşer.
+ */
+export function normalizeLyricsSourcePreference(
+  value: unknown,
+  fromVersion = 0
+): LyricsSourcePreference {
+  if (value === 'genius_first') return 'genius_first';
+  if (value === 'lrc_red_first') return 'lrc_red_first';
+  if (value === 'lrclib_only') {
+    return fromVersion < 18 ? 'lrclib_first' : 'lrc_red_first';
+  }
+  if (value === 'lrclib_first') {
+    return fromVersion < 18 ? 'lrc_red_first' : 'lrclib_first';
+  }
+  return 'lrc_red_first';
+}
 
 /** "İyi eşleşme" sayılan puan eşiği; üzerindeyse diğer kaynak hiç sorulmaz. */
 const LYRICS_STRONG_MATCH = 0.72;
@@ -1229,79 +1237,138 @@ const LYRICS_EXACT_MATCH = 0.9;
 /** İki kaynak arasında bu kadar fark varsa daha iyi eşleşen kazanır. */
 const LYRICS_MATCH_MARGIN = 0.18;
 
+interface ResolvedLyrics {
+  result: LyricsResult;
+  score: number;
+}
+
 /**
  * Bir söz sonucunun, aranan parçayla ne kadar uyuştuğunu 0..1 arasında puanlar.
  *
  * `similarity` kelime kümesi örtüşmesine bakar; burada LRCLIB eşleştirmesiyle
  * aynı ağırlıklar kullanılır (sanatçı %65, parça adı %35).
  */
-function scoreLyricsResult(result: LyricsResult, title: string, artist: string): number {
+function scoreNamePair(result: { trackName?: string; artistName?: string }, title: string, artist: string): number {
   const { expectedArtist, expectedTrack } = getSearchKeywords(title, artist);
   const artistSim = expectedArtist ? similarity(result.artistName || '', expectedArtist) : 0.8;
   const trackSim = expectedTrack ? similarity(result.trackName || '', expectedTrack) : 0.8;
   return expectedArtist ? artistSim * 0.65 + trackSim * 0.35 : trackSim;
 }
 
+function scoreLyricsResult(result: LyricsResult, title: string, artist: string): number {
+  return scoreNamePair(result, title, artist);
+}
+
+/** lrc.red isabetinden tam `LyricsResult` üretir; TTML boşsa null. */
+function buildLrcRedResult(hit: LrcRedHit, ttml: string): LyricsResult | null {
+  const parsedLines = parseTtml(ttml);
+  if (parsedLines.length === 0) return null;
+
+  return {
+    id: `lrc-red-${hit.isrc}`,
+    trackName: hit.title,
+    artistName: hit.artist,
+    syncedLyrics: null,
+    plainLyrics: null,
+    ttml,
+    hasWordSync: true,
+    parsedLines,
+    source: 'lrc.red',
+  };
+}
+
 /**
- * Çevrimiçi söz arar. Tercih edilen kaynak önceliklidir, ancak sonuç aranan
- * parçayla zayıf uyuşuyorsa ve diğer kaynak belirgin şekilde daha iyi
- * eşleşiyorsa daha iyi eşleşen kullanılır.
+ * lrc.red ve LRCLIB'i paralel sorgular, tercihe göre en iyisini seçer.
  *
- * Örnek: "Khontkar GOT" aramasında LRCLIB yalnızca başka sanatçıların "GOT"
- * parçalarını döndürürse (sanatçı uyuşmuyor) Genius'un Khontkar sonucu tercih
- * edilir; LRCLIB sonucu iyi eşleşiyorsa Genius'a hiç gidilmez.
+ * lrc.red'in TTML'i hece zamanlaması taşıdığı için güçlü eşleşmede önceliklidir;
+ * ancak yanlış sürüme (live/remix) düşmemek için arama sonucu yeniden
+ * puanlanır ve LRCLIB belirgin biçimde daha iyi eşleşiyorsa o kullanılır.
+ */
+async function searchSyncedSources(
+  title: string,
+  artist: string,
+  preference: LyricsSourcePreference,
+  duration?: number
+): Promise<ResolvedLyrics | null> {
+  const [lrcHits, lrclibRes] = await Promise.all([
+    searchLrcRed(title, artist, { duration }).catch(() => [] as LrcRedHit[]),
+    searchLrclib(title, artist).catch(() => null),
+  ]);
+
+  const lrclibChoice: ResolvedLyrics | null = lrclibRes
+    ? { result: lrclibRes, score: scoreLyricsResult(lrclibRes, title, artist) }
+    : null;
+
+  // LRCLIB zaten çok iyi eşleşiyorsa ve kullanıcı onu öne aldıysa lrc.red'in
+  // TTML'ini indirmeye gerek yok.
+  if (preference === 'lrclib_first' && lrclibChoice && lrclibChoice.score >= LYRICS_STRONG_MATCH) {
+    return lrclibChoice;
+  }
+
+  let lrcChoice: ResolvedLyrics | null = null;
+  const rankedHits = lrcHits
+    .map((hit) => ({ hit, score: scoreLrcRedHit(hit, title, artist, duration) }))
+    .filter((entry) => entry.score >= LYRICS_WEAK_MATCH)
+    .slice(0, 2);
+
+  for (const entry of rankedHits) {
+    const ttml = await fetchLrcRedTtml(entry.hit.isrc);
+    if (!ttml) continue;
+    const result = buildLrcRedResult(entry.hit, ttml);
+    if (!result) continue;
+    lrcChoice = { result, score: entry.score };
+    break;
+  }
+
+  if (!lrcChoice) return lrclibChoice;
+  if (!lrclibChoice) return lrcChoice;
+
+  const preferred = preference === 'lrclib_first' ? lrclibChoice : lrcChoice;
+  const other = preferred === lrcChoice ? lrclibChoice : lrcChoice;
+  if (other.score >= preferred.score + LYRICS_MATCH_MARGIN) return other;
+  return preferred;
+}
+
+/**
+ * Çevrimiçi söz arar.
  *
- * - `lrclib_first` (varsayılan): iyi eşleşen LRCLIB sonucu öncelikli.
- * - `genius_first`: iyi eşleşen Genius sonucu öncelikli.
- * - `lrclib_only`: yalnızca LRCLIB; Genius'a hiç sorulmaz.
+ * Varsayılan sıra lrc.red → LRCLIB → Genius'tur. lrc.red ve LRCLIB paralel
+ * sorgulanır (lrc.red yavaşsa bekleme hissedilmesin); güçlü eşleşme varsa
+ * diğer kaynaklar hiç sorulmaz. Zayıf eşleşmede Genius son çare olarak denenir.
  */
 export async function fetchLyricsOnline(
   title: string,
   artist = '',
-  preference: LyricsSourcePreference = 'lrclib_first'
+  preference: LyricsSourcePreference = 'lrc_red_first',
+  duration?: number
 ): Promise<LyricsResult | null> {
-  if (preference === 'lrclib_only') {
-    return searchLrclib(title, artist);
-  }
-
   if (preference === 'genius_first') {
     const geniusRes = await searchGenius(title, artist);
-    if (geniusRes) {
-      const geniusScore = scoreLyricsResult(geniusRes, title, artist);
-      if (geniusScore >= LYRICS_STRONG_MATCH) return geniusRes;
-      const lrclibRes = await searchLrclib(title, artist);
-      if (lrclibRes) {
-        const lrclibScore = scoreLyricsResult(lrclibRes, title, artist);
-        if (lrclibScore >= geniusScore + LYRICS_MATCH_MARGIN) return lrclibRes;
-      }
+    const geniusScore = geniusRes ? scoreLyricsResult(geniusRes, title, artist) : -1;
+    if (geniusRes && geniusScore >= LYRICS_STRONG_MATCH) return geniusRes;
+
+    const synced = await searchSyncedSources(title, artist, preference, duration);
+    if (synced && (!geniusRes || synced.score >= geniusScore + LYRICS_MATCH_MARGIN)) {
+      return synced.result;
+    }
+    return geniusRes ?? synced?.result ?? null;
+  }
+
+  const synced = await searchSyncedSources(title, artist, preference, duration);
+  if (synced && synced.score >= LYRICS_STRONG_MATCH) return synced.result;
+
+  // Senkron kaynaklar zayıf/boş: Genius düz metni son çare.
+  const geniusRes = await searchGenius(title, artist);
+  if (geniusRes) {
+    if (!synced) return geniusRes;
+    const geniusScore = scoreLyricsResult(geniusRes, title, artist);
+    const clearlyBetter = geniusScore >= synced.score + LYRICS_MATCH_MARGIN;
+    if (clearlyBetter && (synced.score < LYRICS_WEAK_MATCH || geniusScore >= LYRICS_EXACT_MATCH)) {
       return geniusRes;
     }
-    return searchLrclib(title, artist);
   }
 
-  // lrclib_first
-  const lrclibRes = await searchLrclib(title, artist);
-  if (lrclibRes) {
-    const lrclibScore = scoreLyricsResult(lrclibRes, title, artist);
-    // LRCLIB sonucu aranan parçayla iyi uyuşuyorsa Genius'a hiç sorma.
-    if (lrclibScore >= LYRICS_STRONG_MATCH) return lrclibRes;
-
-    // Zayıf eşleşme (ör. yalnızca parça adı tutuyor): Genius daha iyiyse onu kullan.
-    const geniusRes = await searchGenius(title, artist);
-    if (geniusRes) {
-      const geniusScore = scoreLyricsResult(geniusRes, title, artist);
-      const clearlyBetter = geniusScore >= lrclibScore + LYRICS_MATCH_MARGIN;
-      const lrclibSuspicious = lrclibScore < LYRICS_WEAK_MATCH;
-      const geniusExact = geniusScore >= LYRICS_EXACT_MATCH;
-      // Sanatçı hiç tutmuyorsa ya da diğer kaynak neredeyse birebir eşleşiyorsa
-      // daha iyi olanı kullan. Aksi halde (ör. doğru parça ama senkron sözler
-      // LRCLIB'de) LRCLIB korunur.
-      if (clearlyBetter && (lrclibSuspicious || geniusExact)) return geniusRes;
-    }
-    return lrclibRes;
-  }
-
-  return searchGenius(title, artist);
+  return synced?.result ?? geniusRes ?? null;
 }
 
 /**
@@ -1314,7 +1381,30 @@ export async function searchAllCandidates(query: string, artist = ''): Promise<L
   const trimmedQuery = query.trim();
   if (!trimmedQuery) return [];
 
-  // 1. Mutlak Öncelik: LRCLIB Sonuçları
+  // 0. lrc.red: Apple Music TTML, hece senkronlu. Listede en üstte durur.
+  try {
+    const hits = await searchLrcRed(trimmedQuery, artist);
+    for (const hit of hits.slice(0, 6)) {
+      const cid = `lrc-red-${hit.isrc}`;
+      if (seenIds.has(cid)) continue;
+      seenIds.add(cid);
+      candidates.push({
+        id: cid,
+        trackName: hit.title,
+        artistName: hit.artist,
+        albumName: hit.album || '',
+        duration: hit.duration || 0,
+        hasSynced: true,
+        hasWordSync: true,
+        source: 'lrc.red',
+        isrc: hit.isrc,
+      });
+    }
+  } catch (e) {
+    console.warn('lrc.red candidate search error:', e);
+  }
+
+  // 1. LRCLIB Sonuçları
   try {
     const { expectedArtist, expectedTrack, cleanedFullTitle } = getSearchKeywords(trimmedQuery, artist);
     const strategies: Record<string, string>[] = [
@@ -1427,7 +1517,13 @@ export async function searchAllCandidates(query: string, artist = ''): Promise<L
     console.warn('Genius candidate search error:', e);
   }
 
-  // LRCLIB adaylarını kelime senkronizasyonlu ve senkronize olanlar üstte olacak şekilde sırala, Genius altta
+  // Hece senkronlu sonuçlar üstte; eşitlikte kaynak sırası lrc.red → LRCLIB →
+  // Genius. Sağlayıcı sayısı arttıkça liste bu sırayla okunabilir kalır.
+  const sourceRank: Record<LyricsCandidate['source'], number> = {
+    'lrc.red': 0,
+    lrclib: 1,
+    genius: 2,
+  };
   candidates.sort((a, b) => {
     const aWord = a.hasWordSync ? 3 : a.hasSynced ? 2 : 1;
     const bWord = b.hasWordSync ? 3 : b.hasSynced ? 2 : 1;
@@ -1435,7 +1531,7 @@ export async function searchAllCandidates(query: string, artist = ''): Promise<L
       return bWord - aWord;
     }
     if (a.source !== b.source) {
-      return a.source === 'lrclib' ? -1 : 1;
+      return sourceRank[a.source] - sourceRank[b.source];
     }
     return 0;
   });
@@ -1450,6 +1546,24 @@ export async function resolveCandidateToLyricsResult(
   candidate: LyricsCandidate,
   allCandidates?: LyricsCandidate[]
 ): Promise<LyricsResult | null> {
+  if (candidate.source === 'lrc.red') {
+    if (!candidate.isrc) return null;
+    const ttml = await fetchLrcRedTtml(candidate.isrc);
+    if (!ttml) return null;
+    const result = buildLrcRedResult(
+      {
+        isrc: candidate.isrc,
+        title: candidate.trackName,
+        artist: candidate.artistName,
+        album: candidate.albumName,
+        duration: candidate.duration,
+      },
+      ttml
+    );
+    if (!result) return null;
+    return { ...result, candidates: allCandidates };
+  }
+
   if (candidate.source === 'lrclib') {
     let synced = candidate.syncedLyrics || null;
     let plain = candidate.plainLyrics || null;

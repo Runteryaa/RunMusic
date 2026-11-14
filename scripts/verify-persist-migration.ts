@@ -25,6 +25,7 @@ import {
   type LyricsCacheEntry,
 } from '../src/services/persistSanitize';
 import type { LyricsResult } from '../src/services/lyricsService';
+import { normalizeLyricsSourcePreference } from '../src/services/lyricsService';
 import {
   DEFAULT_AUDIO_EFFECTS,
   MAX_CUSTOM_PRESETS,
@@ -855,6 +856,41 @@ check(
 check(
   'bandsMatch belirgin farkları ayırıyor',
   bandsMatch([3, -2, 0, 4, -1], [3.5, -2, 0, 4, -1]) === false
+);
+
+section('21) v17 -> v18 migrasyonu ve söz kaynağı tercihi');
+
+check(
+  'kaldırılan lrclib_only tercihi lrclib_first olur',
+  normalizeLyricsSourcePreference('lrclib_only', 17) === 'lrclib_first',
+  normalizeLyricsSourcePreference('lrclib_only', 17)
+);
+check(
+  'eski varsayılan lrclib_first yeni varsayılana (lrc.red) taşınır',
+  normalizeLyricsSourcePreference('lrclib_first', 17) === 'lrc_red_first',
+  normalizeLyricsSourcePreference('lrclib_first', 17)
+);
+check(
+  'genius_first korunur',
+  normalizeLyricsSourcePreference('genius_first', 17) === 'genius_first'
+);
+check(
+  'v18 kullanıcısının açık lrclib_first tercihi ezilmez',
+  normalizeLyricsSourcePreference('lrclib_first', 18) === 'lrclib_first',
+  normalizeLyricsSourcePreference('lrclib_first', 18)
+);
+check(
+  'bilinmeyen değer varsayılana düşer',
+  normalizeLyricsSourcePreference('bozuk', 17) === 'lrc_red_first' &&
+    normalizeLyricsSourcePreference(undefined, 17) === 'lrc_red_first' &&
+    normalizeLyricsSourcePreference(null, 17) === 'lrc_red_first'
+);
+check(
+  'v18 normalizasyonu idempotent',
+  normalizeLyricsSourcePreference(
+    normalizeLyricsSourcePreference('lrclib_first', 18),
+    18
+  ) === 'lrclib_first'
 );
 
 section('Sonuç');
