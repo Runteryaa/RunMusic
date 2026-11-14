@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   Modal,
+  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ThemeColors } from '../services/colorThemeService';
 
 /** Paylaşım kartına sığabilecek en fazla satır. */
-const MAX_SHARE_LINES = 8;
+export const MAX_SHARE_LINES = 8;
 
 export interface LyricShareLine {
   key: string;
@@ -24,56 +24,80 @@ export interface LyricShareLine {
   background?: string;
 }
 
-interface ShareModules {
+interface CaptureModules {
   captureRef: (ref: unknown, options?: Record<string, unknown>) => Promise<string>;
-  isAvailableAsync: () => Promise<boolean>;
-  shareAsync: (url: string, options?: Record<string, unknown>) => Promise<void>;
+  isAvailableAsync?: () => Promise<boolean>;
+  shareAsync?: (url: string, options?: Record<string, unknown>) => Promise<void>;
+  saveToLibraryAsync?: (localUri: string) => Promise<void>;
+  requestPermissionsAsync?: (
+    writeOnly?: boolean,
+    granularPermissions?: ('audio' | 'photo' | 'video')[]
+  ) => Promise<{ granted: boolean }>;
 }
 
 /**
- * Görüntü yakalama ve paylaşma modülleri YALNIZCA paylaşım istendiğinde
+ * Görüntü yakalama, paylaşma ve galeriye kaydetme modülleri YALNIZCA gerektiğinde
  * yüklenir.
  *
- * Sebep: bu modüller native taraf gerektirir. Paylaşım özelliğinden önce
- * derlenmiş bir APK'ya OTA ile bu JS düşerse, modülü üstte `import` etmek
- * uygulamayı açılışta çökertirdi. Dinamik yükleme sayesinde eski derlemeler
- * çalışmaya devam eder, yalnızca paylaş butonu "güncelleme gerekli" der.
+ * Sebep: bu modüller native taraf gerektirir. Özellikten önce derlenmiş bir
+ * APK'ya OTA ile bu JS düşerse, modülü üstte `import` etmek uygulamayı açılışta
+ * çökertirdi. Dinamik yükleme sayesinde eski derlemeler çalışmaya devam eder,
+ * yalnızca ilgili buton "güncelleme gerekli" der.
  */
-async function loadShareModules(): Promise<ShareModules | null> {
+async function loadCaptureModules(): Promise<CaptureModules | null> {
+  let captureRef: CaptureModules['captureRef'] | undefined;
   try {
     const viewShot: any = await import('react-native-view-shot');
-    const sharing: any = await import('expo-sharing');
-    const captureRef = viewShot?.captureRef ?? viewShot?.default?.captureRef;
-    const isAvailableAsync = sharing?.isAvailableAsync ?? sharing?.default?.isAvailableAsync;
-    const shareAsync = sharing?.shareAsync ?? sharing?.default?.shareAsync;
-    if (!captureRef || !isAvailableAsync || !shareAsync) return null;
-    return { captureRef, isAvailableAsync, shareAsync };
+    captureRef = viewShot?.captureRef ?? viewShot?.default?.captureRef;
   } catch {
     return null;
   }
+  if (!captureRef) return null;
+
+  const modules: CaptureModules = { captureRef };
+
+  try {
+    const sharing: any = await import('expo-sharing');
+    modules.isAvailableAsync = sharing?.isAvailableAsync ?? sharing?.default?.isAvailableAsync;
+    modules.shareAsync = sharing?.shareAsync ?? sharing?.default?.shareAsync;
+  } catch {
+    // Paylaşım yoksa indirme yine çalışsın.
+  }
+
+  try {
+    const media: any = await import('expo-media-library/legacy');
+    modules.saveToLibraryAsync =
+      media?.saveToLibraryAsync ?? media?.default?.saveToLibraryAsync;
+    modules.requestPermissionsAsync =
+      media?.requestPermissionsAsync ?? media?.default?.requestPermissionsAsync;
+  } catch {
+    // Galeriye kaydetme yoksa paylaşım yine çalışsın.
+  }
+
+  return modules;
 }
 
-interface LyricShareModalProps {
+interface LyricSharePreviewModalProps {
   visible: boolean;
   onClose: () => void;
   title: string;
   artist: string;
   artworkUri: string | null;
   sourceLabel?: string;
+  /** Seçilen satırlar, paneldeki sırayla. */
   lines: LyricShareLine[];
-  /** Panel açıldığında seçili gelecek satırlar (genelde çalan satır). */
-  initialKeys: string[];
   theme: ThemeColors;
   t: (key: string, params?: Record<string, string | number>) => string;
 }
 
 /**
- * Apple Music / Spotify tarzı söz kartı paylaşımı.
+ * Apple Music / Spotify tarzı söz kartı önizlemesi.
  *
- * Kullanıcı satırları seçer, kart canlı olarak önizlenir ve "Paylaş" ile kart
- * PNG'ye çevrilip sistem paylaşım sayfasına verilir.
+ * Satır seçimi artık söz panelinin kendisinde yapılıyor; bu modal yalnızca
+ * seçilen satırlardan oluşan kartı gösterir ve PNG olarak indirme/paylaşma
+ * seçeneklerini sunar.
  */
-export function LyricShareModal({
+export function LyricSharePreviewModal({
   visible,
   onClose,
   title,
@@ -81,75 +105,96 @@ export function LyricShareModal({
   artworkUri,
   sourceLabel,
   lines,
-  initialKeys,
   theme,
   t,
-}: LyricShareModalProps) {
+}: LyricSharePreviewModalProps) {
   const insets = useSafeAreaInsets();
-  const { width: windowWidth } = useWindowDimensions();
-  const cardWidth = Math.min(Math.max(windowWidth - 72, 240), 300);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const cardWidth = Math.min(Math.max(windowWidth - 104, 220), 300);
 
-  const [selected, setSelected] = useState<string[]>(initialKeys);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'share' | 'download' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
   const cardRef = useRef<View>(null);
 
-  const initialSignature = initialKeys.join('\u0001');
-
-  // Panel her açıldığında seçim, çalan satıra sıfırlanır.
+  // Modal her açıldığında durum sıfırlanır.
   useEffect(() => {
     if (!visible) return;
-    setSelected(initialSignature ? initialSignature.split('\u0001') : []);
+    setBusy(null);
     setError(null);
-    setBusy(false);
-  }, [visible, initialSignature]);
+    setSaved(false);
+  }, [visible]);
 
-  const toggleLine = useCallback(
-    (key: string) => {
-      setError(null);
-      setSelected((previous) => {
-        if (previous.includes(key)) return previous.filter((item) => item !== key);
-        if (previous.length >= MAX_SHARE_LINES) {
-          setError(t('player.share_lyrics_limit', { count: MAX_SHARE_LINES }));
-          return previous;
-        }
-        return [...previous, key];
-      });
-    },
-    [t]
-  );
+  // "Galeriye kaydedildi" geri bildirimi kısa süre sonra kendiliğinden silinir.
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => setSaved(false), 2600);
+    return () => clearTimeout(timer);
+  }, [saved]);
 
-  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const captureCard = useCallback(async () => {
+    const modules = await loadCaptureModules();
+    if (!modules || !cardRef.current) return null;
+    const uri = await modules.captureRef(cardRef, {
+      format: 'png',
+      quality: 1,
+      result: 'tmpfile',
+    });
+    // view-shot Android'de şemasız bir yol döndürebilir; dosya API'leri
+    // `file://` şeması bekler.
+    const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
+    return { modules, fileUri };
+  }, []);
 
-  // Kartta satırlar her zaman paneldeki sırayla görünür.
-  const selectedLines = useMemo(
-    () => lines.filter((line) => selectedSet.has(line.key)),
-    [lines, selectedSet]
-  );
-
-  const handleShare = useCallback(async () => {
-    if (busy || selectedLines.length === 0 || !cardRef.current) return;
-    setBusy(true);
+  const handleDownload = useCallback(async () => {
+    if (busy) return;
+    setBusy('download');
     setError(null);
     try {
-      const modules = await loadShareModules();
-      if (!modules) {
+      const captured = await captureCard();
+      if (!captured) {
         setError(t('player.share_unavailable'));
         return;
       }
-      const uri = await modules.captureRef(cardRef, {
-        format: 'png',
-        quality: 1,
-        result: 'tmpfile',
-      });
-      // view-shot Android'de şemasız bir yol döndürebilir; expo-sharing dosya
-      // URL'i bekler.
-      const shareUri = uri.startsWith('file://') ? uri : `file://${uri}`;
+      const { modules, fileUri } = captured;
+      if (!modules.saveToLibraryAsync || !modules.requestPermissionsAsync) {
+        setError(t('player.share_unavailable'));
+        return;
+      }
+      const permission = await modules.requestPermissionsAsync(false, ['photo']);
+      if (!permission.granted) {
+        setError(t('player.share_download_permission'));
+        return;
+      }
+      await modules.saveToLibraryAsync(fileUri);
+      setSaved(true);
+    } catch {
+      setError(t('player.share_download_failed'));
+    } finally {
+      setBusy(null);
+    }
+  }, [busy, captureCard, t]);
+
+  const handleShare = useCallback(async () => {
+    if (busy) return;
+    setBusy('share');
+    setError(null);
+    try {
+      const captured = await captureCard();
+      if (!captured) {
+        setError(t('player.share_unavailable'));
+        return;
+      }
+      const { modules, fileUri } = captured;
+      if (!modules.shareAsync || !modules.isAvailableAsync) {
+        setError(t('player.share_unavailable'));
+        return;
+      }
       if (!(await modules.isAvailableAsync())) {
         setError(t('player.share_unavailable'));
         return;
       }
-      await modules.shareAsync(shareUri, {
+      await modules.shareAsync(fileUri, {
         mimeType: 'image/png',
         dialogTitle: t('player.share_lyrics'),
         UTI: 'public.png',
@@ -157,41 +202,11 @@ export function LyricShareModal({
     } catch {
       setError(t('player.share_failed'));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
-  }, [busy, selectedLines.length, t]);
+  }, [busy, captureCard, t]);
 
-  const renderLine = useCallback(
-    ({ item }: { item: LyricShareLine }) => {
-      const isSelected = selectedSet.has(item.key);
-      return (
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => toggleLine(item.key)}
-          style={[styles.lineRow, isSelected && { backgroundColor: theme.surface }]}>
-          <View
-            style={[
-              styles.checkbox,
-              { borderColor: isSelected ? theme.primary : 'rgba(255,255,255,0.28)' },
-              isSelected && { backgroundColor: theme.primary },
-            ]}>
-            {isSelected ? <Ionicons name="checkmark" size={12} color="#0b0b0e" /> : null}
-          </View>
-          <View style={styles.lineTextWrap}>
-            <Text numberOfLines={2} style={styles.lineText}>
-              {item.text}
-            </Text>
-            {item.background ? (
-              <Text numberOfLines={1} style={styles.lineBackgroundText}>
-                {item.background}
-              </Text>
-            ) : null}
-          </View>
-        </TouchableOpacity>
-      );
-    },
-    [selectedSet, theme.primary, theme.surface, toggleLine]
-  );
+  const cardMaxHeight = Math.max(240, windowHeight - insets.top - insets.bottom - 280);
 
   return (
     <Modal
@@ -199,164 +214,173 @@ export function LyricShareModal({
       animationType="fade"
       transparent
       statusBarTranslucent
-      onRequestClose={onClose}>
-      <View style={[styles.root, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12 }]}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>{t('player.share_lyrics')}</Text>
-          <TouchableOpacity
-            onPress={onClose}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityRole="button"
-            accessibilityLabel={t('player.share_lyrics_close')}>
-            <Ionicons name="close" size={22} color="rgba(255,255,255,0.7)" />
-          </TouchableOpacity>
-        </View>
+      onRequestClose={busy ? undefined : onClose}>
+      <Pressable style={styles.backdrop} onPress={busy ? undefined : onClose}>
+        <Pressable style={styles.sheet} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.header}>
+            <Text style={styles.headerTitle}>{t('player.share_lyrics')}</Text>
+            <TouchableOpacity
+              onPress={onClose}
+              disabled={!!busy}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel={t('player.share_lyrics_close')}>
+              <Ionicons name="close" size={22} color="rgba(255,255,255,0.7)" />
+            </TouchableOpacity>
+          </View>
 
-        {/* Paylaşılacak kart: canlı önizleme ve yakalanan görüntünün kaynağı. */}
-        <View style={styles.previewWrap}>
-          <View
-            ref={cardRef}
-            collapsable={false}
-            style={[styles.card, { width: cardWidth, backgroundColor: '#0a0a0d' }]}>
-            {artworkUri ? (
-              <Image
-                source={{ uri: artworkUri }}
-                style={StyleSheet.absoluteFill}
-                contentFit="cover"
-                blurRadius={26}
-                cachePolicy="memory-disk"
-              />
-            ) : (
-              <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.primaryDark }]} />
-            )}
-            <View style={styles.cardScrim} />
-            <View style={[styles.cardTint, { backgroundColor: theme.glowColor }]} />
+          <View style={styles.previewWrap}>
+            <View
+              ref={cardRef}
+              collapsable={false}
+              style={[
+                styles.card,
+                { width: cardWidth, maxHeight: cardMaxHeight, backgroundColor: '#0a0a0d' },
+              ]}>
+              {artworkUri ? (
+                <Image
+                  source={{ uri: artworkUri }}
+                  style={StyleSheet.absoluteFill}
+                  contentFit="cover"
+                  blurRadius={26}
+                  cachePolicy="memory-disk"
+                />
+              ) : (
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.primaryDark }]} />
+              )}
+              <View style={styles.cardScrim} />
+              <View style={[styles.cardTint, { backgroundColor: theme.glowColor }]} />
 
-            <View style={styles.cardContent}>
-              <View style={styles.cardHeader}>
-                {artworkUri ? (
-                  <Image
-                    source={{ uri: artworkUri }}
-                    style={styles.cardArtwork}
-                    contentFit="cover"
-                    cachePolicy="memory-disk"
-                  />
-                ) : (
-                  <View style={[styles.cardArtwork, { backgroundColor: 'rgba(255,255,255,0.12)' }]} />
-                )}
-                <View style={styles.cardMeta}>
-                  <Text numberOfLines={1} style={styles.cardTitle}>
-                    {title || '—'}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.cardArtist}>
-                    {artist || '—'}
-                  </Text>
+              <View style={styles.cardContent}>
+                <View style={styles.cardHeader}>
+                  {artworkUri ? (
+                    <Image
+                      source={{ uri: artworkUri }}
+                      style={styles.cardArtwork}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                    />
+                  ) : (
+                    <View
+                      style={[styles.cardArtwork, { backgroundColor: 'rgba(255,255,255,0.12)' }]}
+                    />
+                  )}
+                  <View style={styles.cardMeta}>
+                    <Text numberOfLines={1} style={styles.cardTitle}>
+                      {title || '—'}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.cardArtist}>
+                      {artist || '—'}
+                    </Text>
+                  </View>
                 </View>
-              </View>
 
-              <View style={styles.cardLines}>
-                {selectedLines.length > 0 ? (
-                  selectedLines.map((line) => (
-                    <View key={`card-${line.key}`} style={styles.cardLineBlock}>
-                      <Text style={styles.cardLineText}>{line.text}</Text>
-                      {line.background ? (
-                        <Text style={styles.cardLineBackground}>{line.background}</Text>
-                      ) : null}
-                    </View>
-                  ))
-                ) : (
-                  <Text style={styles.cardEmptyText}>{t('player.share_lyrics_empty')}</Text>
-                )}
-              </View>
+                <View style={styles.cardLines}>
+                  {lines.length > 0 ? (
+                    lines.map((line) => (
+                      <View key={`card-${line.key}`} style={styles.cardLineBlock}>
+                        <Text style={styles.cardLineText}>{line.text}</Text>
+                        {line.background ? (
+                          <Text style={styles.cardLineBackground}>{line.background}</Text>
+                        ) : null}
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.cardEmptyText}>{t('player.share_lyrics_empty')}</Text>
+                  )}
+                </View>
 
-              <View style={styles.cardFooter}>
-                <Text style={styles.cardWordmark}>RunMusic</Text>
-                {sourceLabel ? (
-                  <Text numberOfLines={1} style={styles.cardSource}>
-                    {sourceLabel}
-                  </Text>
-                ) : null}
+                <View style={styles.cardFooter}>
+                  <Text style={styles.cardWordmark}>RunMusic</Text>
+                  {sourceLabel ? (
+                    <Text numberOfLines={1} style={styles.cardSource}>
+                      {sourceLabel}
+                    </Text>
+                  ) : null}
+                </View>
               </View>
             </View>
           </View>
-        </View>
 
-        <View style={styles.pickerHeader}>
-          <Text style={styles.pickerHint}>{t('player.share_lyrics_hint')}</Text>
-          <TouchableOpacity
-            onPress={() => {
-              setError(null);
-              setSelected([]);
-            }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Text style={[styles.pickerAction, { color: theme.textAccent }]}>
-              {t('player.share_lyrics_clear')}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <FlatList
-          data={lines}
-          keyExtractor={(item) => item.key}
-          renderItem={renderLine}
-          style={styles.pickerList}
-          contentContainerStyle={styles.pickerListContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        />
-
-        <View style={styles.footer}>
-          <Text style={styles.counterText}>
-            {selectedLines.length}/{MAX_SHARE_LINES}
-          </Text>
           {error ? (
             <Text numberOfLines={2} style={styles.errorText}>
               {error}
             </Text>
+          ) : saved ? (
+            <View style={styles.savedRow}>
+              <Ionicons name="checkmark-circle" size={14} color="#10b981" />
+              <Text style={styles.savedText}>{t('player.share_downloaded')}</Text>
+            </View>
           ) : null}
-          <TouchableOpacity
-            activeOpacity={0.8}
-            disabled={busy || selectedLines.length === 0}
-            onPress={handleShare}
-            style={[
-              styles.shareBtn,
-              { backgroundColor: theme.primary },
-              (busy || selectedLines.length === 0) && styles.shareBtnDisabled,
-            ]}>
-            {busy ? (
-              <ActivityIndicator size="small" color="#0b0b0e" />
-            ) : (
-              <Ionicons name="share-outline" size={18} color="#0b0b0e" />
-            )}
-            <Text style={styles.shareBtnText}>{t('player.share_lyrics_action')}</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+
+          <View style={styles.actions}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              disabled={!!busy || lines.length === 0}
+              onPress={handleDownload}
+              style={[
+                styles.actionBtn,
+                styles.downloadBtn,
+                (busy || lines.length === 0) && styles.actionBtnDisabled,
+              ]}>
+              {busy === 'download' ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Ionicons name="download-outline" size={18} color="#ffffff" />
+              )}
+              <Text style={styles.downloadBtnText}>{t('player.share_download')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              disabled={!!busy || lines.length === 0}
+              onPress={handleShare}
+              style={[
+                styles.actionBtn,
+                { backgroundColor: theme.primary },
+                (busy || lines.length === 0) && styles.actionBtnDisabled,
+              ]}>
+              {busy === 'share' ? (
+                <ActivityIndicator size="small" color="#0b0b0e" />
+              ) : (
+                <Ionicons name="share-outline" size={18} color="#0b0b0e" />
+              )}
+              <Text style={[styles.shareBtnText, { color: '#0b0b0e' }]}>
+                {t('player.share_lyrics_action')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
+  backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(9, 9, 12, 0.98)',
-    paddingHorizontal: 20,
+    backgroundColor: 'rgba(4, 4, 7, 0.78)',
+    justifyContent: 'center',
+    paddingHorizontal: 26,
+  },
+  sheet: {
+    alignItems: 'stretch',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingBottom: 12,
+    paddingBottom: 14,
+    paddingHorizontal: 4,
   },
   headerTitle: {
     color: '#ffffff',
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
     letterSpacing: -0.2,
   },
   previewWrap: {
     alignItems: 'center',
-    paddingBottom: 16,
   },
   card: {
     borderRadius: 26,
@@ -413,16 +437,16 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   cardLines: {
-    marginTop: 20,
-    marginBottom: 10,
+    marginTop: 18,
+    marginBottom: 8,
   },
   cardLineBlock: {
-    marginBottom: 10,
+    marginBottom: 9,
   },
   cardLineText: {
     color: '#ffffff',
-    fontSize: 18,
-    lineHeight: 25,
+    fontSize: 17,
+    lineHeight: 24,
     fontWeight: '700',
     letterSpacing: -0.3,
   },
@@ -442,7 +466,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 8,
+    marginTop: 6,
   },
   cardWordmark: {
     color: 'rgba(255,255,255,0.75)',
@@ -458,94 +482,54 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     flexShrink: 1,
   },
-  pickerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingBottom: 6,
-  },
-  pickerHint: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 12.5,
-    fontWeight: '600',
-    flexShrink: 1,
-  },
-  pickerAction: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    marginLeft: 10,
-  },
-  pickerList: {
-    flex: 1,
-  },
-  pickerListContent: {
-    paddingBottom: 8,
-  },
-  lineRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: 9,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    marginBottom: 2,
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
-  },
-  lineTextWrap: {
-    flex: 1,
-    marginLeft: 10,
-  },
-  lineText: {
-    color: '#ffffff',
-    fontSize: 14.5,
-    lineHeight: 20,
-    fontWeight: '600',
-  },
-  lineBackgroundText: {
-    color: 'rgba(255,255,255,0.45)',
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '600',
-    marginTop: 1,
-  },
-  footer: {
-    paddingTop: 10,
-  },
-  counterText: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 11.5,
-    fontWeight: '600',
-    textAlign: 'right',
-  },
   errorText: {
     color: '#fca5a5',
     fontSize: 12,
     fontWeight: '600',
-    marginBottom: 6,
+    marginTop: 12,
+    textAlign: 'center',
   },
-  shareBtn: {
+  savedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 12,
+  },
+  savedText: {
+    color: '#10b981',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 18,
+  },
+  actionBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     borderRadius: 14,
     paddingVertical: 13,
-    marginTop: 6,
   },
-  shareBtnDisabled: {
-    opacity: 0.4,
+  downloadBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.14)',
+  },
+  downloadBtnText: {
+    color: '#ffffff',
+    fontSize: 14.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   shareBtnText: {
-    color: '#0b0b0e',
-    fontSize: 15,
+    fontSize: 14.5,
     fontWeight: '800',
     letterSpacing: 0.2,
+  },
+  actionBtnDisabled: {
+    opacity: 0.45,
   },
 });

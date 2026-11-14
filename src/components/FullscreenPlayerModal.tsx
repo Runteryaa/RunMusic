@@ -105,7 +105,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { useIsAppActive } from '../hooks/useIsAppActive';
 import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
-import { LyricShareModal, type LyricShareLine } from './LyricShareModal';
+import { LyricSharePreviewModal, MAX_SHARE_LINES, type LyricShareLine } from './LyricShareModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
@@ -211,6 +211,26 @@ function getLyricsSourceLabel(
 }
 
 /**
+ * Paylaşım kartı için satır listesi: ara boşluk işaretleri atlanır.
+ *
+ * `buildLyricRows` deterministik olduğu için üretilen anahtarlar söz panelindeki
+ * satır anahtarlarıyla birebir aynıdır; seçim bu anahtarlar üzerinden yapılır.
+ */
+function buildShareLines(lines: LyricLine[]): LyricShareLine[] {
+  const rows = buildLyricRows(splitBackgroundVocals(lines));
+  const list: LyricShareLine[] = [];
+  for (const row of rows) {
+    if (row.kind !== 'line') continue;
+    list.push({
+      key: row.key,
+      text: row.line.text,
+      background: row.line.background?.text,
+    });
+  }
+  return list;
+}
+
+/**
  * Tek harf. Söylendikçe sönük renkten parlak renge geçer.
  *
  * Apple Music satırın tamamını değil, kelimeyi (ve mümkünse harfi) okunduğu
@@ -251,34 +271,42 @@ function SweepChar({
 const LyricLineRowView = React.memo(function LyricLineRowView({
   line,
   isActive,
+  isSelected,
+  isSelectionMode,
   distance,
   clock,
   theme,
   onSeek,
+  onToggleSelect,
 }: {
   line: LyricLine;
   isActive: boolean;
+  isSelected: boolean;
+  isSelectionMode: boolean;
   distance: number;
   clock: { value: number };
   theme: ThemeColors;
   onSeek: (time: number) => void;
+  onToggleSelect: () => void;
 }) {
-  const targetAlpha = isActive
-    ? 1
-    : LYRIC_FALLOFF_ALPHA[Math.min(distance, LYRIC_FALLOFF_ALPHA.length - 1)];
+  // Seçim modunda okunabilirlik önemlidir: tüm satırlar tam parlaklıkta kalır.
+  const targetAlpha =
+    isActive || isSelectionMode
+      ? 1
+      : LYRIC_FALLOFF_ALPHA[Math.min(distance, LYRIC_FALLOFF_ALPHA.length - 1)];
   const alpha = useSharedValue(targetAlpha);
-  const scale = useSharedValue(isActive ? 1 : 0.98);
+  const scale = useSharedValue(isActive || isSelectionMode ? 1 : 0.98);
 
   useEffect(() => {
     alpha.value = withTiming(targetAlpha, {
       duration: LYRIC_SETTLE_MS,
       easing: LYRIC_EASING,
     });
-    scale.value = withTiming(isActive ? 1 : 0.98, {
+    scale.value = withTiming(isActive || isSelectionMode ? 1 : 0.98, {
       duration: LYRIC_SETTLE_MS,
       easing: LYRIC_EASING,
     });
-  }, [alpha, scale, targetAlpha, isActive]);
+  }, [alpha, scale, targetAlpha, isActive, isSelectionMode]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: alpha.value,
@@ -332,8 +360,15 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
     <Reanimated.View style={animatedStyle} layout={LinearTransition.duration(240)}>
       <TouchableOpacity
         activeOpacity={0.7}
-        onPress={() => onSeek(line.time)}
-        style={[styles.lyricRow, alignEnd && styles.lyricRowEnd]}>
+        onPress={() => (isSelectionMode ? onToggleSelect() : onSeek(line.time))}
+        accessibilityRole={isSelectionMode ? 'checkbox' : 'button'}
+        accessibilityState={isSelectionMode ? { checked: isSelected } : undefined}
+        style={[
+          styles.lyricRow,
+          isSelectionMode && styles.lyricRowSelectable,
+          isSelected && styles.lyricRowSelected,
+          alignEnd && styles.lyricRowEnd,
+        ]}>
         <Text
           style={[
             styles.lyricText,
@@ -347,7 +382,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
         </Text>
 
         {/* Arka vokal (cevap vokali) ana satırın altından açılır. */}
-        {isActive && line.background ? (
+        {(isActive || isSelected) && line.background ? (
           <Reanimated.View
             entering={FadeInDown.duration(220)}
             style={[styles.lyricBackgroundWrap, alignEnd && styles.lyricBackgroundWrapEnd]}>
@@ -517,6 +552,10 @@ function LyricsPanel({
   theme,
   t,
   onManualSearch,
+  isShareSelecting,
+  selectedShareKeys,
+  onStartShareSelect,
+  onToggleShareLine,
 }: {
   isFullscreenPlayerOpen: boolean;
   isLyricsMode: boolean;
@@ -531,11 +570,20 @@ function LyricsPanel({
   theme: ThemeColors;
   t: (key: string, params?: Record<string, string | number>) => string;
   onManualSearch: () => void;
+  /** Söz paylaşımı için satır seçme modu (kontrol çubuğu üst bileşende). */
+  isShareSelecting: boolean;
+  selectedShareKeys: string[];
+  onStartShareSelect: (initialKeys: string[]) => void;
+  onToggleShareLine: (key: string) => void;
 }) {
   const isAppActive = useIsAppActive();
   const [isAutoScrollPaused, setIsAutoScrollPaused] = useState(false);
   const [isOffsetOpen, setIsOffsetOpen] = useState(false);
-  const [isShareOpen, setIsShareOpen] = useState(false);
+
+  const selectedShareSet = useMemo(
+    () => new Set(selectedShareKeys),
+    [selectedShareKeys]
+  );
 
   const progress = useActiveProgress(
     isFullscreenPlayerOpen && isLyricsMode && !isOffsetOpen
@@ -654,20 +702,9 @@ function LyricsPanel({
   }, [displayRows, lyricPosition]);
 
   /** Paylaşım kartı için satır listesi (boşluk işaretleri hariç). */
-  const shareLines = useMemo<LyricShareLine[]>(() => {
-    const list: LyricShareLine[] = [];
-    for (const row of displayRows) {
-      if (row.kind !== 'line') continue;
-      list.push({
-        key: row.key,
-        text: row.line.text,
-        background: row.line.background?.text,
-      });
-    }
-    return list;
-  }, [displayRows]);
+  const shareLines = useMemo(() => buildShareLines(parsedLines), [parsedLines]);
 
-  /** Panel açılırken çalan satır ve ardından gelen üç satır seçili gelir. */
+  /** Seçim moduna girerken çalan satır ve ardından gelen üç satır seçili gelir. */
   const shareInitialKeys = useMemo(() => {
     if (activeLineRowIndex < 0) return [];
     const keys: string[] = [];
@@ -751,6 +788,7 @@ function LyricsPanel({
       isFullscreenPlayerOpen &&
       isLyricsMode &&
       !isOffsetOpen &&
+      !isShareSelecting &&
       !isAutoScrollPaused &&
       scrollTargetIndex >= 0 &&
       displayRows.length > 0 &&
@@ -772,6 +810,7 @@ function LyricsPanel({
     isFullscreenPlayerOpen,
     isLyricsMode,
     isOffsetOpen,
+    isShareSelecting,
     isAutoScrollPaused,
     displayRows.length,
   ]);
@@ -790,6 +829,7 @@ function LyricsPanel({
       !isFullscreenPlayerOpen ||
       !isLyricsMode ||
       isOffsetOpen ||
+      isShareSelecting ||
       isAutoScrollPaused ||
       currentLyrics?.syncedLyrics ||
       !currentLyrics?.plainLyrics ||
@@ -845,6 +885,7 @@ function LyricsPanel({
     isFullscreenPlayerOpen,
     isLyricsMode,
     isOffsetOpen,
+    isShareSelecting,
     isAutoScrollPaused,
     currentLyrics?.syncedLyrics,
     currentLyrics?.plainLyrics,
@@ -919,7 +960,12 @@ function LyricsPanel({
             {getLyricsSourceLabel(currentLyrics, hasWordSync, t('player.lyrics'))}
           </Text>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <View
+          style={[
+            { flexDirection: 'row', alignItems: 'center', gap: 6 },
+            isShareSelecting && { opacity: 0.22 },
+          ]}
+          pointerEvents={isShareSelecting ? 'none' : 'auto'}>
           {hasLyricsContent && !isRemote && lyricsOffsetKey ? (
             <TouchableOpacity
               style={[styles.lyricsActionBtn, { backgroundColor: theme.surface }]}
@@ -970,7 +1016,7 @@ function LyricsPanel({
               activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityLabel={t('player.share_lyrics')}
-              onPress={() => setIsShareOpen(true)}
+              onPress={() => onStartShareSelect(shareInitialKeys)}
               hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
               <Ionicons name="share-outline" size={12} color={theme.primary} />
             </TouchableOpacity>
@@ -1048,12 +1094,15 @@ function LyricsPanel({
               <LyricLineRowView
                 line={item.line}
                 isActive={isActive}
+                isSelected={isShareSelecting && selectedShareSet.has(item.key)}
+                isSelectionMode={isShareSelecting}
                 distance={Math.abs(index - activeLineRowIndex)}
                 // Saat paylaşılan bir shared value'dur: satırlar yeniden
                 // çizilmeden harf renkleri UI thread'inde güncellenir.
                 clock={lyricClock}
                 theme={theme}
                 onSeek={seekToLyricTime}
+                onToggleSelect={() => onToggleShareLine(item.key)}
               />
             );
           }}
@@ -1195,19 +1244,6 @@ function LyricsPanel({
           </Pressable>
         </Pressable>
       </Modal>
-
-      <LyricShareModal
-        visible={isShareOpen}
-        onClose={() => setIsShareOpen(false)}
-        title={player.activeTrack?.title || ''}
-        artist={player.activeTrack?.artist || ''}
-        artworkUri={player.artworkUri ?? null}
-        sourceLabel={getLyricsSourceLabel(currentLyrics, hasWordSync, t('player.lyrics'))}
-        lines={shareLines}
-        initialKeys={shareInitialKeys}
-        theme={theme}
-        t={t}
-      />
     </>
   );
 }
@@ -1336,10 +1372,21 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     await remoteSyncManager.connectToHost(manualHost);
   }, [manualIp, manualPort]);
 
+  /**
+   * Geri tuşu dinleyicisi erken kurulur; paylaşım seçimi durumu ise daha sonra
+   * tanımlanır. Bu ref, dinleyicinin güncel iptal eylemine erişmesini sağlar.
+   */
+  const shareSelectCancelRef = useRef<(() => void) | null>(null);
+
   // Android hardware back button listener
   useEffect(() => {
     if (!isFullscreenPlayerOpen) return;
     const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Paylaşım seçimi sürüyorsa geri tuşu yalnızca seçimi iptal eder.
+      if (shareSelectCancelRef.current) {
+        shareSelectCancelRef.current();
+        return true;
+      }
       if (isConnectMode) {
         toggleConnectMode();
         return true;
@@ -1576,6 +1623,19 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const [resolvingCandidateId, setResolvingCandidateId] = useState<string | null>(null);
   const [candidateFilter, setCandidateFilter] = useState<CandidateFilter>('all');
   const [syncedOnly, setSyncedOnly] = useState(false);
+
+  /**
+   * Söz kartı paylaşımı.
+   *
+   * Seçim ayrı bir ekran yerine söz panelinin kendisinde yapılır: paylaş
+   * butonuna basınca panel satır seçme moduna geçer, alttaki oynatma kontrolleri
+   * yerini Vazgeç/Tamam çubuğuna bırakır. "Tamam" seçilen satırların kart
+   * önizlemesini açar.
+   */
+  const [isShareSelecting, setIsShareSelecting] = useState(false);
+  const [selectedShareKeys, setSelectedShareKeys] = useState<string[]>([]);
+  const [isSharePreviewOpen, setIsSharePreviewOpen] = useState(false);
+  const [shareLimitHit, setShareLimitHit] = useState(false);
 
   /**
    * Sağlayıcı sayısı arttıkça düz liste okunamıyor: sonuçlar sağlayıcıya göre
@@ -2671,6 +2731,72 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       currentLyrics.ttml
     );
   }, [currentLyrics]);
+
+  /** Paylaşım kartına girebilecek satırlar (paneldeki sırayla). */
+  const shareLines = useMemo(() => buildShareLines(parsedLines), [parsedLines]);
+
+  /** Seçilen anahtarlar kart sırasına göre çözülür. */
+  const selectedShareLines = useMemo(() => {
+    if (selectedShareKeys.length === 0) return [];
+    const set = new Set(selectedShareKeys);
+    return shareLines.filter((line) => set.has(line.key));
+  }, [shareLines, selectedShareKeys]);
+
+  const startShareSelect = (initialKeys: string[]) => {
+    setShareLimitHit(false);
+    // Kart boş açılmasın: paneldeki sıraya göre ilk `MAX_SHARE_LINES` anahtar.
+    const ordered = new Set(initialKeys);
+    const keys = shareLines
+      .filter((line) => ordered.has(line.key))
+      .slice(0, MAX_SHARE_LINES)
+      .map((line) => line.key);
+    setSelectedShareKeys(keys.length > 0 ? keys : shareLines.slice(0, 1).map((l) => l.key));
+    setIsShareSelecting(true);
+  };
+
+  const toggleShareLine = (key: string) => {
+    if (selectedShareKeys.includes(key)) {
+      setShareLimitHit(false);
+      setSelectedShareKeys(selectedShareKeys.filter((item) => item !== key));
+      return;
+    }
+    if (selectedShareKeys.length >= MAX_SHARE_LINES) {
+      setShareLimitHit(true);
+      return;
+    }
+    setShareLimitHit(false);
+    setSelectedShareKeys([...selectedShareKeys, key]);
+  };
+
+  const cancelShareSelect = () => {
+    setIsShareSelecting(false);
+    setSelectedShareKeys([]);
+    setShareLimitHit(false);
+  };
+
+  // Geri tuşu dinleyicisi için güncel iptal eylemi (yalnızca seçim modunda).
+  useEffect(() => {
+    shareSelectCancelRef.current = isShareSelecting
+      ? () => {
+          setIsShareSelecting(false);
+          setSelectedShareKeys([]);
+          setShareLimitHit(false);
+        }
+      : null;
+  }, [isShareSelecting]);
+
+  const openSharePreview = () => {
+    if (selectedShareKeys.length === 0) return;
+    setIsSharePreviewOpen(true);
+  };
+
+  // Şarkı değişirse yarım kalan seçim paylaşım kartına taşınmasın.
+  useEffect(() => {
+    setIsShareSelecting(false);
+    setIsSharePreviewOpen(false);
+    setSelectedShareKeys([]);
+    setShareLimitHit(false);
+  }, [activeTrack?.id]);
 
   const remoteLyrics = player.lyrics;
   const remoteLrclibId = remoteLyrics?.lrclibId;
@@ -3802,6 +3928,10 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
               theme={theme}
               t={t}
               onManualSearch={toggleManualSearch}
+              isShareSelecting={isShareSelecting}
+              selectedShareKeys={selectedShareKeys}
+              onStartShareSelect={startShareSelect}
+              onToggleShareLine={toggleShareLine}
             />
           </Animated.View>
 
@@ -4672,12 +4802,53 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
             </View>
           </Animated.View>
 
-          {/* İlerleme Çubuğu (Apple Music Scrubber) */}
-          <PlayerScrubber
-            active={isFullscreenPlayerOpen}
-            player={player}
-            theme={theme}
-          />
+          {isShareSelecting ? (
+            <View style={styles.shareSelectBar}>
+              <View style={styles.shareSelectInfo}>
+                <Text numberOfLines={2} style={styles.shareSelectTitle}>
+                  {t('player.share_lyrics_hint')}
+                </Text>
+                <Text style={[styles.shareSelectCount, { color: theme.primary }]}>
+                  {selectedShareKeys.length}/{MAX_SHARE_LINES}
+                </Text>
+              </View>
+              {shareLimitHit ? (
+                <Text style={styles.shareSelectLimit}>
+                  {t('player.share_lyrics_limit', { count: MAX_SHARE_LINES })}
+                </Text>
+              ) : null}
+              <View style={styles.shareSelectActions}>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={cancelShareSelect}
+                  style={styles.shareSelectCancel}>
+                  <Text style={styles.shareSelectCancelText}>
+                    {t('player.share_select_cancel')}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  disabled={selectedShareKeys.length === 0}
+                  onPress={openSharePreview}
+                  style={[
+                    styles.shareSelectDone,
+                    { backgroundColor: theme.primary },
+                    selectedShareKeys.length === 0 && styles.shareSelectDoneDisabled,
+                  ]}>
+                  <Text style={styles.shareSelectDoneText}>
+                    {t('player.share_select_done')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <>
+              {/* İlerleme Çubuğu (Apple Music Scrubber) */}
+              <PlayerScrubber
+                active={isFullscreenPlayerOpen}
+                player={player}
+                theme={theme}
+              />
 
           {/* Oynatma Kontrolleri (Apple Music Minimalist Glyphs) */}
           <View style={styles.controlsRow}>
@@ -4842,6 +5013,8 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
               />
             </TouchableOpacity>
           </View>
+            </>
+          )}
         </Animated.View>
 
         {/* Manuel Söz Arama Modalı */}
@@ -5180,6 +5353,23 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
           onClose={() => setIsEditTrackModalOpen(false)}
         />
 
+        {/* Seçilen sözlerin paylaşım kartı önizlemesi */}
+        <LyricSharePreviewModal
+          visible={isSharePreviewOpen}
+          onClose={() => setIsSharePreviewOpen(false)}
+          title={player.activeTrack?.title || displayTitle || ''}
+          artist={player.activeTrack?.artist || displayArtist || ''}
+          artworkUri={player.artworkUri ?? currentArtworkUri ?? null}
+          sourceLabel={getLyricsSourceLabel(
+            currentLyrics,
+            parsedLines.some((line) => !!line.words && line.words.length > 0),
+            t('player.lyrics')
+          )}
+          lines={selectedShareLines}
+          theme={theme}
+          t={t}
+        />
+
         {/* Dinamik Renk Keşif Kartı (Snackbar) */}
         {!isDynamicColorUnlocked && !isDevModeActive && !hasDismissedDynamicColorBanner && !isLyricsMode && !isQueueMode && !isSleepTimerMode && !isConnectMode && (
           <View
@@ -5486,8 +5676,84 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: '100%',
   },
+  /**
+   * Seçim modunda satırlar hafifçe içeri alınır; seçili satırın arkasına
+   * yarı saydam gri bir zemin konur (tamamen opak değil, sözler hâlâ görünür).
+   */
+  lyricRowSelectable: {
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    borderRadius: 12,
+    marginVertical: 1,
+  },
+  lyricRowSelected: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
   lyricRowEnd: {
     alignItems: 'flex-end',
+  },
+  shareSelectBar: {
+    paddingTop: 14,
+    paddingBottom: 4,
+  },
+  shareSelectInfo: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  shareSelectTitle: {
+    flex: 1,
+    color: 'rgba(255, 255, 255, 0.66)',
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  shareSelectCount: {
+    fontSize: 13,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  shareSelectLimit: {
+    color: '#fca5a5',
+    fontSize: 11.5,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  shareSelectActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  shareSelectCancel: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    paddingVertical: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  shareSelectCancelText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  shareSelectDone: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    paddingVertical: 14,
+  },
+  shareSelectDoneDisabled: {
+    opacity: 0.4,
+  },
+  shareSelectDoneText: {
+    color: '#0b0b0e',
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   lyricText: {
     color: 'rgba(255, 255, 255, 0.5)',
