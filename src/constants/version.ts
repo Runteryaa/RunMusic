@@ -10,7 +10,7 @@ import * as Updates from 'expo-updates';
  * Falls back to the app config version for local development builds.
  */
 export const APP_VERSION =
-  process.env.EXPO_PUBLIC_APP_VERSION || Constants.expoConfig?.version || '1.1.0';
+  process.env.EXPO_PUBLIC_APP_VERSION || Constants.expoConfig?.version || '1.2.0';
 
 /** Version of the installed native binary (APK/IPA). Does not change on OTA. */
 export const NATIVE_APP_VERSION = Application.nativeApplicationVersion ?? null;

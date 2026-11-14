@@ -35,9 +35,11 @@ jobs:
         shell: pwsh
         run: |
           # Windows releases use the Windows workflow's run number:
-          # version = 1.1.<run number>, tag = win-v1.1.<run number>.
+          # version = <package.json major.minor>.<run number>, tag = win-v<version>.
+          $base = (node -p "require('./package.json').version").Trim()
+          $minorBase = $base.Substring(0, $base.LastIndexOf('.'))
           $build = [int](git rev-list --count HEAD)
-          $version = "1.1.$($env:GITHUB_RUN_NUMBER)"
+          $version = "$minorBase.$($env:GITHUB_RUN_NUMBER)"
           node scripts/version.mjs apply $version --build $build
           node scripts/version.mjs check
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8

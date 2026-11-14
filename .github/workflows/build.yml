@@ -50,7 +50,13 @@ jobs:
           else
             SUFFIX=""
           fi
-          VERSION="1.1.${GITHUB_RUN_NUMBER}"
+          # Surumun major.minor kismi package.json'daki taban surumden gelir
+          # (ornek 1.2.0 -> 1.2), patch ise workflow run numarasidir.
+          # Boylece minor/major surum atlarken yalnizca package.json tabani
+          # guncellenir; workflow dosyasina dokunmak gerekmez.
+          BASE_VERSION=$(node -p "require('./package.json').version")
+          MINOR_BASE="${BASE_VERSION%.*}"
+          VERSION="${MINOR_BASE}.${GITHUB_RUN_NUMBER}"
           BUILD=$(git rev-list --count HEAD)
           node scripts/version.mjs apply "$VERSION" --build "$BUILD"
           TAG="v${VERSION}${SUFFIX}"

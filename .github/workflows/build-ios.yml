@@ -31,7 +31,9 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --tags --force || true
-          LATEST_TAG=$(git tag -l 'v1.1.*' --sort=-v:refname | head -n 1 || true)
+          # Patch numarasi workflow calistirmasina gore artar; en son yayinlanan
+          # mobil surum etiketinden okunur (surum ailesi degisse de calisir).
+          LATEST_TAG=$(git tag -l 'v[0-9]*.[0-9]*.*' --sort=-v:refname | head -n 1 || true)
           if [ -n "$LATEST_TAG" ]; then
             VERSION="${LATEST_TAG#v}"
           else

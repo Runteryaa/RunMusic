@@ -67,7 +67,7 @@ node .tmp-verify/scripts/verify-persist-migration.js
 
 ## Versioning & releases
 
-One version for the whole ecosystem. **You do not bump version files in git.** `package.json` / `app.json` keep the `1.1.0` baseline; the release workflow sets `version = 1.1.<workflow run number>` and `buildNumber = git commit count` in the workspace before building. Use `npm run version:sync` / `npm run version:check` only when changing the baseline or debugging. `runtimeVersion` is intentionally decoupled from the app version (`"1.1"`): bump it only when native code changes, otherwise OTA updates stop reaching installed APKs. The Android workflow publishes the OTA before the Gradle/NDK setup so updates can be tested quickly. Full details: `docs/RELEASE.md`.
+One version for the whole ecosystem. **You do not bump version files on every release.** `package.json` holds the baseline (`1.2.0`); the release workflow keeps its `major.minor` and sets `version = <major.minor>.<workflow run number>` plus `buildNumber = git commit count` in the workspace before building. To move to a new minor/major line, bump the baseline once (`npm run version:bump -- minor`) and commit it; use `npm run version:sync` / `npm run version:check` only when changing the baseline or debugging. `runtimeVersion` is intentionally decoupled from the app version (currently `"1.2"`): bump it only when native code changes, otherwise OTA updates stop reaching installed APKs. The Android workflow publishes the OTA before the Gradle/NDK setup so updates can be tested quickly. Full details: `docs/RELEASE.md`.
 
 ## Rules
 
