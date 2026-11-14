@@ -25,6 +25,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const FILES = {
   package: path.join(ROOT, 'package.json'),
+  packageLock: path.join(ROOT, 'package-lock.json'),
   app: path.join(ROOT, 'app.json'),
   cargo: path.join(ROOT, 'desktop', 'runmusic-win', 'Cargo.toml'),
   lock: path.join(ROOT, 'desktop', 'Cargo.lock'),
@@ -95,6 +96,21 @@ function installerWithVersion(text, version) {
   return text.replace(pattern, `$1${version}$2`);
 }
 
+/**
+ * `package-lock.json` kök sürümünü eşitler.
+ *
+ * `npm install --package-lock-only` yerine doğrudan JSON düzenliyoruz: npm bu
+ * komutta lock dosyasını yeniden çözümleyip ilgisiz peer girdilerini siliyor,
+ * oysa burada tek ihtiyaç kök `version` alanları.
+ */
+function writePackageLockVersion(version) {
+  if (!fs.existsSync(FILES.packageLock)) return;
+  const lock = readJson(FILES.packageLock);
+  lock.version = version;
+  if (lock.packages?.['']) lock.packages[''].version = version;
+  writeJson(FILES.packageLock, lock);
+}
+
 function buildTargets(version, build) {
   const pkg = readJson(FILES.package);
   const app = readJson(FILES.app);
@@ -121,6 +137,7 @@ function writeTargets(targets) {
   writeText(FILES.cargo, targets.cargo);
   writeText(FILES.lock, targets.lock);
   writeText(FILES.installer, targets.installer);
+  writePackageLockVersion(targets.package.version);
 }
 
 function currentVersion() {
@@ -182,6 +199,13 @@ function check({ quiet = false } = {}) {
   const installerMatch = /#define MyAppVersion "([^"]*)"/.exec(installer);
   if (!installerMatch || installerMatch[1] !== version) {
     problems.push(`installer.iss MyAppVersion = ${installerMatch?.[1]}, beklenen ${version}`);
+  }
+
+  if (fs.existsSync(FILES.packageLock)) {
+    const packageLock = readJson(FILES.packageLock);
+    if (packageLock.version !== version) {
+      problems.push(`package-lock.json version = ${packageLock.version}, beklenen ${version}`);
+    }
   }
 
   if (problems.length > 0) {
