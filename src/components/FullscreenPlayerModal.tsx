@@ -97,7 +97,9 @@ import Reanimated, {
   Easing,
   FadeInDown,
   LinearTransition,
+  interpolateColor,
   useAnimatedStyle,
+  useFrameCallback,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
@@ -176,8 +178,13 @@ const LYRIC_FALLOFF_ALPHA = [1, 0.74, 0.6, 0.48, 0.4, 0.34];
 const LYRIC_EASING = Easing.bezier(0.41, 0, 0.12, 0.99);
 const GAP_DOT_REST_ALPHA = 0.25;
 const GAP_ROW_HEIGHT = 48;
-/** Henüz söylenmemiş kelimenin parlaklığı (aktif satır içinde). */
-const WORD_DIM_OPACITY = 0.3;
+/** Aktif satırda henüz söylenmemiş harfin rengi. */
+const SWEEP_DIM_COLOR = 'rgba(255, 255, 255, 0.38)';
+/** Aktif satırda söylenmiş harfin rengi. */
+const SWEEP_LIT_COLOR = '#ffffff';
+/** Arka vokal satırı için aynı çiftin daha sönük hali. */
+const SWEEP_BG_DIM_COLOR = 'rgba(255, 255, 255, 0.26)';
+const SWEEP_BG_LIT_COLOR = 'rgba(255, 255, 255, 0.78)';
 
 function getLyricsSourceLabel(
   lyrics: LyricsResult | null,
@@ -204,28 +211,38 @@ function getLyricsSourceLabel(
 }
 
 /**
- * Tek kelime/hece. Satırın kendi saatiyle soldan sağa değil, kelimenin kendi
- * süresi boyunca aydınlanır: Apple Music'teki gibi söylendikçe parlar.
+ * Tek harf. Söylendikçe sönük renkten parlak renge geçer.
  *
- * `clock` satır içinde 60 fps'e yumuşatılmış ortak bir saattir; böylece 4 Hz'lik
- * oynatma konumu güncellemeleri kelime geçişlerini sıçratmaz.
+ * Apple Music satırın tamamını değil, kelimeyi (ve mümkünse harfi) okunduğu
+ * anda aydınlatır. Renk animasyonu bilinçli olarak `color` üzerinden yapılıyor:
+ * React Native'de iç içe `<Text>` parçalarında `opacity` Android'de uygulanmıyor,
+ * bu yüzden opaklıkla yapılan süpürme satırın tamamı bir anda parlıyordu.
+ *
+ * `clock` satırın 60 fps'e yumuşatılmış ortak saatidir; 4 Hz'lik oynatma
+ * konumu güncellemeleri harf geçişlerini sıçratmaz.
  */
-function TimedWord({
+function SweepChar({
   clock,
   start,
   end,
   text,
+  dimColor,
+  litColor,
 }: {
   clock: { value: number };
   start: number;
   end: number;
   text: string;
+  dimColor: string;
+  litColor: string;
 }) {
   const animatedStyle = useAnimatedStyle(() => {
-    const span = Math.max(0.08, end - start);
-    // Kelimenin ilk %70'inde tam parlaklığa ulaşır; kalan süre okunaklı kalır.
-    const progress = Math.max(0, Math.min(1, (clock.value - start) / (span * 0.7)));
-    return { opacity: WORD_DIM_OPACITY + (1 - WORD_DIM_OPACITY) * progress };
+    // Değeri aralığa kıstırıyoruz; interpolateColor ekstrapolasyonla renk
+    // üretmesin (kırmızıya kayan bozuk tonlar).
+    const clamped = Math.min(Math.max(clock.value, start), end);
+    return {
+      color: interpolateColor(clamped, [start, end], [dimColor, litColor]),
+    };
   });
   return <Reanimated.Text style={animatedStyle}>{text}</Reanimated.Text>;
 }
@@ -235,14 +252,14 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
   line,
   isActive,
   distance,
-  position,
+  clock,
   theme,
   onSeek,
 }: {
   line: LyricLine;
   isActive: boolean;
   distance: number;
-  position: number;
+  clock: { value: number };
   theme: ThemeColors;
   onSeek: (time: number) => void;
 }) {
@@ -263,29 +280,6 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
     });
   }, [alpha, scale, targetAlpha, isActive]);
 
-  /**
-   * Oynatma konumu 4 Hz gelir; kelime geçişleri bu yüzden sıçrar. Satıra özel
-   * bu saat, bir sonraki güncellemeye kadar gerçek zamanlı ilerler ve hece
-   * aydınlanmasını akıcı hale getirir.
-   */
-  const clock = useSharedValue(position);
-  const wasActiveRef = useRef(isActive);
-  useEffect(() => {
-    const becameActive = isActive && !wasActiveRef.current;
-    wasActiveRef.current = isActive;
-    const step = position - clock.value;
-    // Satır yeni aktifleştiyse, geri sarıldıysa veya şarkı değiştiyse sıçramak
-    // yerine doğrudan gerçek konuma otur.
-    if (becameActive || step < 0 || step > 2) {
-      clock.value = position;
-      return;
-    }
-    clock.value = withTiming(position, {
-      duration: Math.max(120, Math.min(420, step * 1000)),
-      easing: Easing.linear,
-    });
-  }, [position, isActive, clock]);
-
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: alpha.value,
     transform: [{ scale: scale.value }],
@@ -295,23 +289,43 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
   const words = isActive ? line.words : undefined;
   const backgroundWords = isActive ? line.background?.words : undefined;
 
+  /**
+   * Kelimeleri harf harf çizer: her harf, kendi dilimine denk gelen anda sönük
+   * renkten parlağa geçer. Böylece süpürme satırın tamamında değil, okunduğu
+   * hızda ilerler (Apple Music'teki etki).
+   */
   const renderWords = (
     list: NonNullable<LyricLine['words']>,
-    keyPrefix: string
+    keyPrefix: string,
+    dimColor: string,
+    litColor: string
   ) =>
-    list.map((word, index) => {
-      const next = list[index + 1];
+    list.map((word, wordIndex) => {
+      const next = list[wordIndex + 1];
       const needsSpace = !word.text.endsWith(' ') && (!next || !next.text.startsWith(' '));
-      const end = word.endTime ?? next?.time ?? word.time + 0.4;
-      return (
-        <TimedWord
-          key={`${keyPrefix}-${index}`}
-          clock={clock}
-          start={word.time}
-          end={end}
-          text={needsSpace ? `${word.text} ` : word.text}
-        />
-      );
+      const wordText = needsSpace ? `${word.text} ` : word.text;
+      const wordStart = word.time;
+      const wordEnd =
+        word.endTime ?? next?.time ?? word.time + Math.max(0.35, wordText.length * 0.06);
+      const span = Math.max(0.08, wordEnd - wordStart);
+      const chars = Array.from(wordText);
+      return chars.map((char, charIndex) => {
+        const charStart = wordStart + (charIndex / chars.length) * span;
+        const charEnd = Math.max(charStart + 0.02, charStart + span / chars.length);
+        const key = `${keyPrefix}-${wordIndex}-${charIndex}`;
+        if (!char.trim()) return char;
+        return (
+          <SweepChar
+            key={key}
+            clock={clock}
+            start={charStart}
+            end={charEnd}
+            text={char}
+            dimColor={dimColor}
+            litColor={litColor}
+          />
+        );
+      });
     });
 
   return (
@@ -327,7 +341,9 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
             isActive && { textShadowColor: theme.glowColor },
             alignEnd && styles.lyricTextEnd,
           ]}>
-          {words && words.length > 0 ? renderWords(words, 'word') : line.text}
+          {words && words.length > 0
+            ? renderWords(words, 'word', SWEEP_DIM_COLOR, SWEEP_LIT_COLOR)
+            : line.text}
         </Text>
 
         {/* Arka vokal (cevap vokali) ana satırın altından açılır. */}
@@ -338,7 +354,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
             <Text
               style={[styles.lyricBackgroundText, alignEnd && styles.lyricTextEnd]}>
               {backgroundWords && backgroundWords.length > 0
-                ? renderWords(backgroundWords, 'bg')
+                ? renderWords(backgroundWords, 'bg', SWEEP_BG_DIM_COLOR, SWEEP_BG_LIT_COLOR)
                 : line.background.text}
             </Text>
           </Reanimated.View>
@@ -573,6 +589,50 @@ function LyricsPanel({
   // Ofset, söz zaman çizelgesini kaydırır. Pozitif değer sözleri geciktirir,
   // bu yüzden karşılaştırmada ses konumundan ofset çıkarılır.
   const lyricPosition = progress.position - appliedLyricsOffset;
+
+  /**
+   * Hece süpürmesinin saati.
+   *
+   * `useActiveProgress` saniyede 4 kez güncellenir; o değeri doğrudan
+   * kullansaydık harf aydınlanması 250 ms'lik adımlarla sıçrardı. Bu saat her
+   * karede (60 fps) kendiliğinden ilerler ve gerçek konuma yumuşakça yakınsar,
+   * böylece süpürme Apple Music'teki gibi akıcı ve gecikmesiz olur. Panel
+   * başına tek saat vardır; satır başına ayrı sayaç açmak gereksiz maliyet.
+   */
+  const lyricClock = useSharedValue(lyricPosition);
+  const lyricClockTarget = useSharedValue(lyricPosition);
+  const lyricClockPlaying = useSharedValue(player.isPlaying);
+
+  useEffect(() => {
+    lyricClockTarget.value = lyricPosition;
+  }, [lyricClockTarget, lyricPosition]);
+
+  useEffect(() => {
+    lyricClockPlaying.value = player.isPlaying;
+  }, [lyricClockPlaying, player.isPlaying]);
+
+  const advanceLyricClock = (frame: { timeSincePreviousFrame: number | null }) => {
+    'worklet';
+    const target = lyricClockTarget.value;
+    if (!lyricClockPlaying.value) {
+      lyricClock.value = target;
+      return;
+    }
+    const dt = Math.min(0.1, (frame.timeSincePreviousFrame ?? 16.7) / 1000);
+    const drift = target - lyricClock.value;
+    // Geri sarma, şarkı değişimi veya büyük atlama: sıçramak yerine otur.
+    if (Math.abs(drift) > 0.75) {
+      lyricClock.value = target;
+      return;
+    }
+    // Her karede gerçek zaman kadar ilerle, sapmayı da yumuşakça kapat.
+    lyricClock.value += dt + drift * Math.min(1, dt * 8);
+  };
+
+  useFrameCallback(
+    advanceLyricClock,
+    isAppActive && isFullscreenPlayerOpen && isLyricsMode
+  );
 
   // Görüntülenecek satırlar: enstrümantal aralar + parantezden ayrılan arka
   // vokaller. `parsedLines` saf kalır (önbellek ve uzaktan senkron bozulmasın).
@@ -989,9 +1049,9 @@ function LyricsPanel({
                 line={item.line}
                 isActive={isActive}
                 distance={Math.abs(index - activeLineRowIndex)}
-                // Konum yalnızca aktif satıra geçer: diğer satırların prop'ları
-                // sabit kalır ve `React.memo` onları yeniden çizmez.
-                position={isActive ? lyricPosition : 0}
+                // Saat paylaşılan bir shared value'dur: satırlar yeniden
+                // çizilmeden harf renkleri UI thread'inde güncellenir.
+                clock={lyricClock}
                 theme={theme}
                 onSeek={seekToLyricTime}
               />
