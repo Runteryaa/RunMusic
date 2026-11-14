@@ -97,10 +97,10 @@ import { UpNextRow, type UpNextItem } from './QueueUpNextList';
 import { Swipeable } from 'react-native-gesture-handler';
 import Reanimated, {
   Easing,
-  FadeInDown,
   LinearTransition,
   interpolateColor,
   useAnimatedStyle,
+  useFrameCallback,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
@@ -168,7 +168,13 @@ function formatTime(secs: number): string {
 /** Satırların yeni aktif satıra geçiş süresi (BitChord: LYRIC_SETTLE_MS). */
 const LYRIC_SETTLE_MS = 400;
 /** Kaydırma, satır gelmeden bu kadar önce başlar. */
-const LYRIC_SCROLL_LEAD_SECONDS = 0.5;
+const LYRIC_SCROLL_LEAD_SECONDS = 0.8;
+/**
+ * Satır geçişi, konum örneklerinin 250 ms'lik aralığından dolayı en fazla çeyrek
+ * saniye gecikebiliyordu; bu da yeni satırın ilk hecelerinin bir anda yanmasına
+ * yol açıyordu. Küçük bir ön alma ile satır tam zamanında geçer.
+ */
+const LYRIC_LINE_LEAD_SECONDS = 0.12;
 /** Aktif satırın dikey konumu; Apple Music'te satır üstte üçte birlik bölgede durur. */
 const LYRIC_ACTIVE_VIEW_POSITION = 0.32;
 /**
@@ -190,10 +196,16 @@ const SWEEP_BG_LIT_COLOR = 'rgba(255, 255, 255, 0.78)';
  * Senkron sözlerin tipografisi. Düz metin sözlerin (`plainLyricsText`) ölçüleri
  * bilinçli olarak ayrı tutulur; burada yalnızca zaman damgalı satırlar büyür.
  */
-const LYRIC_FONT_INACTIVE = 23;
-const LYRIC_LINE_HEIGHT_INACTIVE = 33;
-const LYRIC_FONT_ACTIVE = 28;
-const LYRIC_LINE_HEIGHT_ACTIVE = 39;
+const LYRIC_FONT_INACTIVE = 25;
+const LYRIC_LINE_HEIGHT_INACTIVE = 34;
+/**
+ * Aktif satır da aynı ölçüyü kullanır. Önceki sürümde aktif satır büyüyordu;
+ * bu, satır yüksekliğini aniden değiştirip kaydırmayı sıçratıyordu. Vurgu artık
+ * parlaklık, gölge ve ölçekle yapılıyor — düzen sabit kaldığı için geçişler
+ * tamamen yumuşak akıyor.
+ */
+const LYRIC_FONT_ACTIVE = 25;
+const LYRIC_LINE_HEIGHT_ACTIVE = 34;
 /** Kelimeler arası boşluk (satır içi düzen kelime kelime kurulduğu için elle). */
 const LYRIC_WORD_GAP = 7;
 const LYRIC_BG_FONT = 16;
@@ -239,6 +251,7 @@ function buildShareLines(lines: LyricLine[]): LyricShareLine[] {
       key: row.key,
       text: row.line.text,
       background: row.line.background?.text,
+      align: row.line.alignment === 'end' ? 'end' : 'start',
     });
   }
   return list;
@@ -318,71 +331,227 @@ function prepareSweepWords(list: NonNullable<LyricLine['words']>): SweepWordItem
 }
 
 /**
- * Satır sonundaki tek kelime yalnız başına alt satıra düşmesin diye son iki
- * kelime aynı gruba alınır; grup içinde satır kırılmaz.
+ * Satırları dengeli böler: kelimeler kırılmaz, satırlar mümkün olduğunca eşit
+ * uzunlukta olur ve son satırda tek kelime yalnız bırakılmaz.
+ *
+ * `widths` ölçülen gerçek kelime genişlikleridir; bu yüzden bölme tahmine değil
+ * gerçek düzene dayanır. Önce sığdırılabilen en az satır sayısı bulunur, sonra
+ * o satır sayısıyla satır doluluklarının varyansı en aza indirilir.
  */
-function groupWordsForWrapping(words: SweepWordItem[]): SweepWordItem[][] {
-  if (words.length < 3) return [words];
-  return [...words.slice(0, -2).map((word) => [word]), words.slice(-2)];
+function balancedLineBreaks(
+  widths: number[],
+  gap: number,
+  maxWidth: number
+): number[] {
+  const n = widths.length;
+  if (n === 0 || maxWidth <= 0) return [];
+
+  const spanWidth = (from: number, to: number) => {
+    let total = 0;
+    for (let i = from; i < to; i++) total += widths[i];
+    return total + gap * Math.max(0, to - from - 1);
+  };
+
+  // 1) Sığdırılabilen en az satır sayısı (açgözlü).
+  let minLines = 1;
+  let current = 0;
+  for (let i = 0; i < n; i++) {
+    const candidate = current === 0 ? widths[i] : current + gap + widths[i];
+    if (candidate <= maxWidth) {
+      current = candidate;
+    } else {
+      minLines += 1;
+      current = widths[i];
+    }
+  }
+  const lineCount = Math.min(minLines, n);
+
+  // 2) Sabit satır sayısıyla en dengeli bölünme (dinamik programlama).
+  const INF = Number.POSITIVE_INFINITY;
+  const cost: number[][] = Array.from({ length: lineCount + 1 }, () =>
+    new Array<number>(n + 1).fill(INF)
+  );
+  const prev: number[][] = Array.from({ length: lineCount + 1 }, () =>
+    new Array<number>(n + 1).fill(-1)
+  );
+  cost[0][0] = 0;
+  for (let line = 1; line <= lineCount; line++) {
+    for (let end = 1; end <= n; end++) {
+      for (let start = 0; start < end; start++) {
+        if (cost[line - 1][start] === INF) continue;
+        const width = spanWidth(start, end);
+        if (width > maxWidth) continue;
+        const slack = maxWidth - width;
+        // Son satırda tek kelime kalması ("dul kelime") istenmez: ağır ceza.
+        const widow = line === lineCount && end === n && end - start === 1;
+        const lineCost = slack * slack + (widow ? maxWidth * maxWidth * 4 : 0);
+        const total = cost[line - 1][start] + lineCost;
+        if (total < cost[line][end]) {
+          cost[line][end] = total;
+          prev[line][end] = start;
+        }
+      }
+    }
+  }
+
+  if (cost[lineCount][n] === INF) return [];
+
+  // Geri izleme.
+  const breaks: number[] = [];
+  let end = n;
+  for (let line = lineCount; line >= 1; line--) {
+    const start = prev[line][end];
+    if (start < 0) break;
+    breaks.unshift(start);
+    end = start;
+  }
+  return breaks;
 }
 
 /**
- * Bir söz satırını kelime kelime, her kelimeyi de harf harf çizer.
+ * Bir söz satırını kelimelere ve dengeli satırlara böler.
  *
- * Satır tek bir `<Text>` değil, `flexWrap` bir satır: kelimeler kendi
- * sarmalayıcılarında, harfler ayrı `<Text>`'lerde durur. Böylece hem harf
- * bazlı renk geçişi çalışır hem de satırlar kelime sınırında sarar.
+ * Kelimeler kendi ölçülen genişlikleriyle satırlara dengeli dağıtılır: satır tek
+ * bir `<Text>` olsaydı tarayıcı açgözlü bölme yapıp son satırda tek kelime
+ * bırakırdı. Burada önce kelimeler ölçülür, sonra satırlar eşit doluluğa göre
+ * kurulur. Ölçüm tamamlanana kadar doğal (flexWrap) düzen gösterilir.
+ *
+ * Aktif ve pasif satır AYNI bileşenle, aynı bölünmüş satır yapısıyla çizilir;
+ * yalnızca kelimelerin içi değişir. Düzen birebir aynı kaldığı için satır aktif
+ * olduğu anda yüksekliği değişmez ve liste sıçramaz. Pasif satırlarda her kelime
+ * tek bir `<Text>` (harf düğümü yok), aktif satırda harfler ayrı düğümlerdir.
  */
-function SweepWords({
+function LyricWords({
   words,
   clock,
-  dimColor,
-  litColor,
-  textStyle,
+  isActive,
   gap,
   alignEnd,
+  dimColor,
+  litColor,
+  activeTextStyle,
+  idleTextStyle,
 }: {
   words: NonNullable<LyricLine['words']>;
   clock: { value: number };
-  dimColor: string;
-  litColor: string;
-  textStyle: StyleProp<TextStyle>;
+  isActive: boolean;
   gap: number;
   alignEnd: boolean;
+  dimColor: string;
+  litColor: string;
+  activeTextStyle: StyleProp<TextStyle>;
+  idleTextStyle: StyleProp<TextStyle>;
 }) {
-  const items = prepareSweepWords(words);
-  const groups = groupWordsForWrapping(items);
-  return (
-    <View style={[styles.lyricWordRow, { gap }, alignEnd && styles.lyricWordRowEnd]}>
-      {groups.map((group) => (
-        <View key={`group-${group[0].key}`} style={[styles.lyricWordGroup, { gap }]}>
-          {group.map((word) => {
-            const chars = Array.from(word.text);
-            const span = Math.max(0.08, word.end - word.start);
+  const items = useMemo(() => prepareSweepWords(words), [words]);
+  const signature = useMemo(
+    () => `${items.length}:${items.map((word) => word.text).join('\u0001')}`,
+    [items]
+  );
+
+  const [rowWidth, setRowWidth] = useState(0);
+  const widthsRef = useRef<Record<string, number>>({});
+  const [breakInfo, setBreakInfo] = useState<{ key: string; breaks: number[] } | null>(
+    null
+  );
+
+  const layoutKey = `${signature}#${Math.round(rowWidth)}`;
+  const breaks = breakInfo && breakInfo.key === layoutKey ? breakInfo.breaks : null;
+
+  /**
+   * Ölçümler tamamlandığında bölünmeyi bir kez hesapla. `onLayout` her düzen
+   * geçişinde yeniden tetiklendiği için aynı anahtar tekrar hesaplanmaz.
+   */
+  const recordWidth = (key: string, width: number) => {
+    const rounded = Math.round(width * 2) / 2;
+    if (widthsRef.current[key] === rounded) return;
+    widthsRef.current[key] = rounded;
+
+    if (rowWidth <= 0) return;
+    const widths = items.map((word) => widthsRef.current[word.key]);
+    if (widths.some((value) => typeof value !== 'number')) return;
+
+    // 2 px güvenlik payı: aktif satırda harfler ayrı düğüm olduğu için ölçülen
+    // kelime genişliği bir tık büyüyebilir.
+    const nextBreaks = balancedLineBreaks(widths as number[], gap, Math.max(0, rowWidth - 2));
+    if (nextBreaks.length === 0) return;
+    setBreakInfo((previous) =>
+      previous && previous.key === layoutKey ? previous : { key: layoutKey, breaks: nextBreaks }
+    );
+  };
+
+  const renderWord = (word: SweepWordItem) => {
+    const chars = Array.from(word.text);
+    const span = Math.max(0.08, word.end - word.start);
+    return (
+      <View
+        key={`word-${word.key}`}
+        style={styles.lyricWord}
+        onLayout={(event) => recordWidth(word.key, event.nativeEvent.layout.width)}>
+        {isActive ? (
+          chars.map((char, charIndex) => {
+            const charStart = word.start + (charIndex / chars.length) * span;
+            const charEnd = Math.max(charStart + 0.02, charStart + span / chars.length);
             return (
-              <View key={`word-${word.key}`} style={styles.lyricWord}>
-                {chars.map((char, charIndex) => {
-                  const charStart = word.start + (charIndex / chars.length) * span;
-                  const charEnd = Math.max(
-                    charStart + 0.02,
-                    charStart + span / chars.length
-                  );
-                  return (
-                    <MemoSweepChar
-                      key={`char-${charIndex}`}
-                      clock={clock}
-                      start={charStart}
-                      end={charEnd}
-                      text={char}
-                      dimColor={dimColor}
-                      litColor={litColor}
-                      textStyle={textStyle}
-                    />
-                  );
-                })}
-              </View>
+              <MemoSweepChar
+                key={`char-${charIndex}`}
+                clock={clock}
+                start={charStart}
+                end={charEnd}
+                text={char}
+                dimColor={dimColor}
+                litColor={litColor}
+                textStyle={activeTextStyle}
+              />
             );
-          })}
+          })
+        ) : (
+          <Text style={idleTextStyle}>{word.text}</Text>
+        )}
+      </View>
+    );
+  };
+
+  // Ölçüm öncesi / tek satır: doğal sarma.
+  if (!breaks || breaks.length <= 1) {
+    return (
+      <View
+        style={[
+          styles.lyricWordRow,
+          styles.lyricWordRowWrap,
+          { gap },
+          alignEnd && styles.lyricWordRowEnd,
+        ]}
+        onLayout={(event) => {
+          const width = event.nativeEvent.layout.width;
+          setRowWidth((previous) => (Math.abs(previous - width) < 0.5 ? previous : width));
+        }}>
+        {items.map(renderWord)}
+      </View>
+    );
+  }
+
+  // Dengeli satırlar: her satır kendi içinde soldan (veya sağdan) hizalanır.
+  const lines: SweepWordItem[][] = [];
+  for (let i = 0; i < breaks.length; i++) {
+    lines.push(items.slice(breaks[i], i + 1 < breaks.length ? breaks[i + 1] : items.length));
+  }
+
+  return (
+    <View
+      style={styles.lyricWordLines}
+      onLayout={(event) => {
+        const width = event.nativeEvent.layout.width;
+        setRowWidth((previous) => (Math.abs(previous - width) < 0.5 ? previous : width));
+      }}>
+      {lines.map((line) => (
+        <View
+          key={`line-${line[0].key}`}
+          style={[
+            styles.lyricWordRow,
+            { gap },
+            alignEnd && styles.lyricWordRowEnd,
+          ]}>
+          {line.map(renderWord)}
         </View>
       ))}
     </View>
@@ -449,8 +618,8 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
   }));
 
   const alignEnd = line.alignment === 'end';
-  const words = isActive ? line.words : undefined;
-  const backgroundWords = isActive ? line.background?.words : undefined;
+  const words = line.words;
+  const backgroundWords = line.background?.words;
 
   // Harf düğümleri memoize olduğu için stil referansı sabit kalmalı.
   const activeTextStyle = useMemo(
@@ -473,48 +642,56 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
           alignEnd && styles.lyricRowEnd,
         ]}>
         {words && words.length > 0 ? (
-          <SweepWords
+          <LyricWords
             words={words}
             clock={clock}
+            isActive={isActive}
             dimColor={SWEEP_DIM_COLOR}
             litColor={SWEEP_LIT_COLOR}
-            textStyle={activeTextStyle}
+            activeTextStyle={activeTextStyle}
+            idleTextStyle={styles.lyricText}
             gap={LYRIC_WORD_GAP}
             alignEnd={alignEnd}
           />
         ) : (
           <Text
+            textBreakStrategy="balanced"
             style={[
               styles.lyricText,
               isActive && styles.lyricTextActive,
               isActive && { textShadowColor: theme.glowColor },
               alignEnd && styles.lyricTextEnd,
             ]}>
-            {isActive ? line.text : tightTail(line.text)}
+            {tightTail(line.text)}
           </Text>
         )}
 
-        {/* Arka vokal (cevap vokali) ana satırın altından açılır. */}
-        {(isActive || isSelected) && line.background ? (
-          <Reanimated.View
-            entering={FadeInDown.duration(220)}
-            style={[styles.lyricBackgroundWrap, alignEnd && styles.lyricBackgroundWrapEnd]}>
+        {/*
+          Arka vokal her zaman yer kaplar: yalnızca aktifken çizilseydi satır
+          aktif olduğu anda yüksekliği artar ve liste sıçrardı.
+        */}
+        {line.background ? (
+          <View style={[styles.lyricBackgroundWrap, alignEnd && styles.lyricBackgroundWrapEnd]}>
             {backgroundWords && backgroundWords.length > 0 ? (
-              <SweepWords
+              <LyricWords
                 words={backgroundWords}
                 clock={clock}
+                isActive={isActive}
                 dimColor={SWEEP_BG_DIM_COLOR}
                 litColor={SWEEP_BG_LIT_COLOR}
-                textStyle={backgroundTextStyle}
+                activeTextStyle={backgroundTextStyle}
+                idleTextStyle={styles.lyricBackgroundText}
                 gap={LYRIC_BG_WORD_GAP}
                 alignEnd={alignEnd}
               />
             ) : (
-              <Text style={[styles.lyricBackgroundText, alignEnd && styles.lyricTextEnd]}>
+              <Text
+                textBreakStrategy="balanced"
+                style={[styles.lyricBackgroundText, alignEnd && styles.lyricTextEnd]}>
                 {tightTail(line.background.text)}
               </Text>
             )}
-          </Reanimated.View>
+          </View>
         ) : null}
       </TouchableOpacity>
     </Reanimated.View>
@@ -763,28 +940,47 @@ function LyricsPanel({
   /**
    * Hece süpürmesinin saati.
    *
-   * `useActiveProgress` saniyede 4 kez güncellenir; doğrudan kullansaydık harf
-   * aydınlanması 250 ms'lik adımlarla sıçrardı. Saat, her konum güncellemesinde
-   * bir sonraki güncellemeye kadar doğrusal olarak ilerler (`withTiming`, UI
-   * thread'inde), böylece süpürme Apple Music'teki gibi akıcı olur. Panel
-   * başına tek saat vardır.
+   * `useActiveProgress` konumu saniyede 4 kez, her örneklemede ~250 ms gecikmeyle
+   * verir. Önceki sürüm bu gecikmeli değere yumuşakça yaklaştığı için renk
+   * süpürmesi sesin sürekli gerisinde kalıyordu.
+   *
+   * Doğru yaklaşım öngörü: örnek geldiğinde konumu ve geldiği anı saklarız; her
+   * karede saat `örnek konum + örnekten bu yana geçen süre` olarak hesaplanır.
+   * Böylece saat sesin gerçek konumunu izler, süpürme lrc.red'deki gibi tam
+   * zamanında ilerler.
    */
   const lyricClock = useSharedValue(lyricPosition);
+  const lyricClockBase = useSharedValue(lyricPosition);
+  const lyricClockBaseAt = useSharedValue(0);
+  const lyricClockPlaying = useSharedValue(player.isPlaying);
 
   useEffect(() => {
-    const target = lyricPosition;
-    const delta = target - lyricClock.value;
-    // Duraklatıldı, geri sarıldı veya şarkı değişti: sıçramak yerine otur.
-    if (!player.isPlaying || delta < 0 || delta > 1.5) {
-      lyricClock.value = target;
+    lyricClockBase.value = lyricPosition;
+    lyricClockBaseAt.value = Date.now();
+  }, [lyricPosition, lyricClockBase, lyricClockBaseAt]);
+
+  useEffect(() => {
+    lyricClockPlaying.value = player.isPlaying;
+  }, [player.isPlaying, lyricClockPlaying]);
+
+  const advanceLyricClock = () => {
+    'worklet';
+    const base = lyricClockBase.value;
+    if (!lyricClockPlaying.value || lyricClockBaseAt.value === 0) {
+      lyricClock.value = base;
       return;
     }
-    if (delta <= 0.001) return;
-    lyricClock.value = withTiming(target, {
-      duration: Math.max(120, Math.min(420, delta * 1000)),
-      easing: Easing.linear,
-    });
-  }, [lyricPosition, player.isPlaying, lyricClock]);
+    // Uygulama arka plandan döndüğünde ya da JS thread'i kilitlendiğinde aradaki
+    // süre saat olarak sayılmasın. 450 ms üstü öngörü, geç gelen konum örneğiyle
+    // birlikte ileri sıçramaya yol açardı.
+    const elapsed = Math.min(0.45, Math.max(0, (Date.now() - lyricClockBaseAt.value) / 1000));
+    lyricClock.value = base + elapsed;
+  };
+
+  useFrameCallback(
+    advanceLyricClock,
+    isAppActive && isFullscreenPlayerOpen && isLyricsMode
+  );
 
   // Görüntülenecek satırlar: enstrümantal aralar + parantezden ayrılan arka
   // vokaller. `parsedLines` saf kalır (önbellek ve uzaktan senkron bozulmasın).
@@ -794,10 +990,11 @@ function LyricsPanel({
   );
 
   const { activeRowIndex, activeLineRowIndex } = useMemo(() => {
+    const position = lyricPosition + LYRIC_LINE_LEAD_SECONDS;
     let row = -1;
     let lineRow = -1;
     for (let i = 0; i < displayRows.length; i++) {
-      if (lyricPosition >= displayRows[i].time) {
+      if (position >= displayRows[i].time) {
         row = i;
         if (displayRows[i].kind === 'line') lineRow = i;
       }
@@ -1150,6 +1347,16 @@ function LyricsPanel({
           keyExtractor={(row) => row.key}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.lyricsListContent}
+          /*
+           * Kaydırma hedefi `scrollToIndex` ile veriliyor; hedef satır henüz
+           * ölçülmemişse bu çağrı başarısız olup görünür bir sıçrama yaratıyordu.
+           * Pencereyi geniş tutmak, sıradaki satırların (ve dengeli bölünmüş
+           * yüksekliklerinin) önceden ölçülmesini sağlar.
+           */
+          initialNumToRender={14}
+          maxToRenderPerBatch={14}
+          windowSize={9}
+          removeClippedSubviews={false}
           extraData={`${activeRowIndex}-${activeLineRowIndex}-${lyricPosition}-${appliedLyricsOffset}`}
           onScrollToIndexFailed={(info) => {
             // Satırlar farklı yükseklikte; hedef henüz ölçülmediyse yaklaşık
@@ -5803,16 +6010,19 @@ const styles = StyleSheet.create({
    */
   lyricWordRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     alignItems: 'flex-start',
     width: '100%',
+  },
+  /** Ölçüm tamamlanana kadar kullanılan doğal sarma. */
+  lyricWordRowWrap: {
+    flexWrap: 'wrap',
   },
   lyricWordRowEnd: {
     justifyContent: 'flex-end',
   },
-  lyricWordGroup: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+  /** Dengeli bölünmüş satırların dikey yığını. */
+  lyricWordLines: {
+    width: '100%',
   },
   lyricWord: {
     flexDirection: 'row',
@@ -5892,9 +6102,13 @@ const styles = StyleSheet.create({
   lyricTextActive: {
     color: '#ffffff',
     fontSize: LYRIC_FONT_ACTIVE,
-    fontWeight: '800',
+    /*
+     * Ölçüler pasif satırla birebir aynı olmalı: aktif satırın düzeni değişirse
+     * liste satır geçişinde sıçrar. Vurgu rengi, gölgesi ve ölçeğiyle veriliyor.
+     */
+    fontWeight: '700',
     lineHeight: LYRIC_LINE_HEIGHT_ACTIVE,
-    letterSpacing: -0.4,
+    letterSpacing: -0.2,
     textAlign: 'left',
     textShadowColor: 'rgba(255, 255, 255, 0.3)',
     textShadowOffset: { width: 0, height: 1 },

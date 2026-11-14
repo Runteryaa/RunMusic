@@ -22,6 +22,8 @@ export interface LyricShareLine {
   text: string;
   /** Varsa, satırın altında daha küçük gösterilen arka vokal. */
   background?: string;
+  /** Diyalog satırı sağa hizalıysa (karşılıklı söyleşi) kartta da sağa yaslanır. */
+  align?: 'start' | 'end';
 }
 
 interface CaptureModules {
@@ -277,14 +279,27 @@ export function LyricSharePreviewModal({
 
                 <View style={styles.cardLines}>
                   {lines.length > 0 ? (
-                    lines.map((line) => (
-                      <View key={`card-${line.key}`} style={styles.cardLineBlock}>
-                        <Text style={styles.cardLineText}>{line.text}</Text>
-                        {line.background ? (
-                          <Text style={styles.cardLineBackground}>{line.background}</Text>
-                        ) : null}
-                      </View>
-                    ))
+                    lines.map((line) => {
+                      const lineEnd = line.align === 'end';
+                      return (
+                        <View
+                          key={`card-${line.key}`}
+                          style={[styles.cardLineBlock, lineEnd && styles.cardLineBlockEnd]}>
+                          <Text style={[styles.cardLineText, lineEnd && styles.cardLineTextEnd]}>
+                            {line.text}
+                          </Text>
+                          {line.background ? (
+                            <Text
+                              style={[
+                                styles.cardLineBackground,
+                                lineEnd && styles.cardLineTextEnd,
+                              ]}>
+                              {line.background}
+                            </Text>
+                          ) : null}
+                        </View>
+                      );
+                    })
                   ) : (
                     <Text style={styles.cardEmptyText}>{t('player.share_lyrics_empty')}</Text>
                   )}
@@ -443,12 +458,18 @@ const styles = StyleSheet.create({
   cardLineBlock: {
     marginBottom: 9,
   },
+  cardLineBlockEnd: {
+    alignItems: 'flex-end',
+  },
   cardLineText: {
     color: '#ffffff',
     fontSize: 17,
     lineHeight: 24,
     fontWeight: '700',
     letterSpacing: -0.3,
+  },
+  cardLineTextEnd: {
+    textAlign: 'right',
   },
   cardLineBackground: {
     color: 'rgba(255,255,255,0.55)',
