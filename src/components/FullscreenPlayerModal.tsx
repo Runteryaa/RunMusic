@@ -93,6 +93,8 @@ import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
+/** Sözler/kuyruk açıkken sağ köşeye yerleşen küçük kapak boyutu. */
+const MINI_COVER_SIZE = 52;
 
 /**
  * Queue rows are flattened so the single FlatList can virtualize both the
@@ -2482,6 +2484,41 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const playBtnScale = useMemo(() => new Animated.Value(1), []);
   const [isSkipping, setIsSkipping] = useState(false);
 
+  // Kapak → sağ köşe geçişi için ölçüm.
+  //
+  // Büyük kapak kaybolurken küçük kapağın "ortadan sağ köşeye süzülüyor"
+  // görünmesi için iki kapağın ekran üzerindeki merkezleri arasındaki fark
+  // ölçülür. Merkezler yalnızca ötelemeden etkilenir; ölçekleme merkezi
+  // değiştirmediği için kapak ölçeklenmiş/dönmüş olsa da değer doğru kalır.
+  const bigCoverRef = useRef<View>(null);
+  const miniCoverRef = useRef<View>(null);
+  const [coverAnchor, setCoverAnchor] = useState<{ dx: number; dy: number } | null>(null);
+
+  const measureCoverAnchor = useCallback(() => {
+    const big = bigCoverRef.current;
+    const mini = miniCoverRef.current;
+    if (!big || !mini) return;
+    big.measureInWindow((bx, by, bw, bh) => {
+      mini.measureInWindow((mx, my, mw, mh) => {
+        if (!bw || !bh || !mw || !mh) return;
+        const dx = bx + bw / 2 - (mx + mw / 2);
+        const dy = by + bh / 2 - (my + mh / 2);
+        setCoverAnchor((prev) =>
+          prev && Math.abs(prev.dx - dx) < 0.5 && Math.abs(prev.dy - dy) < 0.5
+            ? prev
+            : { dx, dy }
+        );
+      });
+    });
+  }, []);
+
+  // Yerleşim değiştiğinde ölçümü tazele. Panel modları açıkken büyük kapak
+  // kaydırılmış olduğu için ölçüm yanıltıcı olur; o durumda atlanır.
+  const handleCoverLayout = useCallback(() => {
+    if (isLyricsMode || isQueueMode || isSleepTimerMode || isConnectMode) return;
+    requestAnimationFrame(measureCoverAnchor);
+  }, [isLyricsMode, isQueueMode, isSleepTimerMode, isConnectMode, measureCoverAnchor]);
+
   const CARD_OFFSET = ARTWORK_SIZE + 24;
 
   // IMPORTANT: Interpolations must be memoized.
@@ -2529,13 +2566,18 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
         {
           scale: coverTransition.interpolate({
             inputRange: [0, 1],
-            outputRange: [0.55, 1],
+            // Büyük kapak neredeyse yerinde söner; küçülme işini sağ köşeye
+            // süzülen küçük kapak üstlenir.
+            outputRange: [0.78, 1],
           }),
         },
         {
           translateY: coverTransition.interpolate({
             inputRange: [0, 1],
-            outputRange: [90, 0],
+            // Küçük kapak büyük kapağın merkezinden süzülmeye başladığı için
+            // büyük kapağın aşağı kayması küçük tutulur; aksi halde iki görüntü
+            // birbirinden kopuk görünür.
+            outputRange: [24, 0],
           }),
         },
       ],
@@ -2690,23 +2732,41 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     [connectTransition, artworkScale]
   );
 
-  const miniCoverTransitionStyle = useMemo(
-    () => ({
+  const miniCoverTransitionStyle = useMemo(() => {
+    // Ölçüm henüz yoksa (çok erken açılış) eski davranışa düş: yerinde belirir.
+    const { dx, dy } = coverAnchor ?? { dx: 0, dy: 0 };
+    // Küçük kapak, panel KAPALIYKEN (coverTransition = 1) büyük kapağın
+    // merkezinde ve büyük boyutta durur; panel AÇILIRKEN (0) kendi köşesine
+    // süzülüp küçülür. Böylece büyük kapak sönerken görüntü ortadan sağ
+    // köşeye kayıyormuş gibi okunur.
+    const scaleRatio = ARTWORK_SIZE / MINI_COVER_SIZE;
+    return {
       opacity: coverTransition.interpolate({
         inputRange: [0, 1],
         outputRange: [1, 0],
       }),
       transform: [
         {
+          translateX: coverTransition.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, dx],
+          }),
+        },
+        {
+          translateY: coverTransition.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, dy],
+          }),
+        },
+        {
           scale: coverTransition.interpolate({
             inputRange: [0, 1],
-            outputRange: [1, 0.4],
+            outputRange: [1, scaleRatio],
           }),
         },
       ],
-    }),
-    [coverTransition]
-  );
+    };
+  }, [coverTransition, coverAnchor]);
 
   useEffect(() => {
     if (!isFullscreenPlayerOpen) return;
@@ -2779,6 +2839,29 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     coverTransition,
     reduceMotion,
   ]);
+
+  // Kapak konumlarını ölç. Yalnızca kapak modunda ölçülür: sözler/kuyruk
+  // açıkken büyük kapak aşağı kaydırılıp ölçeklendiği için merkezi kayar.
+  // Yerleşim animasyonu otursun diye kısa bir gecikme bırakılır.
+  useEffect(() => {
+    if (!isFullscreenPlayerOpen) return;
+    if (isLyricsMode || isQueueMode || isSleepTimerMode || isConnectMode) return;
+    const timer = setTimeout(measureCoverAnchor, 300);
+    return () => clearTimeout(timer);
+  }, [
+    isFullscreenPlayerOpen,
+    isLyricsMode,
+    isQueueMode,
+    isSleepTimerMode,
+    isConnectMode,
+    measureCoverAnchor,
+  ]);
+
+  // Döndürme / ekran boyutu değişiminde ölçümü tazele.
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener('change', measureCoverAnchor);
+    return () => subscription.remove();
+  }, [measureCoverAnchor]);
 
   const handlePlayPressIn = useCallback(() => {
     Animated.spring(playBtnScale, {
@@ -3156,18 +3239,20 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
             {/* Mevcut Şarkı Kapağı (Merkezde, kaydırılan ana kart) */}
             <Animated.View
               style={[styles.artworkWrapper, artworkTransitionStyle]}>
-              <TouchableOpacity
-                activeOpacity={0.92}
-                onPress={toggleLyricsMode}>
-                <TrackArtwork
-                  uri={currentArtworkUri}
-                  trackId={activeTrack?.id}
-                  trackUri={(activeTrack as any)?.url}
-                  size={ARTWORK_SIZE}
-                  borderRadius={18}
-                  iconSize={84}
-                />
-              </TouchableOpacity>
+              <View ref={bigCoverRef} collapsable={false}>
+                <TouchableOpacity
+                  activeOpacity={0.92}
+                  onPress={toggleLyricsMode}>
+                  <TrackArtwork
+                    uri={currentArtworkUri}
+                    trackId={activeTrack?.id}
+                    trackUri={(activeTrack as any)?.url}
+                    size={ARTWORK_SIZE}
+                    borderRadius={18}
+                    iconSize={84}
+                  />
+                </TouchableOpacity>
+              </View>
             </Animated.View>
 
             {/* Sonraki Şarkı Kapağı (Sağdan süzülen önizleme) */}
@@ -4046,28 +4131,33 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
             </View>
 
             {/* Sözler, Çalma Sırası veya Uyku Zamanlayıcısı Modundayken Sağ Tarafa Animasyonla Yerleşen Küçük Kapak */}
-            <Animated.View
-              style={miniCoverTransitionStyle}
-              pointerEvents={(!isLyricsMode && !isQueueMode && !isSleepTimerMode && !isConnectMode) ? 'none' : 'auto'}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => {
-                  if (isConnectMode) toggleConnectMode();
-                  if (isSleepTimerMode) toggleSleepTimerMode();
-                  if (isQueueMode) toggleQueueMode();
-                  if (isLyricsMode) toggleLyricsMode();
-                }}
-                style={styles.lyricsMiniCoverBtn}>
-                <TrackArtwork
-                  uri={currentArtworkUri}
-                  trackId={activeTrack?.id}
-                  trackUri={(activeTrack as any)?.url}
-                  size={52}
-                  borderRadius={10}
-                  iconSize={26}
-                />
-              </TouchableOpacity>
-            </Animated.View>
+            <View
+              ref={miniCoverRef}
+              collapsable={false}
+              onLayout={handleCoverLayout}>
+              <Animated.View
+                style={miniCoverTransitionStyle}
+                pointerEvents={(!isLyricsMode && !isQueueMode && !isSleepTimerMode && !isConnectMode) ? 'none' : 'auto'}>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    if (isConnectMode) toggleConnectMode();
+                    if (isSleepTimerMode) toggleSleepTimerMode();
+                    if (isQueueMode) toggleQueueMode();
+                    if (isLyricsMode) toggleLyricsMode();
+                  }}
+                  style={styles.lyricsMiniCoverBtn}>
+                  <TrackArtwork
+                    uri={currentArtworkUri}
+                    trackId={activeTrack?.id}
+                    trackUri={(activeTrack as any)?.url}
+                    size={MINI_COVER_SIZE}
+                    borderRadius={10}
+                    iconSize={26}
+                  />
+                </TouchableOpacity>
+              </Animated.View>
+            </View>
           </Animated.View>
 
           {/* İlerleme Çubuğu (Apple Music Scrubber) */}
