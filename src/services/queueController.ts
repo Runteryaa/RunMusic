@@ -79,6 +79,64 @@ export interface QueueTrack {
 let isNavigatingHistory = false;
 let isMutatingQueue = false;
 
+/**
+ * Çalma isteği sırası.
+ *
+ * Kullanıcı hızlıca iki farklı şarkıya dokunursa önceki isteğin asenkron
+ * adımları (kuyruk kurma, iyimser başlık yazımı, `play`) sonradan tamamlanıp
+ * ekranda/kuyrukta yanlış şarkıyı gösterebiliyordu. Her istek bir numara alır;
+ * yalnızca en son numara geçerlidir ve eskiler ilk kontrol noktasında durur.
+ */
+let playRequestSeq = 0;
+let activePlayRequestId = 0;
+
+/**
+ * Kullanıcının en son seçtiği (henüz native olarak aktifleşmemiş) parça.
+ *
+ * `PlaybackActiveTrackChanged` olayı gecikirse eski parçanın meta verisi
+ * iyimser katmana yazılıp ekranda yanlış başlık/kapak gösterebiliyordu. Bu
+ * alan, olayın gerçekten son seçime ait olup olmadığını anlamak için kullanılır.
+ */
+let pendingSelectionId: string | null = null;
+let pendingSelectionAt = 0;
+const PENDING_SELECTION_TTL_MS = 5000;
+
+/** Yeni bir çalma isteği başlatır ve numarasını döner. */
+export function beginPlayRequest(trackId?: string): number {
+  activePlayRequestId = ++playRequestSeq;
+  if (trackId) {
+    pendingSelectionId = trackId;
+    pendingSelectionAt = Date.now();
+  }
+  return activePlayRequestId;
+}
+
+/** Verilen istek hâlâ en güncel çalma isteği mi? */
+export function isPlayRequestCurrent(requestId: number): boolean {
+  return requestId === activePlayRequestId;
+}
+
+/**
+ * Bir native parça değişimi olayının, kullanıcının son seçimine ait olup
+ * olmadığını söyler.
+ *
+ * Bekleyen bir seçim varsa yalnızca o parçanın olayı kabul edilir; gecikmiş eski
+ * parça olayları (ör. hızlı çift dokunuşta önceki şarkının olayı) yok sayılır.
+ * Eşleşme olursa bekleyen seçim temizlenir.
+ */
+export function acceptTrackEvent(candidateIds: (string | null | undefined)[]): boolean {
+  if (!pendingSelectionId) return true;
+  if (Date.now() - pendingSelectionAt > PENDING_SELECTION_TTL_MS) {
+    pendingSelectionId = null;
+    return true;
+  }
+  const matches = candidateIds.some((id) => !!id && id === pendingSelectionId);
+  if (matches) {
+    pendingSelectionId = null;
+  }
+  return matches;
+}
+
 export function getIsNavigatingHistory(): boolean {
   return isNavigatingHistory;
 }
@@ -318,10 +376,14 @@ export async function getQueueSections(): Promise<QueueSections<Track>> {
  */
 export async function playQueueTrack(
   queueIndex: number,
-  trackId?: string
+  trackId?: string,
+  requestId?: number
 ): Promise<void> {
+  const playRequest = requestId ?? beginPlayRequest(trackId);
   const queue = await TrackPlayer.getQueue().catch(() => []);
   if (queue.length === 0) return;
+  // Bu istekten sonra başka bir şarkı seçildiyse eski isteği iptal et.
+  if (!isPlayRequestCurrent(playRequest)) return;
 
   let targetIndex = -1;
   if (trackId) {
@@ -627,8 +689,11 @@ export async function startPlaybackFromLibrary(params: {
   startId: string;
   shuffle: boolean;
   smartShuffle?: boolean;
+  /** Çağıran tarafın başlattığı çalma isteği numarası (hızlı seçim yarışını önler). */
+  requestId?: number;
 }): Promise<void> {
   const { tracks, startId, shuffle, smartShuffle = false } = params;
+  const playRequest = params.requestId ?? beginPlayRequest(startId);
   // Kütüphaneden çalma normal (bağlamlı) kuyruğa geri döner ve otomatik
   // eklemeyi yeniden açar.
   setManualOnlyQueueMode(false);
@@ -659,6 +724,10 @@ export async function startPlaybackFromLibrary(params: {
       // ignore
     }
   }
+
+  // Bu istek eskidiyse (kullanıcı bu arada başka bir şarkı seçtiyse) kuyruğu
+  // ezme ve çalmayı başlatma.
+  if (!isPlayRequestCurrent(playRequest)) return;
 
   const orderIds = buildPlayOrder(contextIds, startId, shuffle, {
     smartShuffle,
@@ -798,6 +867,10 @@ export async function startPlaybackFromLibrary(params: {
     };
   });
 
+  // setQueue öncesi son kontrol: bu arada yeni bir şarkı seçildiyse mevcut
+  // kuyruğu ezme (asıl yarış tam burada oluşuyordu).
+  if (!isPlayRequestCurrent(playRequest)) return;
+
   await TrackPlayer.setQueue(toPlayableTracks(enrichedQueue));
   if (finalStartIndex > 0) {
     await TrackPlayer.skip(finalStartIndex);
@@ -808,6 +881,9 @@ export async function startPlaybackFromLibrary(params: {
     console.warn('[queueController] startPlaybackFromLibrary play error:', e);
     await handlePlaybackError(e, startTrack, finalStartIndex);
   }
+
+  // Bu istek eskidiyse store'u (contextIds / isShuffle) de yazma.
+  if (!isPlayRequestCurrent(playRequest)) return;
 
   // TEK `set`: zustand persist her set çağrısında TÜM store'u serileştirip
   // diske yazdığı için iki ayrı action çağırmak gereksiz iki yazım demekti.

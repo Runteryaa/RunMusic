@@ -37,7 +37,9 @@ import { getBatchMetadataAsync, getArtworkAsync } from '../../modules/audio-artw
 import { cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import {
   addToQueue,
+  beginPlayRequest,
   handlePlaybackError,
+  isPlayRequestCurrent,
   playNext,
   playQueueTrack,
   startPlaybackFromLibrary,
@@ -727,6 +729,9 @@ export default function LibraryScreen() {
   };
 
   const playTrack = async (selectedAsset: MediaLibrary.Asset) => {
+    // Hızlı ardışık seçimlerde eski isteğin asenkron adımları (kuyruk okuma,
+    // tema/kapak yazımı) yeni şarkının üzerine yazmasın diye istek numarası al.
+    const requestId = beginPlayRequest(selectedAsset.id);
     try {
       const targetArtwork =
         metadataMap[selectedAsset.id]?.artwork || artworkMap[selectedAsset.id] || undefined;
@@ -759,6 +764,8 @@ export default function LibraryScreen() {
 
       // 2. Mevcut kuyrukta şarkı var mı denetle
       const queue = await TrackPlayer.getQueue();
+      // Bu bekleme sırasında başka bir şarkı seçildiyse isteği bırak.
+      if (!isPlayRequestCurrent(requestId)) return;
       const existingIndex = queue.findIndex(
         (item) => item.id === selectedAsset.id || item.url === selectedAsset.uri
       );
@@ -785,7 +792,7 @@ export default function LibraryScreen() {
         }
 
         try {
-          await playQueueTrack(existingIndex, selectedAsset.id);
+          await playQueueTrack(existingIndex, selectedAsset.id, requestId);
         } catch (playErr) {
           console.warn('[index.tsx] play existing track error:', playErr);
           const queue = await TrackPlayer.getQueue();
@@ -795,7 +802,7 @@ export default function LibraryScreen() {
 
         if (!targetArtwork) {
           getArtworkAsync(selectedAsset.uri, selectedAsset.id).then((art: string | null) => {
-            if (art) {
+            if (art && isPlayRequestCurrent(requestId)) {
               useStore.getState().setArtwork(selectedAsset.id, art);
               useThemeStore.getState().updateThemeFromArtwork(art);
             }
@@ -813,12 +820,14 @@ export default function LibraryScreen() {
         startId: selectedAsset.id,
         shuffle: isShuffle,
         smartShuffle: isShuffle ? isSmartShuffle : false,
+        requestId,
       });
+      if (!isPlayRequestCurrent(requestId)) return;
       openFullscreenPlayer();
 
       if (!targetArtwork) {
         getArtworkAsync(selectedAsset.uri, selectedAsset.id).then((art: string | null) => {
-          if (art) {
+          if (art && isPlayRequestCurrent(requestId)) {
             useStore.getState().setArtwork(selectedAsset.id, art);
             useThemeStore.getState().updateThemeFromArtwork(art);
           }
@@ -900,6 +909,7 @@ export default function LibraryScreen() {
       const startIndex = Math.floor(Math.random() * fullSortedList.length);
       const startTrack = buildQueueTrack(fullSortedList[startIndex]);
       const tracks = fullSortedList.map((asset) => buildQueueTrack(asset));
+      const requestId = beginPlayRequest(startTrack.id);
 
       const useSmart = isSmartShuffle;
 
@@ -908,7 +918,9 @@ export default function LibraryScreen() {
         startId: startTrack.id,
         shuffle: true,
         smartShuffle: useSmart,
+        requestId,
       });
+      if (!isPlayRequestCurrent(requestId)) return;
       openFullscreenPlayer();
       showToast(useSmart ? t('library.smart_shuffle_started') : t('library.shuffle_started'));
     } catch (e) {

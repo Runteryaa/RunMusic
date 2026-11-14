@@ -13,6 +13,7 @@ import {
   resolveTrackId,
   trackKey,
   markUpNextConsumed,
+  acceptTrackEvent,
   replenishUpcomingQueueIfNeeded,
 } from './services/queueController';
 import { cleanYouTubeTitle, cleanDisplayTitle } from './services/lyricsService';
@@ -247,8 +248,15 @@ export default async function playbackService() {
           duration: realDuration,
           hasArtwork: !!art,
         };
-        useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+        // Gecikmiş olaylar: kullanıcı başka bir parçayı seçtiyse eski parçanın
+        // meta verisi iyimser katmana yazılmaz (aksi halde ekranda yanlış
+        // başlık/sanatçı/kapak görünür). Seçim doğrulandığında yazılır.
+        const isLatestSelection = acceptTrackEvent([trackId, rawId, rawUrl]);
+        if (isLatestSelection) {
+          useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+        }
         if (
+          isLatestSelection &&
           art &&
           AppState.currentState === 'active' &&
           useStore.getState().preferences.dynamicColorFromArtwork
