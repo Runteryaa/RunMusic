@@ -466,7 +466,25 @@ export const useStore = create<AppState>()(
           },
         })),
 
-      clearArtworkCache: () => set({ artworkMap: {} }),
+      /**
+       * Kapak önbelleğini temizler. `metadataMap` içindeki kapak yolları da
+       * bırakılmalı: dosyalar silindiği için eski yollar kırık kalır ve kapaklar
+       * bir daha görünmez. Yolu kaldırınca ilgili parça göründüğünde kapak
+       * gömülü etiketten yeniden çıkarılır.
+       */
+      clearArtworkCache: () =>
+        set((state) => {
+          const nextMeta: Record<string, TrackMetadata> = {};
+          for (const [id, meta] of Object.entries(state.metadataMap)) {
+            if (meta?.artwork) {
+              const { artwork: _artwork, ...rest } = meta;
+              nextMeta[id] = rest;
+            } else {
+              nextMeta[id] = meta;
+            }
+          }
+          return { artworkMap: {}, metadataMap: nextMeta };
+        }),
 
       allAssets: [],
       setAllAssets: (assets) =>

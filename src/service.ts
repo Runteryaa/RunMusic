@@ -230,9 +230,15 @@ export default async function playbackService() {
         const realDuration = event.track.duration && event.track.duration > 0 ? event.track.duration : (meta?.duration || 0);
 
         if (realDuration > 0) {
-          useStore.getState().setTrackMetadata(trackId, { duration: realDuration });
+          // Mevcut meta veriyi KORU: yalnızca duration ile değiştirmek başlık,
+          // sanatçı ve kapak yolunu siliyordu (kapakların kaybolmasının bir
+          // nedeni de buydu).
+          const store = useStore.getState();
+          const existingMeta = store.metadataMap[trackId];
+          store.setTrackMetadata(trackId, { ...(existingMeta || {}), duration: realDuration });
           if (rawUrl && rawUrl !== trackId) {
-            useStore.getState().setTrackMetadata(rawUrl, { duration: realDuration });
+            const existingUrlMeta = store.metadataMap[rawUrl];
+            store.setTrackMetadata(rawUrl, { ...(existingUrlMeta || {}), duration: realDuration });
           }
           const currentLib = useStore.getState().library;
           const libAsset = currentLib.find((a) => a.id === trackId || a.uri === rawUrl);

@@ -1,4 +1,4 @@
-import React, { memo, useState, useEffect } from 'react';
+import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,6 +17,21 @@ interface TrackArtworkProps {
   shadow?: boolean;
 }
 
+/**
+ * Kapak yolu bilinen ama dosyası artık yoksa (ör. Android önbelleği temizledi
+ * veya kullanıcı ayarlardan kapak önbelleğini sildi) kaydı tazele.
+ *
+ * `artworkMap` tek başına yetmez: kütüphane satırları `metadataMap[id].artwork`
+ * değerini de kullanır, bu yüzden iki harita birlikte güncellenir.
+ */
+function persistResolvedArtwork(id: string, artwork: string): void {
+  const store = useStore.getState();
+  const existing = store.metadataMap[id];
+  store.setBatchTrackMetadata({
+    [id]: { ...(existing || {}), artwork },
+  });
+}
+
 export const TrackArtwork = memo(function TrackArtwork({
   uri,
   trackId,
@@ -27,9 +42,7 @@ export const TrackArtwork = memo(function TrackArtwork({
   shadow = false,
 }: TrackArtworkProps) {
   useComponentDiagnostics('TrackArtwork');
-  const [hasError, setHasError] = useState(false);
   const themePrimary = useThemeStore((state) => state.theme.primary);
-  const setArtwork = useStore((state) => state.setArtwork);
 
   // Subscribe to a single artwork string instead of the whole artwork/metadata
   // maps. A metadata scan that adds artwork for one track must not re-render
@@ -48,23 +61,56 @@ export const TrackArtwork = memo(function TrackArtwork({
     return undefined;
   });
 
-  const effectiveUri = uri || storeArtwork;
+  const baseUri = uri || storeArtwork;
+  // Kaynak dosyası kaybolmuş bir yol için yeniden çıkarılan kapak burada tutulur.
+  const [resolvedUri, setResolvedUri] = useState<string | null>(null);
+  const [hasError, setHasError] = useState(false);
+  const attemptedRef = useRef<string | null>(null);
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // Kaynak değişince (başka şarkı) geçici çözümü ve hata durumunu sıfırla.
+  useEffect(() => {
+    setResolvedUri(null);
     setHasError(false);
+    attemptedRef.current = null;
+  }, [baseUri]);
+
+  const effectiveUri = resolvedUri ?? baseUri;
+
+  const extractArtwork = useCallback(() => {
+    if (!trackUri) return;
+    // Aynı kaynak için sonsuz yeniden deneme yapma.
+    const token = effectiveUri || '__missing__';
+    if (attemptedRef.current === token) return;
+    attemptedRef.current = token;
+    getArtworkAsync(trackUri, trackId ?? null).then((resolved) => {
+      if (!isMountedRef.current || !resolved) return;
+      if (resolved === effectiveUri) return;
+      setResolvedUri(resolved);
+      setHasError(false);
+      if (trackId) persistResolvedArtwork(trackId, resolved);
+    });
+  }, [effectiveUri, trackUri, trackId]);
+
+  useEffect(() => {
     // If no artwork known yet, and we have the file trackUri, extract it asynchronously
-    if (!effectiveUri && trackUri) {
-      let isMounted = true;
-      getArtworkAsync(trackUri, trackId ?? null).then((resolved) => {
-        if (isMounted && resolved && trackId) {
-          setArtwork(trackId, resolved);
-        }
-      });
-      return () => {
-        isMounted = false;
-      };
+    if (!effectiveUri) {
+      extractArtwork();
     }
-  }, [effectiveUri, trackUri, trackId, setArtwork]);
+  }, [effectiveUri, extractArtwork]);
+
+  const handleError = useCallback(() => {
+    // Yol geçersiz (dosya silinmiş): kapağı gömülü etiketten yeniden çıkar.
+    setHasError(true);
+    extractArtwork();
+  }, [extractArtwork]);
 
   const containerStyle = [
     styles.container,
@@ -89,7 +135,7 @@ export const TrackArtwork = memo(function TrackArtwork({
           // tamamen yüklenene kadar göstermeye devam eder; yani bir an ÖNCEKİ
           // şarkının kapağı görünür. recyclingKey bu içeriği sıfırlar.
           recyclingKey={effectiveUri}
-          onError={() => setHasError(true)}
+          onError={handleError}
         />
       </View>
     );
