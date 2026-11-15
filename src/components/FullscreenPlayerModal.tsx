@@ -98,10 +98,10 @@ import { UpNextRow, type UpNextItem } from './QueueUpNextList';
 import { Swipeable } from 'react-native-gesture-handler';
 import Reanimated, {
   Easing,
+  FadeInDown,
   LinearTransition,
   interpolateColor,
   useAnimatedStyle,
-  useFrameCallback,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
@@ -177,6 +177,11 @@ const LYRIC_SCROLL_LEAD_SECONDS = 0.8;
  */
 const LYRIC_LINE_LEAD_SECONDS = 0.12;
 /**
+ * Süpürme saatinin ön alması. Konum saniyede 4 kez geldiği için saat, örnek
+ * anından bir sonraki örneğe kadar ilerletilir; hedef budur (saniye).
+ */
+const LYRIC_CLOCK_LOOKAHEAD = 0.25;
+/**
  * Bölünen satırların hedef doluluğu: her satır ekranın yaklaşık üçte ikisini
  * kullanır. Tam genişliğe sıkıştırmak yerine dengeli/kısa satırlar okunurluğu
  * artırır (Apple Music de satırları sonuna kadar doldurmaz).
@@ -203,20 +208,20 @@ const SWEEP_BG_LIT_COLOR = 'rgba(255, 255, 255, 0.78)';
  * Senkron sözlerin tipografisi. Düz metin sözlerin (`plainLyricsText`) ölçüleri
  * bilinçli olarak ayrı tutulur; burada yalnızca zaman damgalı satırlar büyür.
  */
-const LYRIC_FONT_INACTIVE = 25;
-const LYRIC_LINE_HEIGHT_INACTIVE = 34;
+const LYRIC_FONT_INACTIVE = 27;
+const LYRIC_LINE_HEIGHT_INACTIVE = 36;
 /**
  * Aktif satır da aynı ölçüyü kullanır. Önceki sürümde aktif satır büyüyordu;
  * bu, satır yüksekliğini aniden değiştirip kaydırmayı sıçratıyordu. Vurgu artık
  * parlaklık, gölge ve ölçekle yapılıyor — düzen sabit kaldığı için geçişler
  * tamamen yumuşak akıyor.
  */
-const LYRIC_FONT_ACTIVE = 25;
-const LYRIC_LINE_HEIGHT_ACTIVE = 34;
+const LYRIC_FONT_ACTIVE = 27;
+const LYRIC_LINE_HEIGHT_ACTIVE = 36;
 /** Kelimeler arası boşluk (satır içi düzen kelime kelime kurulduğu için elle). */
 const LYRIC_WORD_GAP = 7;
-const LYRIC_BG_FONT = 16;
-const LYRIC_BG_LINE_HEIGHT = 22;
+const LYRIC_BG_FONT = 17;
+const LYRIC_BG_LINE_HEIGHT = 23;
 const LYRIC_BG_WORD_GAP = 5;
 
 function getLyricsSourceLabel(
@@ -293,11 +298,18 @@ function SweepChar({
   textStyle: StyleProp<TextStyle>;
 }) {
   const animatedStyle = useAnimatedStyle(() => {
-    // Değeri aralığa kıstırıyoruz; interpolateColor ekstrapolasyonla renk
-    // üretmesin (kırmızıya kayan bozuk tonlar).
-    const clamped = Math.min(Math.max(clock.value, start), end);
+    /*
+     * Değeri aralığa kıstırıyoruz; interpolateColor ekstrapolasyonla renk
+     * üretmesin (kırmızıya kayan bozuk tonlar). Saat bir an için geçersiz
+     * olursa (NaN) harfler sönük kalmak yerine yanmış renkte dursun.
+     */
+    const now = Number.isFinite(clock.value) ? clock.value : end;
+    const clamped = Math.min(Math.max(now, start), end);
     return {
-      color: interpolateColor(clamped, [start, end], [dimColor, litColor]),
+      color:
+        end > start
+          ? interpolateColor(clamped, [start, end], [dimColor, litColor])
+          : litColor,
     };
   });
   return <Reanimated.Text style={[textStyle, animatedStyle]}>{text}</Reanimated.Text>;
@@ -338,18 +350,20 @@ function prepareSweepWords(list: NonNullable<LyricLine['words']>): SweepWordItem
 }
 
 /**
- * Satırları dengeli böler: kelimeler kırılmaz ve bölünen satırlar tam genişliğe
- * sıkıştırılmak yerine ~2/3 doluluk hedefler.
+ * Satırları dengeli böler: kelimeler kırılmaz ve satırlar `fillTarget` doluluğa
+ * göre dağıtılır.
  *
  * `widths` ölçülen gerçek kelime genişlikleridir; bu yüzden bölme tahmine değil
- * gerçek düzene dayanır. Maliyet, her satırın hedef doluluktan sapmasının
- * karesidir; satır sayısı da bu maliyetten doğar (satıra sığan söz tek satır
- * kalır, uzun sözler ise 2/3 doluluk veren sayıda satıra bölünür).
+ * gerçek düzene dayanır. Maliyet, her satırın `fillTarget` doluluğundan sapmasının
+ * karesidir; satır sayısı da bu maliyetten doğar. Ana sözlerde hedef 2/3'tür
+ * (uzun sözler dengeli bölünür), arka vokalde 1'dir: yalnızca sığmadığında
+ * bölünür.
  */
 function balancedLineBreaks(
   widths: number[],
   gap: number,
-  maxWidth: number
+  maxWidth: number,
+  fillTarget: number
 ): number[] {
   const n = widths.length;
   if (n === 0 || maxWidth <= 0) return [];
@@ -360,7 +374,7 @@ function balancedLineBreaks(
     return total + gap * Math.max(0, to - from - 1);
   };
 
-  const target = maxWidth * LYRIC_LINE_FILL_TARGET;
+  const target = maxWidth * fillTarget;
   const targetGap = 4; // tek kelimelik son satır ("dul") cezası, normalize edilmiş
 
   const INF = Number.POSITIVE_INFINITY;
@@ -477,6 +491,7 @@ function LyricWords({
   litColor,
   activeTextStyle,
   idleTextStyle,
+  fillTarget = LYRIC_LINE_FILL_TARGET,
 }: {
   text: string;
   words?: LyricLine['words'];
@@ -488,6 +503,8 @@ function LyricWords({
   litColor: string;
   activeTextStyle: StyleProp<TextStyle>;
   idleTextStyle: StyleProp<TextStyle>;
+  /** Bölme hedefi: ana söz 2/3, arka vokal 1 (yalnızca sığmazsa bölünür). */
+  fillTarget?: number;
 }) {
   const nodes = useMemo(() => prepareWordNodes(text, words), [text, words]);
 
@@ -521,9 +538,14 @@ function LyricWords({
 
     // 2 px güvenlik payı: harf düğümleri tek kelime düğümüne göre bir tık
     // geniş ölçülebiliyor.
-    const result = balancedLineBreaks(values, gap, Math.max(0, rowWidth - 2));
+    const result = balancedLineBreaks(
+      values,
+      gap,
+      Math.max(0, rowWidth - 2),
+      fillTarget
+    );
     setLayout({ key: layoutKey, breaks: result.length > 1 ? result : null });
-  }, [layout, layoutKey, rowWidth, widths, nodes, gap]);
+  }, [layout, layoutKey, rowWidth, widths, nodes, gap, fillTarget]);
 
   const registerWidth = (key: string, width: number) => {
     const rounded = Math.round(width * 2) / 2;
@@ -613,6 +635,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
   isSelected,
   isSelectionMode,
   distance,
+  showBackground,
   clock,
   theme,
   onSeek,
@@ -623,6 +646,11 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
   isSelected: boolean;
   isSelectionMode: boolean;
   distance: number;
+  /**
+   * Arka vokal, kendi satırına gelinmeden çizilmez. Bir kez açıldıktan sonra
+   * (konum o satırın zamanını geçtiği sürece) açık kalır.
+   */
+  showBackground: boolean;
   clock: { value: number };
   theme: ThemeColors;
   onSeek: (time: number) => void;
@@ -691,11 +719,13 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
         />
 
         {/*
-          Arka vokal her zaman yer kaplar: yalnızca aktifken çizilseydi satır
-          aktif olduğu anda yüksekliği artar ve liste sıçrardı.
+          Arka vokal, kendi satırına gelinince açılır ve açık kalır. Daha önce
+          çizilseydi satır, söylenmeden önce iki satırlık yer kaplıyordu.
         */}
-        {line.background ? (
-          <View style={[styles.lyricBackgroundWrap, alignEnd && styles.lyricBackgroundWrapEnd]}>
+        {line.background && showBackground ? (
+          <Reanimated.View
+            entering={FadeInDown.duration(260)}
+            style={[styles.lyricBackgroundWrap, alignEnd && styles.lyricBackgroundWrapEnd]}>
             <LyricWords
               text={line.background.text}
               words={line.background.words}
@@ -707,8 +737,10 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
               idleTextStyle={styles.lyricBackgroundText}
               gap={LYRIC_BG_WORD_GAP}
               alignEnd={alignEnd}
+              // Arka vokal sığdığı sürece tek satır kalır; ancak taşarsa bölünür.
+              fillTarget={1}
             />
-          </View>
+          </Reanimated.View>
         ) : null}
       </TouchableOpacity>
     </Reanimated.View>
@@ -957,47 +989,33 @@ function LyricsPanel({
   /**
    * Hece süpürmesinin saati.
    *
-   * `useActiveProgress` konumu saniyede 4 kez, her örneklemede ~250 ms gecikmeyle
-   * verir. Önceki sürüm bu gecikmeli değere yumuşakça yaklaştığı için renk
-   * süpürmesi sesin sürekli gerisinde kalıyordu.
-   *
-   * Doğru yaklaşım öngörü: örnek geldiğinde konumu ve geldiği anı saklarız; her
-   * karede saat `örnek konum + örnekten bu yana geçen süre` olarak hesaplanır.
-   * Böylece saat sesin gerçek konumunu izler, süpürme lrc.red'deki gibi tam
-   * zamanında ilerler.
+   * `useActiveProgress` konumu saniyede 4 kez (250 ms'de bir) verir; doğrudan
+   * kullansaydık harf aydınlanması çeyrek saniyelik adımlarla sıçrardı. Bunun
+   * yerine saat, her konum örneğinde **bir sonraki örneğe kadar** doğrusal olarak
+   * ilerletilir (`withTiming`, UI thread'inde 60 fps). Hedef `konum + aralık`
+   * olduğu için süpürme, gecikmeli örneğin gerisinde kalmaz: örnek geldiği anda
+   * saat tam sesin bulunduğu yerden başlar.
    */
   const lyricClock = useSharedValue(lyricPosition);
-  const lyricClockBase = useSharedValue(lyricPosition);
-  const lyricClockBaseAt = useSharedValue(0);
-  const lyricClockPlaying = useSharedValue(player.isPlaying);
 
   useEffect(() => {
-    lyricClockBase.value = lyricPosition;
-    lyricClockBaseAt.value = Date.now();
-  }, [lyricPosition, lyricClockBase, lyricClockBaseAt]);
-
-  useEffect(() => {
-    lyricClockPlaying.value = player.isPlaying;
-  }, [player.isPlaying, lyricClockPlaying]);
-
-  const advanceLyricClock = () => {
-    'worklet';
-    const base = lyricClockBase.value;
-    if (!lyricClockPlaying.value || lyricClockBaseAt.value === 0) {
-      lyricClock.value = base;
+    const from = lyricClock.value;
+    if (!Number.isFinite(lyricPosition)) return;
+    // Duraklatıldı, geri sarıldı veya şarkı değişti: sıçramak yerine otur.
+    if (
+      !player.isPlaying ||
+      !Number.isFinite(from) ||
+      lyricPosition < from - 0.05 ||
+      lyricPosition - from > 1.5
+    ) {
+      lyricClock.value = lyricPosition;
       return;
     }
-    // Uygulama arka plandan döndüğünde ya da JS thread'i kilitlendiğinde aradaki
-    // süre saat olarak sayılmasın. 450 ms üstü öngörü, geç gelen konum örneğiyle
-    // birlikte ileri sıçramaya yol açardı.
-    const elapsed = Math.min(0.45, Math.max(0, (Date.now() - lyricClockBaseAt.value) / 1000));
-    lyricClock.value = base + elapsed;
-  };
-
-  useFrameCallback(
-    advanceLyricClock,
-    isAppActive && isFullscreenPlayerOpen && isLyricsMode
-  );
+    lyricClock.value = withTiming(lyricPosition + LYRIC_CLOCK_LOOKAHEAD, {
+      duration: LYRIC_CLOCK_LOOKAHEAD * 1000,
+      easing: Easing.linear,
+    });
+  }, [lyricPosition, player.isPlaying, lyricClock]);
 
   // Görüntülenecek satırlar: enstrümantal aralar + parantezden ayrılan arka
   // vokaller. `parsedLines` saf kalır (önbellek ve uzaktan senkron bozulmasın).
@@ -1418,6 +1436,9 @@ function LyricsPanel({
             }
 
             const isActive = index === activeLineRowIndex;
+            // Arka vokal, kendi zamanı gelince (satır geçişiyle aynı ön almayla)
+            // açılır ve konum o noktayı geçtiği sürece açık kalır.
+            const backgroundTime = item.line.background?.time ?? item.line.time;
             return (
               <LyricLineRowView
                 line={item.line}
@@ -1425,6 +1446,7 @@ function LyricsPanel({
                 isSelected={isShareSelecting && selectedShareSet.has(item.key)}
                 isSelectionMode={isShareSelecting}
                 distance={Math.abs(index - activeLineRowIndex)}
+                showBackground={lyricPosition + LYRIC_LINE_LEAD_SECONDS >= backgroundTime}
                 // Saat paylaşılan bir shared value'dur: satırlar yeniden
                 // çizilmeden harf renkleri UI thread'inde güncellenir.
                 clock={lyricClock}
@@ -5688,11 +5710,6 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
           title={player.activeTrack?.title || displayTitle || ''}
           artist={player.activeTrack?.artist || displayArtist || ''}
           artworkUri={player.artworkUri ?? currentArtworkUri ?? null}
-          sourceLabel={getLyricsSourceLabel(
-            currentLyrics,
-            parsedLines.some((line) => !!line.words && line.words.length > 0),
-            t('player.lyrics')
-          )}
           lines={selectedShareLines}
           theme={theme}
           t={t}
@@ -6109,12 +6126,22 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   lyricText: {
-    color: 'rgba(255, 255, 255, 0.5)',
+    color: 'rgba(255, 255, 255, 0.52)',
     fontSize: LYRIC_FONT_INACTIVE,
-    fontWeight: '700',
+    // Apple Music'in söz tipografisi kalın; ağırlık iki satırda da aynı olmalı.
+    fontWeight: '800',
     lineHeight: LYRIC_LINE_HEIGHT_INACTIVE,
     letterSpacing: -0.2,
     textAlign: 'left',
+    /*
+     * Pasif satırlardaki hafif bulanıklık hissi. React Native metne gerçek bir
+     * `blur` uygulayamadığı için kenarlar, metinle aynı renkte yumuşak bir gölge
+     * (offset 0, geniş yarıçap) ile dağıtılıyor; sonuç Apple Music'in odak dışı
+     * satırlarına yakın, kenarları yumuşamış bir görünüm.
+     */
+    textShadowColor: 'rgba(255, 255, 255, 0.32)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 5,
   },
   lyricTextActive: {
     color: '#ffffff',
@@ -6123,13 +6150,13 @@ const styles = StyleSheet.create({
      * Ölçüler pasif satırla birebir aynı olmalı: aktif satırın düzeni değişirse
      * liste satır geçişinde sıçrar. Vurgu rengi, gölgesi ve ölçeğiyle veriliyor.
      */
-    fontWeight: '700',
+    fontWeight: '800',
     lineHeight: LYRIC_LINE_HEIGHT_ACTIVE,
     letterSpacing: -0.2,
     textAlign: 'left',
     textShadowColor: 'rgba(255, 255, 255, 0.3)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 8,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 14,
   },
   lyricTextEnd: {
     textAlign: 'right',
@@ -6145,14 +6172,17 @@ const styles = StyleSheet.create({
   lyricBackgroundText: {
     color: 'rgba(255, 255, 255, 0.62)',
     fontSize: LYRIC_BG_FONT,
-    fontWeight: '600',
+    fontWeight: '700',
     lineHeight: LYRIC_BG_LINE_HEIGHT,
     letterSpacing: -0.1,
     textAlign: 'left',
+    textShadowColor: 'rgba(255, 255, 255, 0.26)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
   },
-  /** Arka vokalin aktif hâli: ölçüler aynı, yalnızca renk/sölge farkı. */
+  /** Arka vokalin aktif hâli: ölçüler aynı, yalnızca renk farkı. */
   lyricBackgroundTextActive: {
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: 'rgba(255, 255, 255, 0.92)',
   },
   lyricGapRow: {
     width: '100%',

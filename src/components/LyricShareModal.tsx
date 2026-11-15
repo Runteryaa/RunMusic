@@ -85,7 +85,6 @@ interface LyricSharePreviewModalProps {
   title: string;
   artist: string;
   artworkUri: string | null;
-  sourceLabel?: string;
   /** Seçilen satırlar, paneldeki sırayla. */
   lines: LyricShareLine[];
   theme: ThemeColors;
@@ -105,7 +104,6 @@ export function LyricSharePreviewModal({
   title,
   artist,
   artworkUri,
-  sourceLabel,
   lines,
   theme,
   t,
@@ -307,11 +305,6 @@ export function LyricSharePreviewModal({
 
                 <View style={styles.cardFooter}>
                   <Text style={styles.cardWordmark}>RunMusic</Text>
-                  {sourceLabel ? (
-                    <Text numberOfLines={1} style={styles.cardSource}>
-                      {sourceLabel}
-                    </Text>
-                  ) : null}
                 </View>
               </View>
             </View>
@@ -465,18 +458,26 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 17,
     lineHeight: 24,
-    fontWeight: '700',
+    // Paneldeki sözlerle aynı ağırlık: Apple Music'in söz tipografisi kalın.
+    fontWeight: '800',
     letterSpacing: -0.3,
+    // Kartta da yumuşak beyaz hâle; sözlerin arkasındaki fotoğrafta okunurluk sağlar.
+    textShadowColor: 'rgba(255, 255, 255, 0.35)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
   },
   cardLineTextEnd: {
     textAlign: 'right',
   },
   cardLineBackground: {
-    color: 'rgba(255,255,255,0.55)',
+    color: 'rgba(255,255,255,0.6)',
     fontSize: 13,
     lineHeight: 18,
-    fontWeight: '600',
+    fontWeight: '700',
     marginTop: 2,
+    textShadowColor: 'rgba(255, 255, 255, 0.22)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
   },
   cardEmptyText: {
     color: 'rgba(255,255,255,0.45)',
@@ -495,13 +496,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1.4,
     textTransform: 'uppercase',
-  },
-  cardSource: {
-    color: 'rgba(255,255,255,0.45)',
-    fontSize: 10,
-    fontWeight: '600',
-    marginLeft: 10,
-    flexShrink: 1,
   },
   errorText: {
     color: '#fca5a5',
