@@ -96,9 +96,11 @@ import {
 import { UpNextRow, type UpNextItem } from './QueueUpNextList';
 import { Swipeable } from 'react-native-gesture-handler';
 import Reanimated, {
+  type AnimatedStyle,
   Easing,
   FadeInDown,
   LinearTransition,
+  interpolate,
   interpolateColor,
   useAnimatedStyle,
   useSharedValue,
@@ -251,6 +253,15 @@ const LYRIC_GLOW_SHADOW_RADIUS = 14;
 const LYRIC_BG_GLOW_SHADOW_COLOR = 'rgba(255, 255, 255, 0.45)';
 const LYRIC_BG_GLOW_SHADOW_RADIUS = 10;
 /**
+ * Süpürme saatinin öne alması (saniye).
+ *
+ * Saat, konum örneklerine göre doğrusal ilerlediği için örneklemenin kendi
+ * gecikmesi (konumun ses motorundan alınıp JS'e ulaşması) doğrudan renklenmeye
+ * yansıyordu; harfler sesin bir tık gerisinden yanıyordu. Bu sabit saati
+ * örneklenen konumun bu kadar önüne taşır ve farkı kapatır.
+ */
+const LYRIC_CLOCK_LEAD = 0.1;
+/**
  * 0→1 arası yumuşak geçiş (smoothstep). Lineer rampalar (harf yanması, kelime
  * kalkışı) sert görünüyordu; bu eğri başta ve sonda hızı sıfıra indirir.
  */
@@ -320,10 +331,10 @@ function buildShareLines(lines: LyricLine[]): LyricShareLine[] {
  * için bu parçalara ne `opacity` ne de animasyonlu `color` uygulanabiliyordu.
  * Artık her harf ayrı bir `<Text>`; bu yüzden animasyon gerçekten çalışıyor.
  *
- * Yalnızca **renk** animasyonlu; hâle (text shadow) statik stilden geliyor.
- * Gölgeyi de her karede animasyonlamak Android'de harf başına yeniden gölge
- * çizimi demek: gereksiz maliyet ve gölgenin kaybolabildiği bir yol. Statik
- * stilde kalınca harflerin hâlesi her zaman görünür.
+ * Harfin kendi `color`'ı animasyonlu; hâle/bulanıklık satırdan gelen ortak
+ * `textShadowStyle` ile veriliyor. Bu stil satır düzeyinde **tek kez** üretilip
+ * bütün harflere aynı referansla geçirildiği için harf başına ayrı animasyon
+ * kaydı oluşmuyor, yalnızca satırın odak değeri değişiyor.
  *
  * `clock` panelin ortak saatidir; 4 Hz'lik oynatma konumu güncellemeleri harf
  * geçişlerini sıçratmaz.
@@ -336,6 +347,7 @@ function SweepChar({
   dimColor,
   litColor,
   textStyle,
+  textShadowStyle,
 }: {
   clock: { value: number };
   start: number;
@@ -344,6 +356,8 @@ function SweepChar({
   dimColor: string;
   litColor: string;
   textStyle: StyleProp<TextStyle>;
+  /** Satır odağına bağlı animasyonlu gölge (bulanıklık ↔ hâle). */
+  textShadowStyle: AnimatedStyle<TextStyle>;
 }) {
   const animatedStyle = useAnimatedStyle(() => {
     /*
@@ -360,7 +374,11 @@ function SweepChar({
           : litColor,
     };
   });
-  return <Reanimated.Text style={[textStyle, animatedStyle]}>{text}</Reanimated.Text>;
+  return (
+    <Reanimated.Text style={[textStyle, animatedStyle, textShadowStyle]}>
+      {text}
+    </Reanimated.Text>
+  );
 }
 
 /**
@@ -536,6 +554,7 @@ const LyricWordBox = React.memo(function LyricWordBox({
   litColor,
   activeTextStyle,
   idleTextStyle,
+  textShadowStyle,
   onMeasure,
 }: {
   node: LyricWordNode;
@@ -545,6 +564,8 @@ const LyricWordBox = React.memo(function LyricWordBox({
   litColor: string;
   activeTextStyle: StyleProp<TextStyle>;
   idleTextStyle: StyleProp<TextStyle>;
+  /** Satır odağına bağlı animasyonlu gölge (bulanıklık ↔ hâle). */
+  textShadowStyle: AnimatedStyle<TextStyle>;
   onMeasure: (width: number) => void;
 }) {
   const animate = isActive && node.timed;
@@ -585,11 +606,15 @@ const LyricWordBox = React.memo(function LyricWordBox({
               dimColor={dimColor}
               litColor={litColor}
               textStyle={activeTextStyle}
+              textShadowStyle={textShadowStyle}
             />
           );
         })
       ) : (
-        <Text style={isActive ? activeTextStyle : idleTextStyle}>{node.text}</Text>
+        <Reanimated.Text
+          style={[isActive ? activeTextStyle : idleTextStyle, textShadowStyle]}>
+          {node.text}
+        </Reanimated.Text>
       )}
     </Reanimated.View>
   );
@@ -621,6 +646,7 @@ function LyricWords({
   idleTextStyle,
   fillTarget = LYRIC_LINE_FILL_TARGET,
   availableWidth,
+  textShadowStyle,
 }: {
   text: string;
   words?: LyricLine['words'];
@@ -640,6 +666,12 @@ function LyricWords({
    * daralıyor ve arka vokal her kelimede alt satıra düşüyordu.
    */
   availableWidth: number;
+  /**
+   * Satırın odağına bağlı animasyonlu gölge (bulanıklık ↔ hâle). Satır
+   * düzeyinde bir kez üretilir ve tüm kelimelere/harflere aynı referansla
+   * geçirilir; böylece `React.memo` korunur.
+   */
+  textShadowStyle: AnimatedStyle<TextStyle>;
 }) {
   const nodes = useMemo(() => prepareWordNodes(text, words), [text, words]);
 
@@ -698,6 +730,7 @@ function LyricWords({
       litColor={litColor}
       activeTextStyle={activeTextStyle}
       idleTextStyle={idleTextStyle}
+      textShadowStyle={textShadowStyle}
       onMeasure={(width) => registerWidth(node.key, width)}
     />
   );
@@ -783,6 +816,14 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
       : LYRIC_FALLOFF_ALPHA[Math.min(distance, LYRIC_FALLOFF_ALPHA.length - 1)];
   const alpha = useSharedValue(targetAlpha);
   const scale = useSharedValue(isActive || isSelectionMode ? 1 : 0.985);
+  /**
+   * Odak: 0 = pasif (bulanık), 1 = aktif (hâleli).
+   *
+   * Blur ↔ glow geçişi stil değişimiyle anlık oluyordu; bu değer iki efekt
+   * arasında yumuşak bir geçiş sağlar. Satır aktifleştiğinde hâle belirirken
+   * bulanıklık dağılır, satır geride kaldığında tersi olur.
+   */
+  const focus = useSharedValue(isActive || isSelectionMode ? 1 : 0);
 
   useEffect(() => {
     alpha.value = withTiming(targetAlpha, {
@@ -793,11 +834,47 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
       duration: LYRIC_SETTLE_MS,
       easing: LYRIC_EASING,
     });
-  }, [alpha, scale, targetAlpha, isActive, isSelectionMode]);
+    focus.value = withTiming(isActive || isSelectionMode ? 1 : 0, {
+      duration: LYRIC_SETTLE_MS,
+      easing: LYRIC_EASING,
+    });
+  }, [alpha, scale, focus, targetAlpha, isActive, isSelectionMode]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: alpha.value,
     transform: [{ scale: scale.value }],
+  }));
+
+  /*
+   * Ana söz gölgesi: bulanıklık (dar yarıçap, yüksek opaklık) → hâle (geniş
+   * yarıçap, düşük opaklık). Yarıçap ve renk birlikte animasyonlandığı için
+   * geçiş iki ayrı efekt arasında kayıyormuş gibi görünüyor, sıçramıyor.
+   */
+  const textShadowStyle = useAnimatedStyle(() => ({
+    textShadowColor: interpolateColor(
+      focus.value,
+      [0, 1],
+      [LYRIC_BLUR_SHADOW_COLOR, LYRIC_GLOW_SHADOW_COLOR]
+    ),
+    textShadowRadius: interpolate(
+      focus.value,
+      [0, 1],
+      [LYRIC_BLUR_SHADOW_RADIUS, LYRIC_GLOW_SHADOW_RADIUS]
+    ),
+  }));
+
+  /** Arka vokal: aynı geçiş, daha küçük puntoya göre daha dar yarıçapla. */
+  const backgroundTextShadowStyle = useAnimatedStyle(() => ({
+    textShadowColor: interpolateColor(
+      focus.value,
+      [0, 1],
+      [LYRIC_BLUR_SHADOW_COLOR, LYRIC_BG_GLOW_SHADOW_COLOR]
+    ),
+    textShadowRadius: interpolate(
+      focus.value,
+      [0, 1],
+      [LYRIC_BLUR_SHADOW_RADIUS, LYRIC_BG_GLOW_SHADOW_RADIUS]
+    ),
   }));
 
   const alignEnd = line.alignment === 'end';
@@ -834,6 +911,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
           gap={LYRIC_WORD_GAP}
           alignEnd={alignEnd}
           availableWidth={availableWidth}
+          textShadowStyle={textShadowStyle}
         />
 
         {/*
@@ -858,6 +936,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
               // Arka vokal sığdığı sürece tek satır kalır; ancak taşarsa bölünür.
               fillTarget={1}
               availableWidth={availableWidth}
+              textShadowStyle={backgroundTextShadowStyle}
             />
           </Reanimated.View>
         ) : null}
@@ -1147,32 +1226,38 @@ function LyricsPanel({
    *
    * `useActiveProgress` konumu saniyede 4 kez (250 ms'de bir) verir; doğrudan
    * kullansaydık harf aydınlanması çeyrek saniyelik adımlarla sıçrardı. Bunun
-   * yerine saat, her örnekte `konum + LYRIC_CLOCK_LOOKAHEAD` hedefine 250 ms'de
-   * varacak şekilde doğrusal ilerletilir (UI thread'inde 60 fps).
+   * yerine saat, `konum + ön alma` hedefine 250 ms'de varacak şekilde doğrusal
+   * ilerletilir (UI thread'inde 60 fps).
    *
-   * En kritik kural: saat **asla gerçek konumdan kopuk kalmamalı**. Sabit süreli
-   * yaklaşım küçük sapmaları kendiliğinden kapatır, ancak panel açılışı, seek
-   * veya şarkı değişimi gibi büyük sıçramalarda saat eski yerde kalırsa satır
-   * aktif görünürken harfler sönük kalır. Bu yüzden aradaki fark eşiği aşarsa
-   * saat önce konuma **anında** oturtulur, sonra normal ilerlemesine bırakılır.
+   * `LYRIC_CLOCK_LEAD` örnekleme gecikmesini telafi eder: konum ses motorundan
+   * alınıp JS'e ulaşana kadar geçen süre olmasaydı harfler sesin bir tık
+   * gerisinden yanardı.
+   *
+   * En kritik kural: saat **asla gerçek konumdan kopuk kalmamalı**. Panel
+   * açılışı, seek veya şarkı değişimi gibi büyük sıçramalarda saat eski yerde
+   * kalırsa satır aktif görünürken harfler sönük kalır. Bu yüzden fark eşiği
+   * aşarsa (ya da saat hedefin gerisine düşerse) saat anında hedefe oturtulur,
+   * sonra normal ilerlemesine bırakılır.
    */
-  const lyricClock = useSharedValue(lyricPosition);
+  const lyricClock = useSharedValue(lyricPosition + LYRIC_CLOCK_LEAD);
 
   useEffect(() => {
     if (!Number.isFinite(lyricPosition)) return;
 
+    const desired = lyricPosition + LYRIC_CLOCK_LEAD;
+
     // Duraklatıldı: saati olduğu yere sabitle.
     if (!player.isPlaying) {
-      lyricClock.value = lyricPosition;
+      lyricClock.value = desired;
       return;
     }
 
     const from = lyricClock.value;
-    const drifted = !Number.isFinite(from) || Math.abs(from - lyricPosition) > 0.35;
-    // Kopuklukta önce anlık düzeltme; ardından animasyon bu değerden başlar.
-    if (drifted) lyricClock.value = lyricPosition;
+    // Kopukluk (seek/şarkı değişimi) veya saat geride kaldı: anında düzelt.
+    const drifted = !Number.isFinite(from) || Math.abs(from - desired) > 0.35;
+    if (drifted || from < desired - 0.02) lyricClock.value = desired;
 
-    lyricClock.value = withTiming(lyricPosition + LYRIC_CLOCK_LOOKAHEAD, {
+    lyricClock.value = withTiming(desired + LYRIC_CLOCK_LOOKAHEAD, {
       duration: LYRIC_CLOCK_LOOKAHEAD * 1000,
       easing: Easing.linear,
     });
