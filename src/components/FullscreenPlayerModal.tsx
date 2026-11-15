@@ -166,7 +166,7 @@ function formatTime(secs: number): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Satırların yeni aktif satıra geçiş süresi (BitChord: LYRIC_SETTLE_MS). */
-const LYRIC_SETTLE_MS = 400;
+const LYRIC_SETTLE_MS = 560;
 /** Kaydırma, satır gelmeden bu kadar önce başlar. */
 const LYRIC_SCROLL_LEAD_SECONDS = 0.8;
 /**
@@ -222,10 +222,25 @@ const LYRIC_WORD_GAP = 7;
 const LYRIC_BG_FONT = 17;
 const LYRIC_BG_LINE_HEIGHT = 23;
 const LYRIC_BG_WORD_GAP = 5;
-/** Söylenen kelimenin yukarı sıçrama mesafesi (dp). */
+/** Söylenen kelimenin yukarı kalkma mesafesi (dp). */
 const LYRIC_WORD_LIFT = 4;
-/** Aktif harfin hâle yarıçapı (dp). */
-const LYRIC_CHAR_GLOW_RADIUS = 12;
+/**
+ * Söz metninin gölgesi (hâle): bulanıklık 5, opaklık 0.75, kayma yok.
+ * Aktif harflerin animasyonlu hâlesi de aynı değerleri kullanır; böylece metin
+ * ile söylenen kısım aynı yumuşaklıkta görünür.
+ */
+const LYRIC_TEXT_SHADOW_COLOR = 'rgba(255, 255, 255, 0.75)';
+const LYRIC_TEXT_SHADOW_RADIUS = 5;
+const LYRIC_TEXT_SHADOW_OFFSET = { width: 0, height: 0 };
+/**
+ * 0→1 arası yumuşak geçiş (smoothstep). Lineer rampalar (harf yanması, kelime
+ * kalkışı) sert görünüyordu; bu eğri başta ve sonda hızı sıfıra indirir.
+ */
+function smoothstep(value: number): number {
+  'worklet';
+  const t = value <= 0 ? 0 : value >= 1 ? 1 : value;
+  return t * t * (3 - 2 * t);
+}
 /**
  * Söz listesinin yatay iç boşluğu (`lyricsListContent.paddingHorizontal`) ve
  * seçim modunda satıra eklenen iç boşluk (`lyricRowSelectable.paddingHorizontal`).
@@ -298,7 +313,6 @@ function SweepChar({
   dimColor,
   litColor,
   textStyle,
-  glowColor,
 }: {
   clock: { value: number };
   start: number;
@@ -307,7 +321,6 @@ function SweepChar({
   dimColor: string;
   litColor: string;
   textStyle: StyleProp<TextStyle>;
-  glowColor?: string;
 }) {
   const animatedStyle = useAnimatedStyle(() => {
     /*
@@ -317,28 +330,24 @@ function SweepChar({
      */
     const now = Number.isFinite(clock.value) ? clock.value : end;
     const clamped = Math.min(Math.max(now, start), end);
-    const lit = end > start ? (clamped - start) / (end - start) : 1;
+    const span = end - start;
+    const lit = span > 0 ? (clamped - start) / span : 1;
     /*
-     * Hâle (glow) `textStyle`'a bırakılmıyor: Android'de animasyonlu `color`
-     * taşıyan bir `<Text>` gölgeyi kaybedebiliyor. Ayrıca hâle, harf yandıkça
-     * güçleniyor — Apple Music'te söylenen kelimenin çevresi parlar, henüz
-     * söylenmemiş kısım sönük kalır.
-     *
-     * Gölge rengi 4 kademeye yuvarlanıyor: her karede yeni bir renk üretmek
-     * yerine yalnızca birkaç kez değişir. Görsel fark yok, ama Android'de her
-     * harf için yeniden gölge çizme maliyeti büyük ölçüde düşer.
+     * Renk **lineer** kalır: süpürmenin lrc.red ile birebir aynı anda ilerlemesi
+     * gerekiyor. Hâle ise yumuşak bir eğriyle güçlenir; lineer rampa sert
+     * görünüyordu. Hâle rengi az sayıda kademeye yuvarlanıyor: görsel fark yok,
+     * ama Android'de her harf için yeniden gölge çizme maliyeti düşer.
      */
-    const glowLit = Math.round(lit * 4) / 4;
-    // Arka vokal gibi kendi hâle rengini vermeyen satırlar için yumuşak beyaz.
-    const glow = glowColor ?? 'rgba(255, 255, 255, 0.28)';
+    const glowLit = Math.round(smoothstep(lit) * 4) / 4;
     return {
-      color:
-        end > start
-          ? interpolateColor(clamped, [start, end], [dimColor, litColor])
-          : litColor,
-      textShadowColor: interpolateColor(glowLit, [0, 1], ['rgba(255,255,255,0)', glow]),
-      textShadowOffset: { width: 0, height: 0 },
-      textShadowRadius: LYRIC_CHAR_GLOW_RADIUS,
+      color: span > 0 ? interpolateColor(clamped, [start, end], [dimColor, litColor]) : litColor,
+      textShadowColor: interpolateColor(
+        glowLit,
+        [0, 1],
+        ['rgba(255, 255, 255, 0)', LYRIC_TEXT_SHADOW_COLOR]
+      ),
+      textShadowOffset: LYRIC_TEXT_SHADOW_OFFSET,
+      textShadowRadius: LYRIC_TEXT_SHADOW_RADIUS,
     };
   });
   return <Reanimated.Text style={[textStyle, animatedStyle]}>{text}</Reanimated.Text>;
@@ -517,7 +526,6 @@ const LyricWordBox = React.memo(function LyricWordBox({
   litColor,
   activeTextStyle,
   idleTextStyle,
-  glowColor,
   onMeasure,
 }: {
   node: LyricWordNode;
@@ -527,20 +535,22 @@ const LyricWordBox = React.memo(function LyricWordBox({
   litColor: string;
   activeTextStyle: StyleProp<TextStyle>;
   idleTextStyle: StyleProp<TextStyle>;
-  glowColor?: string;
   onMeasure: (width: number) => void;
 }) {
   const animate = isActive && node.timed;
   const liftStyle = useAnimatedStyle(() => {
     if (!animate) return { transform: [{ translateY: 0 }, { scale: 1 }] };
-    const now = Number.isFinite(clock.value) ? clock.value : node.start;
-    // Kelime başında hızlı kalkış (120 ms), kelime boyunca yukarıda kalma,
-    // kelime bittikten sonra yumuşak yerleşme (500 ms).
-    const rise = Math.min(1, Math.max(0, (now - node.start) / 0.12));
-    const settle = Math.min(1, Math.max(0, (now - node.end) / 0.5));
-    const amount = Math.max(0, rise * (1 - settle));
+    const now = Number.isFinite(clock.value) ? clock.value : node.end;
+    /*
+     * Kelime başında yumuşak kalkış, kelime boyunca havada kalma, kelime
+     * bittikten sonra uzun bir yerleşme. Süreler önceki sürümden uzun:
+     * 120 ms'lik kalkış "sert" görünüyordu.
+     */
+    const rise = smoothstep((now - node.start) / 0.26);
+    const settle = smoothstep((now - node.end) / 0.78);
+    const amount = rise * (1 - settle);
     return {
-      transform: [{ translateY: -LYRIC_WORD_LIFT * amount }, { scale: 1 + 0.035 * amount }],
+      transform: [{ translateY: -LYRIC_WORD_LIFT * amount }, { scale: 1 + 0.02 * amount }],
     };
   });
 
@@ -565,7 +575,6 @@ const LyricWordBox = React.memo(function LyricWordBox({
               dimColor={dimColor}
               litColor={litColor}
               textStyle={activeTextStyle}
-              glowColor={glowColor}
             />
           );
         })
@@ -602,7 +611,6 @@ function LyricWords({
   idleTextStyle,
   fillTarget = LYRIC_LINE_FILL_TARGET,
   availableWidth,
-  glowColor,
 }: {
   text: string;
   words?: LyricLine['words'];
@@ -622,8 +630,6 @@ function LyricWords({
    * daralıyor ve arka vokal her kelimede alt satıra düşüyordu.
    */
   availableWidth: number;
-  /** Söylenen harfin çevresindeki hâle rengi. */
-  glowColor?: string;
 }) {
   const nodes = useMemo(() => prepareWordNodes(text, words), [text, words]);
 
@@ -682,7 +688,6 @@ function LyricWords({
       litColor={litColor}
       activeTextStyle={activeTextStyle}
       idleTextStyle={idleTextStyle}
-      glowColor={glowColor}
       onMeasure={(width) => registerWidth(node.key, width)}
     />
   );
@@ -726,6 +731,7 @@ function LyricWords({
 /** Bir söz satırı: sola hizalı, mesafeye göre sönükleşen, aktifken hece süpürmeli. */
 const LyricLineRowView = React.memo(function LyricLineRowView({
   line,
+  lineKey,
   isActive,
   isSelected,
   isSelectionMode,
@@ -733,11 +739,12 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
   showBackground,
   availableWidth,
   clock,
-  theme,
   onSeek,
   onToggleSelect,
 }: {
   line: LyricLine;
+  /** Paylaşım seçiminde bu satırı işaretlemek için kullanılan anahtar. */
+  lineKey: string;
   isActive: boolean;
   isSelected: boolean;
   isSelectionMode: boolean;
@@ -750,9 +757,14 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
   /** Satırın metin için kullanabildiği gerçek genişlik (dp). */
   availableWidth: number;
   clock: { value: number };
-  theme: ThemeColors;
+  /**
+   * Geri çağrılar **kararlı** olmalı (kimlikleri değişmemeli): satırlar
+   * `React.memo` ile korunuyor. Satır başına ok fonksiyonu üretmek, oynatma
+   * konumu her güncellendiğinde tüm görünür satırların yeniden çizilmesine ve
+   * renk geçişinin kasmasına yol açıyordu.
+   */
   onSeek: (time: number) => void;
-  onToggleSelect: () => void;
+  onToggleSelect: (key: string) => void;
 }) {
   // Seçim modunda okunabilirlik önemlidir: tüm satırlar tam parlaklıkta kalır.
   const targetAlpha =
@@ -760,14 +772,14 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
       ? 1
       : LYRIC_FALLOFF_ALPHA[Math.min(distance, LYRIC_FALLOFF_ALPHA.length - 1)];
   const alpha = useSharedValue(targetAlpha);
-  const scale = useSharedValue(isActive || isSelectionMode ? 1 : 0.98);
+  const scale = useSharedValue(isActive || isSelectionMode ? 1 : 0.985);
 
   useEffect(() => {
     alpha.value = withTiming(targetAlpha, {
       duration: LYRIC_SETTLE_MS,
       easing: LYRIC_EASING,
     });
-    scale.value = withTiming(isActive || isSelectionMode ? 1 : 0.98, {
+    scale.value = withTiming(isActive || isSelectionMode ? 1 : 0.985, {
       duration: LYRIC_SETTLE_MS,
       easing: LYRIC_EASING,
     });
@@ -781,20 +793,17 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
   const alignEnd = line.alignment === 'end';
 
   // Harf düğümleri memoize olduğu için stil referansı sabit kalmalı.
-  const activeTextStyle = useMemo(
-    () => [styles.lyricTextActive, { textShadowColor: theme.glowColor }],
-    [theme.glowColor]
-  );
+  const activeTextStyle = styles.lyricTextActive;
   const backgroundActiveTextStyle = useMemo(
     () => [styles.lyricBackgroundText, styles.lyricBackgroundTextActive],
     []
   );
 
   return (
-    <Reanimated.View style={animatedStyle} layout={LinearTransition.duration(240)}>
+    <Reanimated.View style={animatedStyle} layout={LinearTransition.duration(320)}>
       <TouchableOpacity
         activeOpacity={0.7}
-        onPress={() => (isSelectionMode ? onToggleSelect() : onSeek(line.time))}
+        onPress={() => (isSelectionMode ? onToggleSelect(lineKey) : onSeek(line.time))}
         accessibilityRole={isSelectionMode ? 'checkbox' : 'button'}
         accessibilityState={isSelectionMode ? { checked: isSelected } : undefined}
         style={[
@@ -815,7 +824,6 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
           gap={LYRIC_WORD_GAP}
           alignEnd={alignEnd}
           availableWidth={availableWidth}
-          glowColor={theme.glowColor}
         />
 
         {/*
@@ -824,7 +832,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
         */}
         {line.background && showBackground ? (
           <Reanimated.View
-            entering={FadeInDown.duration(260)}
+            entering={FadeInDown.duration(420)}
             style={styles.lyricBackgroundWrap}>
             <LyricWords
               text={line.background.text}
@@ -848,14 +856,29 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
   );
 });
 
-/** Boşluktaki üç noktadan biri; boşluğun ilerlemesine göre sırayla yanar. */
-function GapDot({ index, progress }: { index: number; progress: number }) {
-  const value = useSharedValue(progress);
-  useEffect(() => {
-    value.value = withTiming(progress, { duration: 260, easing: Easing.linear });
-  }, [progress, value]);
+/**
+ * Boşluktaki üç noktadan biri.
+ *
+ * İlerleme, panelin ortak saatinden (`clock`) UI thread'inde hesaplanır: böylece
+ * noktalar, oynatma konumu güncellendikçe listeyi yeniden çizdirmek zorunda
+ * kalmaz. Renk geçişindeki sertlik `smoothstep` ile yumuşatıldı.
+ */
+function GapDot({
+  index,
+  clock,
+  time,
+  endTime,
+}: {
+  index: number;
+  clock: { value: number };
+  time: number;
+  endTime: number;
+}) {
   const animatedStyle = useAnimatedStyle(() => {
-    const lit = Math.max(0, Math.min(1, value.value * 3 - index));
+    const now = Number.isFinite(clock.value) ? clock.value : time;
+    const span = Math.max(0.001, endTime - time);
+    const progress = Math.max(0, Math.min(1, (now - time) / span));
+    const lit = smoothstep(Math.max(0, Math.min(1, progress * 3 - index)));
     return {
       opacity: GAP_DOT_REST_ALPHA + (1 - GAP_DOT_REST_ALPHA) * lit,
       transform: [{ scale: 0.7 + 0.3 * lit }],
@@ -867,15 +890,19 @@ function GapDot({ index, progress }: { index: number; progress: number }) {
 /** Enstrümantal aranın üç noktası; yalnızca ara sürerken açılır. */
 const LyricGapRowView = React.memo(function LyricGapRowView({
   active,
-  progress,
+  clock,
+  time,
+  endTime,
 }: {
   active: boolean;
-  progress: number;
+  clock: { value: number };
+  time: number;
+  endTime: number;
 }) {
   const height = useSharedValue(active ? GAP_ROW_HEIGHT : 0);
   useEffect(() => {
     height.value = withTiming(active ? GAP_ROW_HEIGHT : 0, {
-      duration: 320,
+      duration: 420,
       easing: LYRIC_EASING,
     });
   }, [active, height]);
@@ -886,7 +913,7 @@ const LyricGapRowView = React.memo(function LyricGapRowView({
       {active ? (
         <View style={styles.lyricGapDots}>
           {[0, 1, 2].map((index) => (
-            <GapDot key={index} index={index} progress={progress} />
+            <GapDot key={index} index={index} clock={clock} time={time} endTime={endTime} />
           ))}
         </View>
       ) : null}
@@ -1110,28 +1137,34 @@ function LyricsPanel({
    *
    * `useActiveProgress` konumu saniyede 4 kez (250 ms'de bir) verir; doğrudan
    * kullansaydık harf aydınlanması çeyrek saniyelik adımlarla sıçrardı. Bunun
-   * yerine saat, her konum örneğinde **bir sonraki örneğe kadar** doğrusal olarak
-   * ilerletilir (`withTiming`, UI thread'inde 60 fps). Hedef `konum + aralık`
-   * olduğu için süpürme, gecikmeli örneğin gerisinde kalmaz: örnek geldiği anda
-   * saat tam sesin bulunduğu yerden başlar.
+   * yerine saat, her konum örneğinde hedefe doğru **sabit hızda** ilerletilir
+   * (`withTiming`, UI thread'inde 60 fps).
+   *
+   * Süre sabit 250 ms değil, `hedef - şu anki değer` kadar: örnekler biraz erken
+   * ya da geç geldiğinde sabit süre kullanmak saatin hızını değiştiriyor ve
+   * süpürme gözle görülür biçimde dalgalanıyordu. Mesafeyle orantılı süre, saati
+   * her zaman gerçek zamanla aynı hızda tutar.
    */
   const lyricClock = useSharedValue(lyricPosition);
 
   useEffect(() => {
-    const from = lyricClock.value;
     if (!Number.isFinite(lyricPosition)) return;
+    const from = lyricClock.value;
+    const target = lyricPosition + LYRIC_CLOCK_LOOKAHEAD;
     // Duraklatıldı, geri sarıldı veya şarkı değişti: sıçramak yerine otur.
     if (
       !player.isPlaying ||
       !Number.isFinite(from) ||
       lyricPosition < from - 0.05 ||
-      lyricPosition - from > 1.5
+      target <= from + 0.005 ||
+      from - lyricPosition > 1.5
     ) {
       lyricClock.value = lyricPosition;
       return;
     }
-    lyricClock.value = withTiming(lyricPosition + LYRIC_CLOCK_LOOKAHEAD, {
-      duration: LYRIC_CLOCK_LOOKAHEAD * 1000,
+    lyricClock.value = withTiming(target, {
+      // Sabit hız: 1 saniyelik konum = 1 saniyelik animasyon.
+      duration: (target - from) * 1000,
       easing: Easing.linear,
     });
   }, [lyricPosition, player.isPlaying, lyricClock]);
@@ -1158,6 +1191,25 @@ function LyricsPanel({
 
   /** Paylaşım kartı için satır listesi (boşluk işaretleri hariç). */
   const shareLines = useMemo(() => buildShareLines(parsedLines), [parsedLines]);
+
+  /**
+   * Arka vokali açılmış **son satırın** indeksi.
+   *
+   * Satırlar oynatma konumu her güncellendiğinde yeniden çizilmesin diye
+   * görünürlük bilgisi tek bir sayıya indiriliyor ve `extraData`'ya ekleniyor:
+   * liste yalnızca gerçekten bir arka vokal açıldığında tazelenir. Bu, renk
+   * geçişinin kasmasına yol açan gereksiz çizimleri önler.
+   */
+  const backgroundRevealedRow = useMemo(() => {
+    const position = lyricPosition + LYRIC_LINE_LEAD_SECONDS;
+    let revealed = -1;
+    for (let i = 0; i < displayRows.length; i++) {
+      const row = displayRows[i];
+      if (row.kind !== 'line' || !row.line.background) continue;
+      if (position >= row.line.background.time) revealed = i;
+    }
+    return revealed;
+  }, [displayRows, lyricPosition]);
 
   /** Seçim moduna girerken çalan satır ve ardından gelen üç satır seçili gelir. */
   const shareInitialKeys = useMemo(() => {
@@ -1217,6 +1269,61 @@ function LyricsPanel({
       player.seekTo(Math.max(0, time + appliedLyricsOffset));
     },
     [player, appliedLyricsOffset]
+  );
+
+  /**
+   * Satır çizici.
+   *
+   * `useCallback` ile sabitleniyor: aksi hâlde oynatma konumu her güncellendiğinde
+   * kimliği değişip listenin tüm hücrelerini yeniden çizdiriyordu. Buradaki
+   * bağımlılıklar yalnızca satır geçişlerinde/seçimde değişir; renk süpürmesi
+   * `clock` shared value'undan UI thread'inde okunur.
+   */
+  const renderLyricRow = useCallback(
+    ({ item, index }: { item: LyricDisplayRow; index: number }) => {
+      if (item.kind === 'gap') {
+        // Noktaların ilerlemesi saatten hesaplandığı için `progress` prop'una
+        // gerek yok; satır yalnızca aktiflik değişiminde çizilir.
+        return (
+          <LyricGapRowView
+            active={index === activeRowIndex}
+            clock={lyricClock}
+            time={item.time}
+            endTime={item.endTime}
+          />
+        );
+      }
+
+      return (
+        <LyricLineRowView
+          line={item.line}
+          lineKey={item.key}
+          isActive={index === activeLineRowIndex}
+          isSelected={isShareSelecting && selectedShareSet.has(item.key)}
+          isSelectionMode={isShareSelecting}
+          distance={Math.abs(index - activeLineRowIndex)}
+          // Arka vokal, kendi zamanı gelince açılır ve açık kalır.
+          showBackground={index <= backgroundRevealedRow}
+          availableWidth={lyricsAvailableWidth}
+          // Saat paylaşılan bir shared value'dur: satırlar yeniden
+          // çizilmeden harf renkleri UI thread'inde güncellenir.
+          clock={lyricClock}
+          onSeek={seekToLyricTime}
+          onToggleSelect={onToggleShareLine}
+        />
+      );
+    },
+    [
+      activeRowIndex,
+      activeLineRowIndex,
+      backgroundRevealedRow,
+      isShareSelecting,
+      selectedShareSet,
+      lyricsAvailableWidth,
+      lyricClock,
+      seekToLyricTime,
+      onToggleShareLine,
+    ]
   );
 
   const toggleAutoScroll = useCallback(() => {
@@ -1521,7 +1628,14 @@ function LyricsPanel({
           maxToRenderPerBatch={14}
           windowSize={9}
           removeClippedSubviews={false}
-          extraData={`${activeRowIndex}-${activeLineRowIndex}-${lyricPosition}-${appliedLyricsOffset}-${lyricsAvailableWidth}`}
+          /*
+           * Hücreler yalnızca gerçekten değişen şeylerle tazelenir: aktif satır,
+           * açılmış arka vokaller, seçim ve ölçülen genişlik. Oynatma konumu
+           * burada YOK — renk süpürmesi UI thread'inde saatten okunuyor. Konum
+           * her güncellendiğinde listeyi yeniden çizdirmek, animasyonu
+           * kastıran asıl sebepti.
+           */
+          extraData={`${activeRowIndex}-${activeLineRowIndex}-${backgroundRevealedRow}-${selectedShareKeys.join(',')}-${lyricsAvailableWidth}-${isShareSelecting}`}
           onScrollToIndexFailed={(info) => {
             // Satırlar farklı yükseklikte; hedef henüz ölçülmediyse yaklaşık
             // konuma git, bir sonraki karede gerçek satıra hizala.
@@ -1551,41 +1665,7 @@ function LyricsPanel({
               isUserScrollingRef.current = false;
             }, 4000);
           }}
-          renderItem={({ item, index }) => {
-            if (item.kind === 'gap') {
-              const span = Math.max(0.001, item.endTime - item.time);
-              const isActive =
-                index === activeRowIndex &&
-                lyricPosition >= item.time &&
-                lyricPosition < item.endTime;
-              const gapProgress = !isActive
-                ? 0
-                : Math.max(0, Math.min(1, (lyricPosition - item.time) / span));
-              return <LyricGapRowView active={isActive} progress={gapProgress} />;
-            }
-
-            const isActive = index === activeLineRowIndex;
-            // Arka vokal, kendi zamanı gelince (satır geçişiyle aynı ön almayla)
-            // açılır ve konum o noktayı geçtiği sürece açık kalır.
-            const backgroundTime = item.line.background?.time ?? item.line.time;
-            return (
-              <LyricLineRowView
-                line={item.line}
-                isActive={isActive}
-                isSelected={isShareSelecting && selectedShareSet.has(item.key)}
-                isSelectionMode={isShareSelecting}
-                distance={Math.abs(index - activeLineRowIndex)}
-                showBackground={lyricPosition + LYRIC_LINE_LEAD_SECONDS >= backgroundTime}
-                availableWidth={lyricsAvailableWidth}
-                // Saat paylaşılan bir shared value'dur: satırlar yeniden
-                // çizilmeden harf renkleri UI thread'inde güncellenir.
-                clock={lyricClock}
-                theme={theme}
-                onSeek={seekToLyricTime}
-                onToggleSelect={() => onToggleShareLine(item.key)}
-              />
-            );
-          }}
+          renderItem={renderLyricRow}
         />
       ) : currentLyrics?.plainLyrics ? (
         <ScrollView
@@ -6264,14 +6344,13 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
     textAlign: 'left',
     /*
-     * Pasif satırlardaki hafif bulanıklık hissi. React Native metne gerçek bir
-     * `blur` uygulayamadığı için kenarlar, metinle aynı renkte yumuşak bir gölge
-     * (offset 0, geniş yarıçap) ile dağıtılıyor; sonuç Apple Music'in odak dışı
-     * satırlarına yakın, kenarları yumuşamış bir görünüm.
+     * Metnin çevresindeki yumuşak hâle: bulanıklık 5, opaklık 0.75, kayma yok.
+     * Pasif satırları da hafifçe dağıtıp Apple Music'in odak dışı görünümüne
+     * yaklaştırıyor.
      */
-    textShadowColor: 'rgba(255, 255, 255, 0.32)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 5,
+    textShadowColor: LYRIC_TEXT_SHADOW_COLOR,
+    textShadowOffset: LYRIC_TEXT_SHADOW_OFFSET,
+    textShadowRadius: LYRIC_TEXT_SHADOW_RADIUS,
   },
   lyricTextActive: {
     color: '#ffffff',
@@ -6284,9 +6363,9 @@ const styles = StyleSheet.create({
     lineHeight: LYRIC_LINE_HEIGHT_ACTIVE,
     letterSpacing: -0.2,
     textAlign: 'left',
-    textShadowColor: 'rgba(255, 255, 255, 0.3)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 14,
+    textShadowColor: LYRIC_TEXT_SHADOW_COLOR,
+    textShadowOffset: LYRIC_TEXT_SHADOW_OFFSET,
+    textShadowRadius: LYRIC_TEXT_SHADOW_RADIUS,
   },
   lyricTextEnd: {
     textAlign: 'right',
@@ -6308,9 +6387,9 @@ const styles = StyleSheet.create({
     lineHeight: LYRIC_BG_LINE_HEIGHT,
     letterSpacing: -0.1,
     textAlign: 'left',
-    textShadowColor: 'rgba(255, 255, 255, 0.26)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 8,
+    textShadowColor: LYRIC_TEXT_SHADOW_COLOR,
+    textShadowOffset: LYRIC_TEXT_SHADOW_OFFSET,
+    textShadowRadius: LYRIC_TEXT_SHADOW_RADIUS,
   },
   /** Arka vokalin aktif hâli: ölçüler aynı, yalnızca renk farkı. */
   lyricBackgroundTextActive: {
