@@ -31,3 +31,31 @@ export function useIsAppActive(): boolean {
 export function useIsAppBackgrounded(): boolean {
   return useAppState() === 'background';
 }
+
+/**
+ * Uzun süredir arka planda mıyız?
+ *
+ * Oynatıcı ağacını (mini oynatıcı + tam ekran oynatıcı + tüm Animated
+ * düğümleri) tamamen sökmek bellek için doğru, ancak **kısa** arka plan
+ * gezilerinde yıkıcı: paylaşım sayfası, sistem izin penceresi veya galeri
+ * seçicisi açıldığında uygulama `background` durumuna geçiyor ve ağaç hemen
+ * sökülürse ekran siyaha düşüp oynatıcı yeniden kuruluyordu.
+ *
+ * Bu kanca yalnızca `delayMs` boyunca arka planda kalındığında `true` döner;
+ * kısa dönüşlerde ağaç yerinde kalır.
+ */
+export function useIsAppLongBackgrounded(delayMs = 8000): boolean {
+  const isBackground = useAppState() === 'background';
+  const [longBackgrounded, setLongBackgrounded] = useState(false);
+
+  useEffect(() => {
+    if (!isBackground) {
+      setLongBackgrounded(false);
+      return;
+    }
+    const timer = setTimeout(() => setLongBackgrounded(true), delayMs);
+    return () => clearTimeout(timer);
+  }, [isBackground, delayMs]);
+
+  return longBackgrounded;
+}

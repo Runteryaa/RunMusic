@@ -24,11 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import TrackPlayer, {
-  useActiveTrack,
-  RepeatMode,
-  Track,
-} from 'react-native-track-player';
+import TrackPlayer, { RepeatMode, Track } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useThemeStore } from '../store/useThemeStore';
@@ -107,6 +103,7 @@ import Reanimated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useIsAppActive } from '../hooks/useIsAppActive';
+import { useResilientActiveTrack } from '../hooks/useResilientActiveTrack';
 import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 import { LyricSharePreviewModal, MAX_SHARE_LINES, type LyricShareLine } from './LyricShareModal';
 
@@ -1930,7 +1927,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
   const theme = useThemeStore((s) => s.theme);
   const player = useActivePlayer();
-  const localActiveTrack = useActiveTrack();
+  const localActiveTrack = useResilientActiveTrack();
   const activeTrack = player.activeTrack;
   const playing = player.isPlaying;
   const remoteState = useRemoteConnectStore((s) => s.remoteState);

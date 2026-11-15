@@ -192,6 +192,19 @@ export function LyricSharePreviewModal({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const cardRef = useRef<View>(null);
+  /**
+   * Paylaşım sayfası/galeri izni uygulamayı arka plana atabildiği için bu
+   * sırada bileşen sökülebilir; söküldükten sonra `setState` çağırmamak için
+   * canlılık bayrağı tutuluyor.
+   */
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Modal her açıldığında durum sıfırlanır.
   useEffect(() => {
@@ -229,25 +242,30 @@ export function LyricSharePreviewModal({
     try {
       const captured = await captureCard();
       if (!captured) {
-        setError(t('player.share_unavailable'));
+        if (mountedRef.current) setError(t('player.share_unavailable'));
         return;
       }
       const { modules, fileUri } = captured;
       if (!modules.saveToLibraryAsync || !modules.requestPermissionsAsync) {
-        setError(t('player.share_unavailable'));
+        if (mountedRef.current) setError(t('player.share_unavailable'));
         return;
       }
-      const permission = await modules.requestPermissionsAsync(false, ['photo']);
+      /*
+       * Yalnızca **yazma** izni isteniyor. Okuma izni istendiğinde Android
+       * ekstra bir izin penceresi açıyor ve uygulamayı arka plana atıyordu;
+       * karta kaydetmek için okuma iznine ihtiyaç yok.
+       */
+      const permission = await modules.requestPermissionsAsync(true, ['photo']);
       if (!permission.granted) {
-        setError(t('player.share_download_permission'));
+        if (mountedRef.current) setError(t('player.share_download_permission'));
         return;
       }
       await modules.saveToLibraryAsync(fileUri);
-      setSaved(true);
+      if (mountedRef.current) setSaved(true);
     } catch {
-      setError(t('player.share_download_failed'));
+      if (mountedRef.current) setError(t('player.share_download_failed'));
     } finally {
-      setBusy(null);
+      if (mountedRef.current) setBusy(null);
     }
   }, [busy, captureCard, t]);
 
@@ -258,16 +276,16 @@ export function LyricSharePreviewModal({
     try {
       const captured = await captureCard();
       if (!captured) {
-        setError(t('player.share_unavailable'));
+        if (mountedRef.current) setError(t('player.share_unavailable'));
         return;
       }
       const { modules, fileUri } = captured;
       if (!modules.shareAsync || !modules.isAvailableAsync) {
-        setError(t('player.share_unavailable'));
+        if (mountedRef.current) setError(t('player.share_unavailable'));
         return;
       }
       if (!(await modules.isAvailableAsync())) {
-        setError(t('player.share_unavailable'));
+        if (mountedRef.current) setError(t('player.share_unavailable'));
         return;
       }
       await modules.shareAsync(fileUri, {
@@ -276,9 +294,9 @@ export function LyricSharePreviewModal({
         UTI: 'public.png',
       });
     } catch {
-      setError(t('player.share_failed'));
+      if (mountedRef.current) setError(t('player.share_failed'));
     } finally {
-      setBusy(null);
+      if (mountedRef.current) setBusy(null);
     }
   }, [busy, captureCard, t]);
 

@@ -1,9 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import TrackPlayer, {
-  useActiveTrack,
-  useIsPlaying,
-  RepeatMode,
-} from 'react-native-track-player';
+import TrackPlayer, { useIsPlaying, RepeatMode } from 'react-native-track-player';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
@@ -22,6 +18,7 @@ import {
 import { findLyricsInCache } from '../services/persistSanitize';
 import { parseAnySyncedLyrics, getLyricsCacheKeys, type LyricLine } from '../services/lyricsService';
 import type { RemoteTrackSummary, RemoteLyricsSummary } from '../services/remote/remoteTypes';
+import { useResilientActiveTrack } from './useResilientActiveTrack';
 
 export interface ActivePlayerState {
   isRemote: boolean;
@@ -77,7 +74,7 @@ export function useActivePlayer(): ActivePlayerState {
   const optimisticArtwork = useOptimisticPlayerStore((s) => s.optimisticArtworkUri);
 
   // Local Player hooks (only subscribed when not remote)
-  const localActiveTrack = useActiveTrack();
+  const localActiveTrack = useResilientActiveTrack();
   const { playing: localIsPlaying } = useIsPlaying();
   const localArtworkMap = useStore((s) => s.artworkMap);
   const localIsShuffle = useStore((s) => s.isShuffle);

@@ -8,7 +8,6 @@ import Animated, {
   Extrapolation,
   Easing,
 } from 'react-native-reanimated';
-import { useActiveTrack } from 'react-native-track-player';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useStore } from '../store/useStore';
@@ -16,8 +15,9 @@ import { useThemeStore } from '../store/useThemeStore';
 import { MiniPlayer } from './MiniPlayer';
 import { FullscreenPlayerModal } from './FullscreenPlayerModal';
 import { ErrorBoundary } from './ErrorBoundary';
-import { useIsAppBackgrounded } from '../hooks/useIsAppActive';
+import { useIsAppBackgrounded, useIsAppLongBackgrounded } from '../hooks/useIsAppActive';
 import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
+import { useResilientActiveTrack } from '../hooks/useResilientActiveTrack';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MINI_HEIGHT = 62;
@@ -28,7 +28,13 @@ const COLLAPSED_Y = SCREEN_HEIGHT - MINI_BOTTOM - MINI_HEIGHT;
 export function ExpandingPlayer() {
   useComponentDiagnostics('ExpandingPlayer');
   const isAppBackgrounded = useIsAppBackgrounded();
-  const localActiveTrack = useActiveTrack();
+  /*
+   * Ağacı hemen sökmek yerine yalnızca uzun süreli arka plan kalışlarında
+   * söküyoruz: paylaşım sayfası veya izin penceresi kısa süreliğine uygulamayı
+   * arka plana attığında oynatıcı yerinde kalır (ekran siyaha düşmez).
+   */
+  const shouldDropPlayerTree = useIsAppLongBackgrounded();
+  const localActiveTrack = useResilientActiveTrack();
   const isRemote = useRemoteConnectStore(
     (s) => s.mode === 'client' && s.connectionStatus === 'connected'
   );
@@ -145,7 +151,12 @@ export function ExpandingPlayer() {
   // components. The player UI has no visible surface while backgrounded, so
   // drop its entire subtree (mini + fullscreen + all Animated nodes) instead
   // of letting track/progress updates keep rendering it for hours.
-  if (isAppBackgrounded) {
+  //
+  // Ancak bu yalnızca **uzun** arka plan kalışlarında yapılır: paylaşım
+  // sayfası, izin penceresi veya galeri seçicisi açmak uygulamayı kısa süre
+  // arka plana atar. Ağacı hemen sökmek ekranı siyaha düşürüp oynatıcıyı
+  // yeniden kuruyordu.
+  if (shouldDropPlayerTree) {
     return null;
   }
 
