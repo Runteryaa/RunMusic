@@ -19,7 +19,6 @@ import {
   Switch,
   type StyleProp,
   type TextStyle,
-  type LayoutChangeEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -223,6 +222,17 @@ const LYRIC_WORD_GAP = 7;
 const LYRIC_BG_FONT = 17;
 const LYRIC_BG_LINE_HEIGHT = 23;
 const LYRIC_BG_WORD_GAP = 5;
+/** Söylenen kelimenin yukarı sıçrama mesafesi (dp). */
+const LYRIC_WORD_LIFT = 4;
+/** Aktif harfin hâle yarıçapı (dp). */
+const LYRIC_CHAR_GLOW_RADIUS = 12;
+/**
+ * Söz listesinin yatay iç boşluğu (`lyricsListContent.paddingHorizontal`) ve
+ * seçim modunda satıra eklenen iç boşluk (`lyricRowSelectable.paddingHorizontal`).
+ * Bölme hesabı bu değerleri kullanır; stil değişirse buradan güncellenir.
+ */
+const LYRIC_LIST_H_PADDING = 6;
+const LYRIC_SELECT_H_PADDING = 8;
 
 function getLyricsSourceLabel(
   lyrics: LyricsResult | null,
@@ -288,6 +298,7 @@ function SweepChar({
   dimColor,
   litColor,
   textStyle,
+  glowColor,
 }: {
   clock: { value: number };
   start: number;
@@ -296,6 +307,7 @@ function SweepChar({
   dimColor: string;
   litColor: string;
   textStyle: StyleProp<TextStyle>;
+  glowColor?: string;
 }) {
   const animatedStyle = useAnimatedStyle(() => {
     /*
@@ -305,11 +317,28 @@ function SweepChar({
      */
     const now = Number.isFinite(clock.value) ? clock.value : end;
     const clamped = Math.min(Math.max(now, start), end);
+    const lit = end > start ? (clamped - start) / (end - start) : 1;
+    /*
+     * Hâle (glow) `textStyle`'a bırakılmıyor: Android'de animasyonlu `color`
+     * taşıyan bir `<Text>` gölgeyi kaybedebiliyor. Ayrıca hâle, harf yandıkça
+     * güçleniyor — Apple Music'te söylenen kelimenin çevresi parlar, henüz
+     * söylenmemiş kısım sönük kalır.
+     *
+     * Gölge rengi 4 kademeye yuvarlanıyor: her karede yeni bir renk üretmek
+     * yerine yalnızca birkaç kez değişir. Görsel fark yok, ama Android'de her
+     * harf için yeniden gölge çizme maliyeti büyük ölçüde düşer.
+     */
+    const glowLit = Math.round(lit * 4) / 4;
+    // Arka vokal gibi kendi hâle rengini vermeyen satırlar için yumuşak beyaz.
+    const glow = glowColor ?? 'rgba(255, 255, 255, 0.28)';
     return {
       color:
         end > start
           ? interpolateColor(clamped, [start, end], [dimColor, litColor])
           : litColor,
+      textShadowColor: interpolateColor(glowLit, [0, 1], ['rgba(255,255,255,0)', glow]),
+      textShadowOffset: { width: 0, height: 0 },
+      textShadowRadius: LYRIC_CHAR_GLOW_RADIUS,
     };
   });
   return <Reanimated.Text style={[textStyle, animatedStyle]}>{text}</Reanimated.Text>;
@@ -468,6 +497,86 @@ function prepareWordNodes(
 }
 
 /**
+ * Tek kelime kutusu.
+ *
+ * Apple Music'te söylenen kelime hafifçe yukarı kalkar, kelime söylenip
+ * geçtikten sonra yumuşakça yerine oturur. Burada kalkış `clock` üzerinden
+ * hesaplanır: kelime başında hızlı bir yükselme (120 ms), kelime boyunca
+ * yukarıda kalma, kelime bitiminden sonra yavaş bir yerleşme (500 ms).
+ * Konum `withTiming` ile sürekli ilerlediği için animasyon UI thread'inde akıcı
+ * çalışır; geri sarıldığında da konuma göre doğru yere oturur.
+ *
+ * Transform kullanıldığı için düzen (satır yüksekliği, ölçülen genişlik)
+ * değişmez; bu sayede satır geçişlerinde sıçrama olmaz.
+ */
+const LyricWordBox = React.memo(function LyricWordBox({
+  node,
+  clock,
+  isActive,
+  dimColor,
+  litColor,
+  activeTextStyle,
+  idleTextStyle,
+  glowColor,
+  onMeasure,
+}: {
+  node: LyricWordNode;
+  clock: { value: number };
+  isActive: boolean;
+  dimColor: string;
+  litColor: string;
+  activeTextStyle: StyleProp<TextStyle>;
+  idleTextStyle: StyleProp<TextStyle>;
+  glowColor?: string;
+  onMeasure: (width: number) => void;
+}) {
+  const animate = isActive && node.timed;
+  const liftStyle = useAnimatedStyle(() => {
+    if (!animate) return { transform: [{ translateY: 0 }, { scale: 1 }] };
+    const now = Number.isFinite(clock.value) ? clock.value : node.start;
+    // Kelime başında hızlı kalkış (120 ms), kelime boyunca yukarıda kalma,
+    // kelime bittikten sonra yumuşak yerleşme (500 ms).
+    const rise = Math.min(1, Math.max(0, (now - node.start) / 0.12));
+    const settle = Math.min(1, Math.max(0, (now - node.end) / 0.5));
+    const amount = Math.max(0, rise * (1 - settle));
+    return {
+      transform: [{ translateY: -LYRIC_WORD_LIFT * amount }, { scale: 1 + 0.035 * amount }],
+    };
+  });
+
+  const chars = Array.from(node.text);
+  const span = Math.max(0.08, node.end - node.start);
+
+  return (
+    <Reanimated.View
+      style={[styles.lyricWord, liftStyle]}
+      onLayout={(event) => onMeasure(event.nativeEvent.layout.width)}>
+      {animate ? (
+        chars.map((char, charIndex) => {
+          const charStart = node.start + (charIndex / chars.length) * span;
+          const charEnd = Math.max(charStart + 0.02, charStart + span / chars.length);
+          return (
+            <MemoSweepChar
+              key={`char-${charIndex}`}
+              clock={clock}
+              start={charStart}
+              end={charEnd}
+              text={char}
+              dimColor={dimColor}
+              litColor={litColor}
+              textStyle={activeTextStyle}
+              glowColor={glowColor}
+            />
+          );
+        })
+      ) : (
+        <Text style={isActive ? activeTextStyle : idleTextStyle}>{node.text}</Text>
+      )}
+    </Reanimated.View>
+  );
+});
+
+/**
  * Bir söz satırını kelimelere ve dengeli satırlara böler.
  *
  * Kelimeler kendi ölçülen genişlikleriyle satırlara dengeli dağıtılır: satır tek
@@ -492,6 +601,8 @@ function LyricWords({
   activeTextStyle,
   idleTextStyle,
   fillTarget = LYRIC_LINE_FILL_TARGET,
+  availableWidth,
+  glowColor,
 }: {
   text: string;
   words?: LyricLine['words'];
@@ -505,17 +616,24 @@ function LyricWords({
   idleTextStyle: StyleProp<TextStyle>;
   /** Bölme hedefi: ana söz 2/3, arka vokal 1 (yalnızca sığmazsa bölünür). */
   fillTarget?: number;
+  /**
+   * Söz satırının kullanabildiği gerçek genişlik. Kendi kabından ölçmek
+   * güvenilir değil: `alignSelf: 'flex-start'` olan bir kap içeriğe göre
+   * daralıyor ve arka vokal her kelimede alt satıra düşüyordu.
+   */
+  availableWidth: number;
+  /** Söylenen harfin çevresindeki hâle rengi. */
+  glowColor?: string;
 }) {
   const nodes = useMemo(() => prepareWordNodes(text, words), [text, words]);
 
-  const [rowWidth, setRowWidth] = useState(0);
   const [widths, setWidths] = useState<Record<string, number>>({});
   const [layout, setLayout] = useState<{ key: string; breaks: number[] | null } | null>(
     null
   );
 
   const layoutKey = `${nodes.map((node) => node.text).join('\u0001')}#${Math.round(
-    rowWidth
+    availableWidth
   )}`;
   const breaks = layout && layout.key === layoutKey ? layout.breaks : null;
 
@@ -526,7 +644,7 @@ function LyricWords({
    * oynardı.
    */
   useEffect(() => {
-    if (rowWidth <= 0 || nodes.length === 0) return;
+    if (availableWidth <= 0 || nodes.length === 0) return;
     if (layout && layout.key === layoutKey) return;
 
     const values: number[] = [];
@@ -541,11 +659,11 @@ function LyricWords({
     const result = balancedLineBreaks(
       values,
       gap,
-      Math.max(0, rowWidth - 2),
+      Math.max(0, availableWidth - 2),
       fillTarget
     );
     setLayout({ key: layoutKey, breaks: result.length > 1 ? result : null });
-  }, [layout, layoutKey, rowWidth, widths, nodes, gap, fillTarget]);
+  }, [layout, layoutKey, availableWidth, widths, nodes, gap, fillTarget]);
 
   const registerWidth = (key: string, width: number) => {
     const rounded = Math.round(width * 2) / 2;
@@ -554,42 +672,20 @@ function LyricWords({
     );
   };
 
-  const onContainerLayout = (event: LayoutChangeEvent) => {
-    const width = event.nativeEvent.layout.width;
-    setRowWidth((previous) => (Math.abs(previous - width) < 0.5 ? previous : width));
-  };
-
-  const renderWord = (node: LyricWordNode) => {
-    const chars = Array.from(node.text);
-    const span = Math.max(0.08, node.end - node.start);
-    return (
-      <View
-        key={`word-${node.key}`}
-        style={styles.lyricWord}
-        onLayout={(event) => registerWidth(node.key, event.nativeEvent.layout.width)}>
-        {isActive && node.timed ? (
-          chars.map((char, charIndex) => {
-            const charStart = node.start + (charIndex / chars.length) * span;
-            const charEnd = Math.max(charStart + 0.02, charStart + span / chars.length);
-            return (
-              <MemoSweepChar
-                key={`char-${charIndex}`}
-                clock={clock}
-                start={charStart}
-                end={charEnd}
-                text={char}
-                dimColor={dimColor}
-                litColor={litColor}
-                textStyle={activeTextStyle}
-              />
-            );
-          })
-        ) : (
-          <Text style={isActive ? activeTextStyle : idleTextStyle}>{node.text}</Text>
-        )}
-      </View>
-    );
-  };
+  const renderWord = (node: LyricWordNode) => (
+    <LyricWordBox
+      key={`word-${node.key}`}
+      node={node}
+      clock={clock}
+      isActive={isActive}
+      dimColor={dimColor}
+      litColor={litColor}
+      activeTextStyle={activeTextStyle}
+      idleTextStyle={idleTextStyle}
+      glowColor={glowColor}
+      onMeasure={(width) => registerWidth(node.key, width)}
+    />
+  );
 
   if (nodes.length === 0) return null;
 
@@ -602,8 +698,7 @@ function LyricWords({
           styles.lyricWordRowWrap,
           { gap },
           alignEnd && styles.lyricWordRowEnd,
-        ]}
-        onLayout={onContainerLayout}>
+        ]}>
         {nodes.map(renderWord)}
       </View>
     );
@@ -616,7 +711,7 @@ function LyricWords({
   }
 
   return (
-    <View style={styles.lyricWordLines} onLayout={onContainerLayout}>
+    <View style={styles.lyricWordLines}>
       {lines.map((line) => (
         <View
           key={`line-${line[0].key}`}
@@ -636,6 +731,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
   isSelectionMode,
   distance,
   showBackground,
+  availableWidth,
   clock,
   theme,
   onSeek,
@@ -651,6 +747,8 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
    * (konum o satırın zamanını geçtiği sürece) açık kalır.
    */
   showBackground: boolean;
+  /** Satırın metin için kullanabildiği gerçek genişlik (dp). */
+  availableWidth: number;
   clock: { value: number };
   theme: ThemeColors;
   onSeek: (time: number) => void;
@@ -716,6 +814,8 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
           idleTextStyle={styles.lyricText}
           gap={LYRIC_WORD_GAP}
           alignEnd={alignEnd}
+          availableWidth={availableWidth}
+          glowColor={theme.glowColor}
         />
 
         {/*
@@ -725,7 +825,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
         {line.background && showBackground ? (
           <Reanimated.View
             entering={FadeInDown.duration(260)}
-            style={[styles.lyricBackgroundWrap, alignEnd && styles.lyricBackgroundWrapEnd]}>
+            style={styles.lyricBackgroundWrap}>
             <LyricWords
               text={line.background.text}
               words={line.background.words}
@@ -739,6 +839,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
               alignEnd={alignEnd}
               // Arka vokal sığdığı sürece tek satır kalır; ancak taşarsa bölünür.
               fillTarget={1}
+              availableWidth={availableWidth}
             />
           </Reanimated.View>
         ) : null}
@@ -927,6 +1028,24 @@ function LyricsPanel({
   const isAppActive = useIsAppActive();
   const [isAutoScrollPaused, setIsAutoScrollPaused] = useState(false);
   const [isOffsetOpen, setIsOffsetOpen] = useState(false);
+  /**
+   * Söz listesinin ölçülen genişliği.
+   *
+   * Dengeli satır bölme buradan gelen gerçek genişlikle yapılır: satırın kendi
+   * kabından ölçmek güvenilir değildi; içeriğe göre daralan bir kap yüzünden
+   * arka vokal her kelimede alt satıra düşüyordu.
+   */
+  const [lyricsListWidth, setLyricsListWidth] = useState(0);
+
+  /**
+   * Söz metninin kullanabildiği genişlik: liste genişliğinden listenin yatay iç
+   * boşluğu (6+6) ve seçim modunda satıra eklenen iç boşluk (8+8) düşülür.
+   */
+  const lyricsAvailableWidth = useMemo(() => {
+    if (lyricsListWidth <= 0) return 0;
+    const sidePadding = LYRIC_LIST_H_PADDING + (isShareSelecting ? LYRIC_SELECT_H_PADDING : 0);
+    return Math.max(0, lyricsListWidth - sidePadding * 2);
+  }, [lyricsListWidth, isShareSelecting]);
 
   const selectedShareSet = useMemo(
     () => new Set(selectedShareKeys),
@@ -1383,6 +1502,16 @@ function LyricsPanel({
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.lyricsListContent}
           /*
+           * Dengeli bölme için gerçek satır genişliği gerekli. FlatList'in kendi
+           * genişliği ölçülür; iç boşluk ve seçim modu payı yukarıda düşülür.
+           */
+          onLayout={(event) => {
+            const width = event.nativeEvent.layout.width;
+            setLyricsListWidth((previous) =>
+              Math.abs(previous - width) < 0.5 ? previous : width
+            );
+          }}
+          /*
            * Kaydırma hedefi `scrollToIndex` ile veriliyor; hedef satır henüz
            * ölçülmemişse bu çağrı başarısız olup görünür bir sıçrama yaratıyordu.
            * Pencereyi geniş tutmak, sıradaki satırların (ve dengeli bölünmüş
@@ -1392,7 +1521,7 @@ function LyricsPanel({
           maxToRenderPerBatch={14}
           windowSize={9}
           removeClippedSubviews={false}
-          extraData={`${activeRowIndex}-${activeLineRowIndex}-${lyricPosition}-${appliedLyricsOffset}`}
+          extraData={`${activeRowIndex}-${activeLineRowIndex}-${lyricPosition}-${appliedLyricsOffset}-${lyricsAvailableWidth}`}
           onScrollToIndexFailed={(info) => {
             // Satırlar farklı yükseklikte; hedef henüz ölçülmediyse yaklaşık
             // konuma git, bir sonraki karede gerçek satıra hizala.
@@ -1447,6 +1576,7 @@ function LyricsPanel({
                 isSelectionMode={isShareSelecting}
                 distance={Math.abs(index - activeLineRowIndex)}
                 showBackground={lyricPosition + LYRIC_LINE_LEAD_SECONDS >= backgroundTime}
+                availableWidth={lyricsAvailableWidth}
                 // Saat paylaşılan bir shared value'dur: satırlar yeniden
                 // çizilmeden harf renkleri UI thread'inde güncellenir.
                 clock={lyricClock}
@@ -6164,10 +6294,12 @@ const styles = StyleSheet.create({
   lyricBackgroundWrap: {
     marginTop: 4,
     paddingLeft: 2,
-    alignSelf: 'flex-start',
-  },
-  lyricBackgroundWrapEnd: {
-    alignSelf: 'flex-end',
+    /*
+     * Tam genişlik: sağ/sol hizalamayı `LyricWords` kendi içinde yapıyor.
+     * `alignSelf: 'flex-start'` ile kap içeriğe göre daralıyordu ve arka vokal
+     * her kelimede alt satıra düşüyordu.
+     */
+    width: '100%',
   },
   lyricBackgroundText: {
     color: 'rgba(255, 255, 255, 0.62)',
