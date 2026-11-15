@@ -3689,30 +3689,35 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     setResolvingCandidateId(candidate.id);
     try {
       const resolved = await resolveCandidateToLyricsResult(candidate, candidatesList);
-      if (resolved) {
-        const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
-        const altKeys = getLyricsCacheKeys({
-          id: localActiveTrack.id,
-          url: localActiveTrack.url,
-          title: displayTitle,
-          artist: searchArtist,
-          rawTitle: localActiveTrack.title,
-        });
-        const saveId = localActiveTrack.id || localActiveTrack.url || displayTitle;
-        const selectedResult: LyricsResult = {
-          ...resolved,
-          isUserSelected: true,
-          selectedCandidateId: candidate.id,
-          candidates: candidatesList.length > 0 ? candidatesList : resolved.candidates,
-        };
-        setLyrics(saveId, selectedResult, altKeys);
-        if (localActiveTrack?.id) {
-          remoteSyncManager.broadcastLyricsUpdate(localActiveTrack.id);
-        }
-        setIsManualSearchOpen(false);
+      if (!resolved) {
+        // Kaynak erişilemezse eskiden hiçbir şey olmuyordu; kullanıcı
+        // "yükleniyor" görüp sonuçsuz kalıyordu.
+        alert(t('player.candidate_load_failed'));
+        return;
       }
+      const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
+      const altKeys = getLyricsCacheKeys({
+        id: localActiveTrack.id,
+        url: localActiveTrack.url,
+        title: displayTitle,
+        artist: searchArtist,
+        rawTitle: localActiveTrack.title,
+      });
+      const saveId = localActiveTrack.id || localActiveTrack.url || displayTitle;
+      const selectedResult: LyricsResult = {
+        ...resolved,
+        isUserSelected: true,
+        selectedCandidateId: candidate.id,
+        candidates: candidatesList.length > 0 ? candidatesList : resolved.candidates,
+      };
+      setLyrics(saveId, selectedResult, altKeys);
+      if (localActiveTrack?.id) {
+        remoteSyncManager.broadcastLyricsUpdate(localActiveTrack.id);
+      }
+      setIsManualSearchOpen(false);
     } catch (e) {
       console.warn('Failed to resolve candidate', e);
+      alert(t('player.candidate_load_failed'));
     } finally {
       setResolvingCandidateId(null);
     }

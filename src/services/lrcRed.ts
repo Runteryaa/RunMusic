@@ -23,12 +23,35 @@ export interface LrcRedHit {
   color?: string;
 }
 
+/**
+ * Arşivdeki belgenin senkron seviyesi.
+ *
+ * lrc.red her parça için `/s/{ISRC}.json` üzerinden üst veri yayınlar ve
+ * `sync` alanı belgenin gerçekte ne sunduğunu söyler. Bu bilgi olmadan
+ * `None` belgeler "WORD SYNC" gibi görünüp açıldığında boş kalıyordu.
+ */
+export type LrcRedSyncLevel = 'word' | 'line' | 'none' | 'unknown';
+
+export interface LrcRedInfo {
+  isrc: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  duration?: number;
+  sync: LrcRedSyncLevel;
+  lines?: number;
+  ttmlUrl?: string;
+  lrcUrl?: string;
+}
+
 const SEARCH_URL = 'https://lrc.red/search.json';
 const DOCUMENT_URL = 'https://lrc.red/s';
 const REQUEST_TIMEOUT_MS = 6000;
+const INFO_TIMEOUT_MS = 4000;
 const DURATION_TOLERANCE_SECONDS = 3;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 24;
+const INFO_CACHE_MAX_ENTRIES = 64;
 
 const HEADERS: HeadersInit = {
   'User-Agent':
@@ -41,7 +64,19 @@ interface CacheEntry {
   at: number;
 }
 
+interface InfoCacheEntry {
+  info: LrcRedInfo;
+  at: number;
+}
+
+interface PlainCacheEntry {
+  text: string;
+  at: number;
+}
+
 const documentCache = new Map<string, CacheEntry>();
+const infoCache = new Map<string, InfoCacheEntry>();
+const plainCache = new Map<string, PlainCacheEntry>();
 
 function normalize(value?: string | null): string {
   return (value || '')
@@ -197,6 +232,33 @@ function withTimeout<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
   return run(controller.signal).finally(() => clearTimeout(timer));
 }
 
+function withInfoTimeout<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), INFO_TIMEOUT_MS);
+  return run(controller.signal).finally(() => clearTimeout(timer));
+}
+
+/**
+ * ISRC'yi arşiv anahtarına çevirir.
+ *
+ * Yalnızca uzunluk ve karakter sınıfı denetlenir; kayıt ülke kodunun resmî
+ * listede olması gerekmez. Biçime uymayan bir ISRC'yi tamamen reddetmek,
+ * arşivde var olan belgeye erişimi gereksiz yere engelliyordu.
+ */
+function normalizeIsrc(isrc?: string | null): string | null {
+  const key = (isrc || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (key.length !== 12) return null;
+  return key;
+}
+
+function touchCache<T extends { at: number }>(cache: Map<string, T>, key: string, value: T, max: number) {
+  cache.set(key, value);
+  if (cache.size > max) {
+    const oldest = cache.keys().next().value;
+    if (oldest) cache.delete(oldest);
+  }
+}
+
 function isUsableHit(value: unknown): value is LrcRedHit {
   if (!value || typeof value !== 'object') return false;
   const hit = value as Record<string, unknown>;
@@ -269,41 +331,137 @@ export function pickBestLrcRedHit(
 }
 
 /**
- * ISRC'den Apple TTML belgesini indirir.
+ * ISRC'den arşiv üst verisini okur (`sync` alanı belgenin ne sunduğunu söyler).
  *
- * lrc.red ara sıra Cloudflare HTML'i döndürür; bu durumda belge yok sayılır ki
- * çağıran taraf bir sonraki sağlayıcıya düşebilsin.
+ * Ağ hatası, zaman aşımı veya bozuk yanıtta `null` döner; çağıran taraf bu
+ * durumda belgeyi iyimser kabul eder.
  */
-export async function fetchLrcRedTtml(isrc: string): Promise<string | null> {
-  const key = (isrc || '').trim().toUpperCase();
-  if (!/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(key)) return null;
+export async function fetchLrcRedInfo(isrc: string): Promise<LrcRedInfo | null> {
+  const key = normalizeIsrc(isrc);
+  if (!key) return null;
 
-  const cached = documentCache.get(key);
+  const cached = infoCache.get(key);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-    return cached.ttml;
+    return cached.info;
   }
 
   try {
-    const response = await withTimeout((signal) =>
-      fetch(`${DOCUMENT_URL}/${encodeURIComponent(key)}.ttml`, { headers: HEADERS, signal })
+    const response = await withInfoTimeout((signal) =>
+      fetch(`${DOCUMENT_URL}/${key}.json`, { headers: HEADERS, signal })
+    );
+    if (!response.ok) return null;
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('text/html')) return null;
+
+    const data = (await response.json()) as Record<string, unknown>;
+    const rawSync = String(data?.sync ?? '').toLowerCase();
+    const sync: LrcRedSyncLevel =
+      rawSync === 'word' || rawSync === 'line' || rawSync === 'none' ? rawSync : 'unknown';
+    const files = (data?.files && typeof data.files === 'object' ? data.files : {}) as Record<
+      string,
+      unknown
+    >;
+
+    const info: LrcRedInfo = {
+      isrc: key,
+      title: typeof data?.title === 'string' ? data.title : undefined,
+      artist: typeof data?.artist === 'string' ? data.artist : undefined,
+      album: typeof data?.album === 'string' ? data.album : undefined,
+      duration: typeof data?.duration === 'number' ? data.duration : undefined,
+      sync,
+      lines: typeof data?.lines === 'number' ? data.lines : undefined,
+      ttmlUrl: typeof files.ttml === 'string' ? files.ttml : undefined,
+      lrcUrl: typeof files.lrc === 'string' ? files.lrc : undefined,
+    };
+
+    touchCache(infoCache, key, { info, at: Date.now() }, INFO_CACHE_MAX_ENTRIES);
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Zaman damgaları arındırılmış düz söz metnini döndürür.
+ *
+ * `sync: "none"` belgelerde TTML `<p>` etiketleri zamanlama taşımadığı için
+ * satır satır söz üretilemiyor. Arşiv aynı metni `.lrc` olarak da yayınlıyor;
+ * buradan düz söz olarak yüklenebiliyor.
+ */
+export async function fetchLrcRedPlainLyrics(isrc: string): Promise<string | null> {
+  const key = normalizeIsrc(isrc);
+  if (!key) return null;
+
+  const cached = plainCache.get(key);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return cached.text;
+  }
+
+  try {
+    const response = await withInfoTimeout((signal) =>
+      fetch(`${DOCUMENT_URL}/${key}.lrc`, { headers: HEADERS, signal })
     );
     if (!response.ok) return null;
 
-    const text = await response.text();
-    if (!text || !text.includes('<tt') || !text.includes('<p ')) return null;
+    const raw = await response.text();
+    if (!raw || raw.includes('<html') || raw.includes('<!DOCTYPE')) return null;
 
-    documentCache.set(key, { ttml: text, at: Date.now() });
-    if (documentCache.size > CACHE_MAX_ENTRIES) {
-      const oldest = documentCache.keys().next().value;
-      if (oldest) documentCache.delete(oldest);
-    }
+    const text = raw
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\s*\[[^\]]*\]\s*/, '').replace(/\s+$/, ''))
+      .join('\n')
+      // lrc.red metni kesme işaretlerini ters bölüyle kaçırıyor (`don\'t`).
+      .replace(/\\(['"`])/g, '$1')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    if (!text) return null;
+
+    touchCache(plainCache, key, { text, at: Date.now() }, INFO_CACHE_MAX_ENTRIES);
     return text;
   } catch {
     return null;
   }
 }
 
+/**
+ * ISRC'den Apple TTML belgesini indirir.
+ *
+ * lrc.red ara sıra Cloudflare HTML'i döndürür; bu durumda istek bir kez daha
+ * denenir, yine olmazsa belge yok sayılır ki çağıran taraf bir sonraki
+ * sağlayıcıya düşebilsin.
+ */
+export async function fetchLrcRedTtml(isrc: string): Promise<string | null> {
+  const key = normalizeIsrc(isrc);
+  if (!key) return null;
+
+  const cached = documentCache.get(key);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return cached.ttml;
+  }
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await withTimeout((signal) =>
+        fetch(`${DOCUMENT_URL}/${key}.ttml`, { headers: HEADERS, signal })
+      );
+      if (!response.ok) continue;
+
+      const text = await response.text();
+      if (!text || !text.includes('<tt') || !/<p\b/.test(text)) continue;
+
+      touchCache(documentCache, key, { ttml: text, at: Date.now() }, CACHE_MAX_ENTRIES);
+      return text;
+    } catch {
+      // Zaman aşımı/ağ hatası: bir kez daha dene.
+    }
+  }
+  return null;
+}
+
 /** Test ve hata ayıklama için önbelleği temizler. */
 export function clearLrcRedCache(): void {
   documentCache.clear();
+  infoCache.clear();
+  plainCache.clear();
 }

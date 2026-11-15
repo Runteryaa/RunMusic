@@ -1,9 +1,12 @@
-import { parseTtml, type LyricDisplayRow } from './lyricsTtml';
+import { parseTtml, parseTtmlPlainText, type LyricDisplayRow } from './lyricsTtml';
 import {
+  fetchLrcRedInfo,
+  fetchLrcRedPlainLyrics,
   fetchLrcRedTtml,
   scoreLrcRedHit,
   searchLrcRed,
   type LrcRedHit,
+  type LrcRedInfo,
 } from './lrcRed';
 import type {
   LyricLine,
@@ -16,7 +19,7 @@ import type {
 export type { LyricLine, LyricWord, LyricsCandidate, LyricsResult, LyricsSource };
 export type { LyricDisplayRow };
 export { parseTtml, buildLyricRows, splitBackgroundVocals, isGeniusSectionHeader, getGeniusSectionLabel } from './lyricsTtml';
-export { searchLrcRed, fetchLrcRedTtml, scoreLrcRedHit } from './lrcRed';
+export { searchLrcRed, fetchLrcRedTtml, fetchLrcRedInfo, scoreLrcRedHit } from './lrcRed';
 
 /**
  * Parse an LRC string into an array of { time: number, text: string, words?: LyricWord[] } objects.
@@ -1259,7 +1262,7 @@ function scoreLyricsResult(result: LyricsResult, title: string, artist: string):
   return scoreNamePair(result, title, artist);
 }
 
-/** lrc.red isabetinden tam `LyricsResult` üretir; TTML boşsa null. */
+/** lrc.red isabetinden tam `LyricsResult` üretir; belge kullanılabilir değilse null. */
 function buildLrcRedResult(hit: LrcRedHit, ttml: string): LyricsResult | null {
   const parsedLines = parseTtml(ttml);
   if (parsedLines.length === 0) return null;
@@ -1271,10 +1274,64 @@ function buildLrcRedResult(hit: LrcRedHit, ttml: string): LyricsResult | null {
     syncedLyrics: null,
     plainLyrics: null,
     ttml,
-    hasWordSync: true,
+    // Belge gerçekten hece zamanlaması taşıyor mu? `lrc:timing="Line"`
+    // belgeleri satır satır senkrondur; onlara "WORD SYNC" demek yanlıştı.
+    hasWordSync: parsedLines.some((line) => !!line.words && line.words.length > 0),
     parsedLines,
     source: 'lrc.red',
   };
+}
+
+/** lrc.red belgesinden düz söz sonucu üretir (zaman bilgisi yok). */
+function buildLrcRedPlainResult(
+  hit: LrcRedHit,
+  plainLyrics: string
+): LyricsResult | null {
+  if (!plainLyrics.trim()) return null;
+  return {
+    id: `lrc-red-${hit.isrc}`,
+    trackName: hit.title,
+    artistName: hit.artist,
+    syncedLyrics: null,
+    plainLyrics,
+    ttml: null,
+    hasWordSync: false,
+    parsedLines: [],
+    source: 'lrc.red',
+  };
+}
+
+/**
+ * Bir lrc.red kaydını kullanılabilir `LyricsResult`a çevirir.
+ *
+ * Arşivde iki tür belge var:
+ * - `sync: word|line` → TTML'den satırlar üretilir (asıl hece senkronu),
+ * - `sync: none` → TTML'de zaman yok; satırlar üretilemiyor. Bu belgeler
+ *   eskiden `null` dönüyordu ve kullanıcı listeye dokunduğunda hiçbir şey
+ *   olmuyordu. Artık `.lrc` dosyasından düz söz olarak yükleniyor.
+ */
+async function resolveLrcRedCandidate(
+  hit: LrcRedHit,
+  allCandidates?: LyricsCandidate[]
+): Promise<LyricsResult | null> {
+  const info: LrcRedInfo | null = await fetchLrcRedInfo(hit.isrc);
+  const wantsPlain = info?.sync === 'none';
+
+  if (!wantsPlain) {
+    const ttml = await fetchLrcRedTtml(hit.isrc);
+    if (ttml) {
+      const result = buildLrcRedResult(hit, ttml);
+      if (result) return { ...result, candidates: allCandidates };
+      // Zamanlama ilan edilmiş ama satır çıkmadı: düz metne düş.
+      const plainFromTtml = parseTtmlPlainText(ttml);
+      const plainResult = plainFromTtml ? buildLrcRedPlainResult(hit, plainFromTtml) : null;
+      if (plainResult) return { ...plainResult, candidates: allCandidates };
+    }
+  }
+
+  const plainLyrics = await fetchLrcRedPlainLyrics(hit.isrc);
+  const plainResult = plainLyrics ? buildLrcRedPlainResult(hit, plainLyrics) : null;
+  return plainResult ? { ...plainResult, candidates: allCandidates } : null;
 }
 
 /**
@@ -1309,9 +1366,21 @@ async function searchSyncedSources(
   const rankedHits = lrcHits
     .map((hit) => ({ hit, score: scoreLrcRedHit(hit, title, artist, duration) }))
     .filter((entry) => entry.score >= LYRICS_WEAK_MATCH)
-    .slice(0, 2);
+    .slice(0, 3);
 
-  for (const entry of rankedHits) {
+  // Arşivde zamanlaması olmayan (`sync: none`) belgeler de var; onları
+  // indirmeden atlamak hem boşa trafiği hem de "söz var ama görünmüyor"
+  // durumunu önler.
+  const hitInfos = await Promise.allSettled(
+    rankedHits.map((entry) => fetchLrcRedInfo(entry.hit.isrc))
+  );
+
+  for (let index = 0; index < rankedHits.length; index++) {
+    const entry = rankedHits[index];
+    const settledInfo = hitInfos[index];
+    const info = settledInfo && settledInfo.status === 'fulfilled' ? settledInfo.value : null;
+    if (info?.sync === 'none') continue;
+
     const ttml = await fetchLrcRedTtml(entry.hit.isrc);
     if (!ttml) continue;
     const result = buildLrcRedResult(entry.hit, ttml);
@@ -1382,23 +1451,18 @@ export async function searchAllCandidates(query: string, artist = ''): Promise<L
   if (!trimmedQuery) return [];
 
   // 0. lrc.red: Apple Music TTML, hece senkronlu. Listede en üstte durur.
+  //
+  // Adayların senkron rozetleri arşiv üst verisinden (`sync` alanı) okunur;
+  // aksi halde `lrc:timing="Line"` belgeleri de "WORD SYNC" görünüyordu.
+  // Üst veri istekleri LRCLIB/Genius aramalarıyla paralel yürür, bu yüzden
+  // listeyi ekstra beklemez.
+  let lrcHits: LrcRedHit[] = [];
+  let lrcInfosPromise: Promise<PromiseSettledResult<LrcRedInfo | null>[]> | null = null;
   try {
     const hits = await searchLrcRed(trimmedQuery, artist);
-    for (const hit of hits.slice(0, 6)) {
-      const cid = `lrc-red-${hit.isrc}`;
-      if (seenIds.has(cid)) continue;
-      seenIds.add(cid);
-      candidates.push({
-        id: cid,
-        trackName: hit.title,
-        artistName: hit.artist,
-        albumName: hit.album || '',
-        duration: hit.duration || 0,
-        hasSynced: true,
-        hasWordSync: true,
-        source: 'lrc.red',
-        isrc: hit.isrc,
-      });
+    lrcHits = hits.slice(0, 6);
+    if (lrcHits.length > 0) {
+      lrcInfosPromise = Promise.allSettled(lrcHits.map((hit) => fetchLrcRedInfo(hit.isrc)));
     }
   } catch (e) {
     console.warn('lrc.red candidate search error:', e);
@@ -1517,6 +1581,36 @@ export async function searchAllCandidates(query: string, artist = ''): Promise<L
     console.warn('Genius candidate search error:', e);
   }
 
+  // lrc.red adayları (rozetler üst veriden) — sıralama zaten kaynak/word-sync
+  // ağırlığına göre yapıldığı için burada sona eklenmeleri sorun değil.
+  if (lrcHits.length > 0) {
+    const settled = lrcInfosPromise
+      ? await lrcInfosPromise.catch(() => [] as PromiseSettledResult<LrcRedInfo | null>[])
+      : [];
+    lrcHits.forEach((hit, index) => {
+      const cid = `lrc-red-${hit.isrc}`;
+      if (seenIds.has(cid)) return;
+      seenIds.add(cid);
+
+      const result = settled[index];
+      const info = result?.status === 'fulfilled' ? result.value : null;
+      const sync = info?.sync ?? 'unknown';
+      candidates.push({
+        id: cid,
+        trackName: hit.title,
+        artistName: hit.artist,
+        albumName: hit.album || '',
+        duration: hit.duration || 0,
+        // `none`: zamanlama yok, yalnızca düz söz. `unknown`: üst veri
+        // alınamadı; iyimser davranıp senkron varsayıyoruz.
+        hasSynced: sync !== 'none',
+        hasWordSync: sync === 'word',
+        source: 'lrc.red',
+        isrc: hit.isrc,
+      });
+    });
+  }
+
   // Hece senkronlu sonuçlar üstte; eşitlikte kaynak sırası lrc.red → LRCLIB →
   // Genius. Sağlayıcı sayısı arttıkça liste bu sırayla okunabilir kalır.
   const sourceRank: Record<LyricsCandidate['source'], number> = {
@@ -1548,9 +1642,7 @@ export async function resolveCandidateToLyricsResult(
 ): Promise<LyricsResult | null> {
   if (candidate.source === 'lrc.red') {
     if (!candidate.isrc) return null;
-    const ttml = await fetchLrcRedTtml(candidate.isrc);
-    if (!ttml) return null;
-    const result = buildLrcRedResult(
+    return resolveLrcRedCandidate(
       {
         isrc: candidate.isrc,
         title: candidate.trackName,
@@ -1558,10 +1650,8 @@ export async function resolveCandidateToLyricsResult(
         album: candidate.albumName,
         duration: candidate.duration,
       },
-      ttml
+      allCandidates
     );
-    if (!result) return null;
-    return { ...result, candidates: allCandidates };
   }
 
   if (candidate.source === 'lrclib') {

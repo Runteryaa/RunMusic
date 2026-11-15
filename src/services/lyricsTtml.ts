@@ -318,6 +318,34 @@ export function parseTtml(ttml: string): LyricLine[] {
   return lines;
 }
 
+/**
+ * Zaman bilgisi olmayan TTML belgelerinden düz metin çıkarır.
+ *
+ * lrc.red arşivinde `lrc:timing="None"` belgeleri var: `<p>` etiketleri
+ * zamanlama taşımıyor, sadece satır satır söz metni içeriyor. Bunlar
+ * `parseTtml` için görünmez (begin yok → satır üretilmez) ve eskiden tamamen
+ * yok sayılıyordu; sonuç olarak kullanıcı listede lrc.red sonucunu görüp
+ * dokunduğunda hiçbir şey olmuyordu. Bu fonksiyon o belgeleri düz söz olarak
+ * kullanılabilir hale getirir.
+ */
+export function parseTtmlPlainText(ttml: string): string | null {
+  if (!ttml) return null;
+
+  const lines: string[] = [];
+  if (ttml.indexOf('<p') !== -1) {
+    for (const block of findBlocks(ttml, 'p')) {
+      const text = textWithoutTags(block.inner);
+      if (text) lines.push(text);
+    }
+  }
+  if (lines.length === 0) {
+    // `<p>` yoksa `<div>` içindeki serbest metni dene.
+    const fallback = textWithoutTags(ttml.replace(/<head[\s\S]*?<\/head>/i, ' '));
+    return fallback || null;
+  }
+  return lines.join('\n');
+}
+
 export interface LyricGapRow {
   kind: 'gap';
   key: string;
