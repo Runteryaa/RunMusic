@@ -19,6 +19,7 @@ import {
 } from './queueController';
 import { initAudioEffects } from './audioEffectsService';
 import { ensureActiveTrackArtwork } from './activeTrackArtwork';
+import { resolveDisplayMetadata } from './displayMetadata';
 
 let MusicWidgetModule: any = null;
 try {
@@ -340,10 +341,12 @@ async function doRestoreQueueIfNeeded(): Promise<boolean> {
       if (MusicWidgetModule && MusicWidgetModule.updateWidget && activeTrack) {
         try {
           const theme = useThemeStore.getState().theme;
+          // Oyuncu ekranıyla aynı isim: düzenlenmiş meta varsa o kazanır.
+          const displayMeta = resolveDisplayMetadata(activeTrack);
           MusicWidgetModule.updateWidget(
-            activeTrack.title || 'RunMusic',
-            activeTrack.artist || 'RunMusic',
-            activeTrack.artwork || null,
+            displayMeta.title,
+            displayMeta.artist,
+            displayMeta.artwork,
             false,
             theme.primary || '#212121'
           );
@@ -367,10 +370,12 @@ async function doRestoreQueueIfNeeded(): Promise<boolean> {
       if (MusicWidgetModule && MusicWidgetModule.updateWidget && lastPlayback.track) {
         try {
           const theme = useThemeStore.getState().theme;
+          // Oyuncu ekranıyla aynı isim: düzenlenmiş meta varsa o kazanır.
+          const displayMeta = resolveDisplayMetadata(lastPlayback.track as Track);
           MusicWidgetModule.updateWidget(
-            lastPlayback.track.title || 'RunMusic',
-            lastPlayback.track.artist || 'RunMusic',
-            lastPlayback.track.artwork || null,
+            displayMeta.title,
+            displayMeta.artist,
+            displayMeta.artwork,
             false,
             theme.primary || '#212121'
           );

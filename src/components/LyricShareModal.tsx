@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  type TextLayoutEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -17,6 +18,22 @@ import type { ThemeColors } from '../services/colorThemeService';
 /** Paylaşım kartına sığabilecek en fazla satır. */
 export const MAX_SHARE_LINES = 8;
 
+/** Kart içeriğinin yatay iç boşluğu (`cardContent.padding`). */
+const CARD_CONTENT_PADDING = 18;
+/** Ana söz ile satır sonuna eklenen arka vokal arasındaki boşluk (dp). */
+const CARD_INLINE_BG_GAP = 7;
+/**
+ * Arka vokalin genişliğini ölçmeden önce kullanılan yaklaşık karakter
+ * genişliği (em cinsinden, kalın yazı için). Kartta en fazla 8 satır olduğu
+ * için gizli bir ölçüm düğümü eklemek yerine bu tahmin kullanılıyor; yanılma
+ * payı boşlukla telafi ediliyor.
+ */
+const CARD_BG_CHAR_EM = 0.56;
+
+function estimateTextWidth(text: string, fontSize: number): number {
+  return text.length * fontSize * CARD_BG_CHAR_EM;
+}
+
 export interface LyricShareLine {
   key: string;
   text: string;
@@ -25,6 +42,65 @@ export interface LyricShareLine {
   /** Diyalog satırı sağa hizalıysa (karşılıklı söyleşi) kartta da sağa yaslanır. */
   align?: 'start' | 'end';
 }
+
+/**
+ * Karttaki tek söz satırı.
+ *
+ * Arka vokal, satırın sonuna sığıyorsa ana sözün **son satırının sonuna** aynı
+ * satırda ekleniyor; sığmıyorsa altında ayrı ve daha küçük bir satır olarak
+ * kalıyor. Sığıp sığmadığı, ana metnin `onTextLayout` ile ölçülen son satır
+ * genişliğinden hesaplanıyor — böylece iki sütunlu tahmin yerine gerçek ölçü
+ * kullanılıyor.
+ */
+const ShareCardLine = React.memo(function ShareCardLine({
+  line,
+  availableWidth,
+}: {
+  line: LyricShareLine;
+  availableWidth: number;
+}) {
+  const lineEnd = line.align === 'end';
+  const [lastLineWidth, setLastLineWidth] = useState<number | null>(null);
+  const measuredRef = useRef(false);
+
+  // Ölçüm yalnızca ana metin için yapılır: arka vokal eklendikten sonra gelen
+  // yerleşim olayı yok sayılır, aksi hâlde karar kendi kendini bozardı.
+  const handleTextLayout = useCallback((event: TextLayoutEvent) => {
+    if (measuredRef.current) return;
+    measuredRef.current = true;
+    const lines = event.nativeEvent.lines;
+    const last = lines[lines.length - 1];
+    setLastLineWidth(last ? last.width : 0);
+  }, []);
+
+  const background = line.background;
+  const inline =
+    !!background &&
+    lastLineWidth != null &&
+    lastLineWidth + CARD_INLINE_BG_GAP + estimateTextWidth(background, 13) <=
+      availableWidth;
+
+  return (
+    <View style={[styles.cardLineBlock, lineEnd && styles.cardLineBlockEnd]}>
+      <Text
+        style={[styles.cardLineText, lineEnd && styles.cardLineTextEnd]}
+        onTextLayout={handleTextLayout}>
+        {line.text}
+        {inline ? (
+          <Text style={styles.cardLineBackgroundInline}>
+            {'  '}
+            {background}
+          </Text>
+        ) : null}
+      </Text>
+      {background && !inline ? (
+        <Text style={[styles.cardLineBackground, lineEnd && styles.cardLineTextEnd]}>
+          {background}
+        </Text>
+      ) : null}
+    </View>
+  );
+});
 
 interface CaptureModules {
   captureRef: (ref: unknown, options?: Record<string, unknown>) => Promise<string>;
@@ -277,27 +353,13 @@ export function LyricSharePreviewModal({
 
                 <View style={styles.cardLines}>
                   {lines.length > 0 ? (
-                    lines.map((line) => {
-                      const lineEnd = line.align === 'end';
-                      return (
-                        <View
-                          key={`card-${line.key}`}
-                          style={[styles.cardLineBlock, lineEnd && styles.cardLineBlockEnd]}>
-                          <Text style={[styles.cardLineText, lineEnd && styles.cardLineTextEnd]}>
-                            {line.text}
-                          </Text>
-                          {line.background ? (
-                            <Text
-                              style={[
-                                styles.cardLineBackground,
-                                lineEnd && styles.cardLineTextEnd,
-                              ]}>
-                              {line.background}
-                            </Text>
-                          ) : null}
-                        </View>
-                      );
-                    })
+                    lines.map((line) => (
+                      <ShareCardLine
+                        key={`card-${line.key}`}
+                        line={line}
+                        availableWidth={cardWidth - CARD_CONTENT_PADDING * 2}
+                      />
+                    ))
                   ) : (
                     <Text style={styles.cardEmptyText}>{t('player.share_lyrics_empty')}</Text>
                   )}
@@ -479,6 +541,20 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '700',
     marginTop: 2,
+    textShadowColor: 'rgba(255, 255, 255, 0.45)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
+  },
+  /**
+   * Satır sonuna sığdırılan arka vokal: ölçüler alt satırdakiyle aynı, ama
+   * ayrı bir satır oluşturmadığı için `marginTop` yok ve ana satırın
+   * yüksekliğini devralıyor.
+   */
+  cardLineBackgroundInline: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: -0.1,
     textShadowColor: 'rgba(255, 255, 255, 0.45)',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 8,

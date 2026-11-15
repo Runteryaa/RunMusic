@@ -25,6 +25,7 @@ import { useOptimisticPlayerStore } from './store/useOptimisticPlayerStore';
 import { remoteSyncManager } from './services/remote/remoteSyncManager';
 import { syncReplayGainForTrack } from './services/audioEffectsService';
 import { ensureActiveTrackArtwork } from './services/activeTrackArtwork';
+import { resolveDisplayMetadata } from './services/displayMetadata';
 
 let MusicWidgetModule: any = null;
 try {
@@ -310,10 +311,17 @@ export default async function playbackService() {
         if (MusicWidgetModule && MusicWidgetModule.updateWidget) {
           const isPlaying = (await TrackPlayer.getPlaybackState()).state === State.Playing;
           const theme = useThemeStore.getState().theme;
+          /*
+           * Widget, oynatıcı ekranıyla aynı ismi göstersin: düzenlenmiş
+           * başlık/sanatçı `metadataMap`'te durur, kuyruk kaydında ise ham
+           * (dosya adından gelen) değer vardır. Burada çözümlenmiş meta
+           * kullanılıyor.
+           */
+          const displayMeta = resolveDisplayMetadata(event.track, { metadataMap, artworkMap });
           MusicWidgetModule.updateWidget(
-            event.track.title || 'RunMusic',
-            event.track.artist || 'RunMusic',
-            typeof event.track.artwork === 'string' ? event.track.artwork : null,
+            displayMeta.title,
+            displayMeta.artist,
+            displayMeta.artwork,
             isPlaying,
             theme.primary || '#212121'
           );
@@ -343,10 +351,12 @@ export default async function playbackService() {
         const active = await TrackPlayer.getActiveTrack();
         const isPlaying = event.state === State.Playing;
         const theme = useThemeStore.getState().theme;
+        // Oynatıcı ekranıyla aynı (düzenlenmiş) isim: `metadataMap` öncelikli.
+        const displayMeta = resolveDisplayMetadata(active);
         MusicWidgetModule.updateWidget(
-          active?.title || 'RunMusic',
-          active?.artist || 'RunMusic',
-          typeof active?.artwork === 'string' ? active?.artwork : null,
+          displayMeta.title,
+          displayMeta.artist,
+          displayMeta.artwork,
           isPlaying,
           theme.primary || '#212121'
         );

@@ -6030,8 +6030,8 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
         <LyricSharePreviewModal
           visible={isSharePreviewOpen}
           onClose={() => setIsSharePreviewOpen(false)}
-          title={player.activeTrack?.title || displayTitle || ''}
-          artist={player.activeTrack?.artist || displayArtist || ''}
+          title={displayTitle || ''}
+          artist={displayArtist || ''}
           artworkUri={player.artworkUri ?? currentArtworkUri ?? null}
           lines={selectedShareLines}
           theme={theme}

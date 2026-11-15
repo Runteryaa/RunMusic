@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useActiveTrack, useIsPlaying } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
+import { resolveDisplayMetadata } from '../services/displayMetadata';
 
 let MusicWidgetModule: any = null;
 try {
@@ -24,17 +25,30 @@ export function useWidgetUpdater() {
 
   useEffect(() => {
     if (MusicWidgetModule && MusicWidgetModule.updateWidget) {
-      const title = activeTrack?.title || 'RunMusic';
-      const artist = activeTrack?.artist || 'RunMusic';
+      /*
+       * Ana ekran widget'ı, oynatıcı ekranındaki ismi göstermeli: kullanıcının
+       * düzenlediği başlık/sanatçı `metadataMap`'te, ham (dosya adı) değer ise
+       * kuyruk kaydındadır. `resolveDisplayMetadata` oyuncuyla aynı sırayı
+       * uygular (önce düzenlenmiş meta, sonra kayıt).
+       */
+      const displayMeta = resolveDisplayMetadata(activeTrack);
+      const title = displayMeta.title;
+      const artist = displayMeta.artist;
       const bgColor = theme.primary || '#212121';
 
       try {
-        MusicWidgetModule.updateWidget(title, artist, artworkUri, playing, bgColor);
+        MusicWidgetModule.updateWidget(
+          title,
+          artist,
+          artworkUri ?? displayMeta.artwork,
+          playing,
+          bgColor
+        );
       } catch (e) {
         console.warn('Failed to update Android Widget:', e);
       }
     }
-  }, [activeTrack?.title, activeTrack?.artist, playing, artworkUri, theme.primary]);
+  }, [activeTrack, playing, artworkUri, theme.primary]);
 
   useEffect(() => {
     if (!MusicWidgetModule || !MusicWidgetModule.addListener) return;
