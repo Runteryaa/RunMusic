@@ -225,13 +225,31 @@ const LYRIC_BG_WORD_GAP = 5;
 /** Söylenen kelimenin yukarı kalkma mesafesi (dp). */
 const LYRIC_WORD_LIFT = 4;
 /**
- * Söz metninin gölgesi (hâle): bulanıklık 5, opaklık 0.75, kayma yok.
- * Aktif harflerin animasyonlu hâlesi de aynı değerleri kullanır; böylece metin
- * ile söylenen kısım aynı yumuşaklıkta görünür.
+ * Söz metninin gölgesi iki farklı iş için kullanılıyor.
+ *
+ * - **Bulanıklık (pasif satırlar):** dar yarıçap, yüksek opaklık. Harfin
+ *   kenarlarını dağıtıp odaktan çıkmış görünüm verir (Apple Music'in odak dışı
+ *   satırları). React Native metne gerçek `blur` uygulayamadığı için gölgeyle
+ *   taklit ediliyor.
+ * - **Hâle (aktif satır):** geniş yarıçap, düşük opaklık. Harfin çevresinde
+ *   yumuşak bir ışık bırakır; harfin kendisi net kalır. Bu ikisi karıştırılırsa
+ *   aktif satır da bulanık görünüyordu.
+ *
+ * Kayma her ikisinde de yok (offset 0,0).
  */
-const LYRIC_TEXT_SHADOW_COLOR = 'rgba(255, 255, 255, 0.75)';
-const LYRIC_TEXT_SHADOW_RADIUS = 5;
 const LYRIC_TEXT_SHADOW_OFFSET = { width: 0, height: 0 };
+/** Pasif satır: hafif bulanıklık (blur 5, opaklık 0.75). */
+const LYRIC_BLUR_SHADOW_COLOR = 'rgba(255, 255, 255, 0.75)';
+const LYRIC_BLUR_SHADOW_RADIUS = 5;
+/**
+ * Aktif satır: hâle. Yarıçap geniş, opaklık düşük — harfin kendisi keskin
+ * kalırken çevresinde yumuşak bir parıltı oluşur.
+ */
+const LYRIC_GLOW_SHADOW_COLOR = 'rgba(255, 255, 255, 0.55)';
+const LYRIC_GLOW_SHADOW_RADIUS = 14;
+/** Arka vokal daha küçük puntoda: hâlesi de bir tık dar. */
+const LYRIC_BG_GLOW_SHADOW_COLOR = 'rgba(255, 255, 255, 0.45)';
+const LYRIC_BG_GLOW_SHADOW_RADIUS = 10;
 /**
  * 0→1 arası yumuşak geçiş (smoothstep). Lineer rampalar (harf yanması, kelime
  * kalkışı) sert görünüyordu; bu eğri başta ve sonda hızı sıfıra indirir.
@@ -6354,13 +6372,12 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
     textAlign: 'left',
     /*
-     * Metnin çevresindeki yumuşak hâle: bulanıklık 5, opaklık 0.75, kayma yok.
-     * Pasif satırları da hafifçe dağıtıp Apple Music'in odak dışı görünümüne
-     * yaklaştırıyor.
+     * Pasif satır: hafif bulanıklık. Dar yarıçap + yüksek opaklık, harfin
+     * kenarlarını dağıtıp odağın dışındaymış hissi veriyor.
      */
-    textShadowColor: LYRIC_TEXT_SHADOW_COLOR,
+    textShadowColor: LYRIC_BLUR_SHADOW_COLOR,
     textShadowOffset: LYRIC_TEXT_SHADOW_OFFSET,
-    textShadowRadius: LYRIC_TEXT_SHADOW_RADIUS,
+    textShadowRadius: LYRIC_BLUR_SHADOW_RADIUS,
   },
   lyricTextActive: {
     color: '#ffffff',
@@ -6373,9 +6390,13 @@ const styles = StyleSheet.create({
     lineHeight: LYRIC_LINE_HEIGHT_ACTIVE,
     letterSpacing: -0.2,
     textAlign: 'left',
-    textShadowColor: LYRIC_TEXT_SHADOW_COLOR,
+    /*
+     * Aktif satır bulanıklaştırılmıyor: geniş yarıçaplı, düşük opaklıklı gölge
+     * harfin çevresinde hâle bırakır, harfin kendisi keskin kalır.
+     */
+    textShadowColor: LYRIC_GLOW_SHADOW_COLOR,
     textShadowOffset: LYRIC_TEXT_SHADOW_OFFSET,
-    textShadowRadius: LYRIC_TEXT_SHADOW_RADIUS,
+    textShadowRadius: LYRIC_GLOW_SHADOW_RADIUS,
   },
   lyricTextEnd: {
     textAlign: 'right',
@@ -6397,13 +6418,18 @@ const styles = StyleSheet.create({
     lineHeight: LYRIC_BG_LINE_HEIGHT,
     letterSpacing: -0.1,
     textAlign: 'left',
-    textShadowColor: LYRIC_TEXT_SHADOW_COLOR,
+    // Pasif satırla aynı mantık: hafif bulanıklık.
+    textShadowColor: LYRIC_BLUR_SHADOW_COLOR,
     textShadowOffset: LYRIC_TEXT_SHADOW_OFFSET,
-    textShadowRadius: LYRIC_TEXT_SHADOW_RADIUS,
+    textShadowRadius: LYRIC_BLUR_SHADOW_RADIUS,
   },
-  /** Arka vokalin aktif hâli: ölçüler aynı, yalnızca renk farkı. */
+  /** Arka vokalin aktif hâli: ölçüler aynı, renk ve hâle farkı. */
   lyricBackgroundTextActive: {
     color: 'rgba(255, 255, 255, 0.92)',
+    // Aktifken bulanıklık yerine hâle (punto küçük olduğu için daha dar).
+    textShadowColor: LYRIC_BG_GLOW_SHADOW_COLOR,
+    textShadowOffset: LYRIC_TEXT_SHADOW_OFFSET,
+    textShadowRadius: LYRIC_BG_GLOW_SHADOW_RADIUS,
   },
   lyricGapRow: {
     width: '100%',

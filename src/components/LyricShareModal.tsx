@@ -461,10 +461,14 @@ const styles = StyleSheet.create({
     // Paneldeki sözlerle aynı ağırlık: Apple Music'in söz tipografisi kalın.
     fontWeight: '800',
     letterSpacing: -0.3,
-    // Panelle aynı hâle: bulanıklık 5, opaklık 0.75, kayma yok.
-    textShadowColor: 'rgba(255, 255, 255, 0.75)',
+    /*
+     * Kart dışa aktarılan bir görsel: burada bulanıklık değil hâle kullanılıyor.
+     * Geniş yarıçap + düşük opaklık, harfi net bırakıp arkasındaki fotoğrafa
+     * karşı yumuşak bir ışık veriyor.
+     */
+    textShadowColor: 'rgba(255, 255, 255, 0.55)',
     textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 5,
+    textShadowRadius: 12,
   },
   cardLineTextEnd: {
     textAlign: 'right',
@@ -475,9 +479,9 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '700',
     marginTop: 2,
-    textShadowColor: 'rgba(255, 255, 255, 0.75)',
+    textShadowColor: 'rgba(255, 255, 255, 0.45)',
     textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 5,
+    textShadowRadius: 8,
   },
   cardEmptyText: {
     color: 'rgba(255,255,255,0.45)',
