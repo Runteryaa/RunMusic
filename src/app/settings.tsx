@@ -35,6 +35,8 @@ import { AdBanner } from '../components/AdBanner';
 import { showRewardedAd } from '../services/adService';
 import { useRemoteConnectStore, DEFAULT_DEVICE_NAME } from '../store/useRemoteConnectStore';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
+import { useConnectionsStore } from '../store/useConnectionsStore';
+import { ConnectionsSection } from '../components/connections/ConnectionsSection';
 
 const GITHUB_URL = 'https://github.com/Runteryaa/RunMusic';
 
@@ -68,6 +70,10 @@ export default function SettingsScreen() {
   const clearLyricsCache = useStore((s) => s.clearLyricsCache);
   const clearArtworkCache = useStore((s) => s.clearArtworkCache);
   const upNextCount = useStore((s) => s.upNextIds.length);
+
+  const lastfmUsername = useConnectionsStore((s) => s.lastfm.username);
+  const listenBrainzUsername = useConnectionsStore((s) => s.listenbrainz.username);
+  const connectionCount = (lastfmUsername ? 1 : 0) + (listenBrainzUsername ? 1 : 0);
 
   const { t, resolvedLanguage } = useTranslation();
 
@@ -679,6 +685,19 @@ export default function SettingsScreen() {
             ))}
           </View>
         )}
+      </Section>
+
+      {/* ── BAĞLANTILAR (Last.fm / ListenBrainz) ──────────────────────────── */}
+      <Section
+        icon="link-outline"
+        title={t('connections.section')}
+        subtitle={
+          connectionCount > 0
+            ? t('connections.subtitle_active', { count: connectionCount })
+            : t('connections.subtitle_off')
+        }
+        theme={theme}>
+        <ConnectionsSection />
       </Section>
 
       {/* ── ÇALMA ─────────────────────────────────────────────────────────── */}
