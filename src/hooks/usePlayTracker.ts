@@ -61,10 +61,11 @@ export function usePlayTracker() {
       const meta = metadataMap[activeTrack.id] || (activeTrack.url ? metadataMap[activeTrack.url] : undefined);
       const title = dlTask?.title || meta?.title || activeTrack.title || null;
       const artist = dlTask?.artist || meta?.artist || activeTrack.artist || null;
+      const album = meta?.album || null;
       const artwork = dlTask?.artwork || meta?.artwork || (typeof activeTrack.artwork === 'string' ? activeTrack.artwork : null);
 
       // Dinlenme geçmişe şarkının başlığı, sanatçısı ve kapağı ile birlikte kaydediliyor
-      recordPlay(activeTrack.id, 0, { title, artist, artwork });
+      recordPlay(activeTrack.id, 0, { title, artist, album, artwork });
       trackedSessionIdRef.current = activeTrack.id;
     }
   }, [progress.position, activeTrack, shouldSkipTracking]);

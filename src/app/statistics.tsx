@@ -345,6 +345,24 @@ export default function StatisticsScreen() {
               {/* Ad Banner - Sayfa Başı */}
               <AdBanner style={{ marginBottom: 12 }} />
 
+              {/* RunMusic Wrapped girişi */}
+              <TouchableOpacity
+                style={[styles.wrappedCard, { borderColor: `${theme.primary}55` }]}
+                activeOpacity={0.85}
+                onPress={() => router.push('/wrapped')}>
+                <View style={[styles.wrappedGlow, { backgroundColor: theme.glowColor }]} />
+                <View style={[styles.wrappedIcon, { backgroundColor: `${theme.primary}26` }]}>
+                  <Ionicons name="sparkles" size={20} color={theme.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.wrappedTitle}>{t('wrapped.statistics_card_title')}</Text>
+                  <Text style={styles.wrappedDesc}>{t('wrapped.statistics_card_desc')}</Text>
+                </View>
+                <View style={[styles.wrappedCta, { backgroundColor: theme.primary }]}>
+                  <Text style={styles.wrappedCtaText}>{t('wrapped.statistics_card_cta')}</Text>
+                </View>
+              </TouchableOpacity>
+
               {/* Total Time Card */}
               <View style={styles.card}>
                 <Ionicons name="time-outline" size={32} color={theme.primary} />
@@ -515,6 +533,53 @@ const styles = StyleSheet.create({
   scrollContent: {
     flex: 1,
     padding: 16,
+  },
+  wrappedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#18181b',
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  wrappedGlow: {
+    position: 'absolute',
+    top: -60,
+    right: -40,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    opacity: 0.5,
+  },
+  wrappedIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  wrappedTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  wrappedDesc: {
+    fontSize: 12,
+    color: '#a1a1aa',
+    marginTop: 2,
+  },
+  wrappedCta: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  wrappedCtaText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
   },
   card: {
     flexDirection: 'row',

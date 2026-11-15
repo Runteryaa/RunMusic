@@ -10,6 +10,11 @@ import {
 } from '../services/lyricsService';
 import type { SortOption } from '../services/librarySort';
 import {
+  DEFAULT_WRAPPED_PREFERENCES,
+  normalizeWrappedPreferences,
+  type WrappedPreferences,
+} from '../services/wrappedStats';
+import {
   DEFAULT_AUDIO_EFFECTS,
   normalizeAudioEffects,
   type AudioEffectsSettings,
@@ -96,6 +101,8 @@ export interface AppPreferences {
   extensionsEnabled: boolean;
   /** Kullanıcıya ait ekolayzer ve ReplayGain ayarları. */
   audioEffects: AudioEffectsSettings;
+  /** RunMusic Wrapped kişiselleştirmesi (hangi slaytlar, kapak gösterilsin mi). */
+  wrapped: WrappedPreferences;
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
@@ -121,6 +128,10 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   audioEffects: {
     ...DEFAULT_AUDIO_EFFECTS,
     equalizerBands: [...DEFAULT_AUDIO_EFFECTS.equalizerBands],
+  },
+  wrapped: {
+    slides: [...DEFAULT_WRAPPED_PREFERENCES.slides],
+    showArtwork: DEFAULT_WRAPPED_PREFERENCES.showArtwork,
   },
 };
 
@@ -249,8 +260,13 @@ interface AppState {
   bumpQueueRevision: () => void;
 }
 
-/** Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır. */
-const PERSIST_VERSION = 18;
+/**
+ * Kalıcı depolama şema sürümü. Alanı olmayan eski kayıtlar sürüm 0 sayılır.
+ *
+ * v19: `preferences.wrapped` (Wrapped slayt seçimleri). Eski kayıtlarda alan
+ * yok; migrasyon varsayılanlarla doldurup normalize eder.
+ */
+const PERSIST_VERSION = 19;
 
 export const useStore = create<AppState>()(
   persist(
@@ -684,6 +700,9 @@ export const useStore = create<AppState>()(
               incomingPrefs.lyricsSourcePreference,
               fromVersion
             ),
+            // v19: Wrapped kişiselleştirmesi. Eski kayıtlarda yok; tüm
+            // slaytlar açık ve kapak görünür olacak şekilde doldurulur.
+            wrapped: normalizeWrappedPreferences(incomingPrefs.wrapped),
           },
           isSmartShuffle: Boolean(incoming.isSmartShuffle),
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),

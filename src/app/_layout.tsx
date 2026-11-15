@@ -270,6 +270,13 @@ function MainAppLayout({ onFirstLayout }: { onFirstLayout: () => void }) {
               headerShown: false,
             }}
           />
+          <Tabs.Screen
+            name="wrapped"
+            options={{
+              href: null,
+              headerShown: false,
+            }}
+          />
         </Tabs>
 
         {/* Genişleyen ve Dönüşen Müzik Çalar (MiniPlayer <---> FullscreenPlayer) */}

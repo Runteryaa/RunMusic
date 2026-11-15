@@ -27,6 +27,7 @@ async function openStatsDB(): Promise<SQLite.SQLiteDatabase> {
         duration_listened INTEGER NOT NULL,
         title TEXT,
         artist TEXT,
+        album TEXT,
         artwork TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_track_id ON play_history(track_id);
@@ -47,6 +48,7 @@ async function openStatsDB(): Promise<SQLite.SQLiteDatabase> {
     for (const [name, type] of [
       ['title', 'TEXT'],
       ['artist', 'TEXT'],
+      ['album', 'TEXT'],
       ['artwork', 'TEXT'],
     ] as const) {
       if (!columnNames.has(name)) {
@@ -113,6 +115,7 @@ export async function initStatsDB(): Promise<void> {
 export interface PlayMetadataPayload {
   title?: string | null;
   artist?: string | null;
+  album?: string | null;
   artwork?: string | null;
 }
 
@@ -124,11 +127,12 @@ export async function recordPlay(
   try {
     await withStatsDB((database) =>
       database.runAsync(
-        'INSERT INTO play_history (track_id, duration_listened, title, artist, artwork) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO play_history (track_id, duration_listened, title, artist, album, artwork) VALUES (?, ?, ?, ?, ?, ?)',
         trackId,
         durationListened,
         meta?.title ?? null,
         meta?.artist ?? null,
+        meta?.album ?? null,
         meta?.artwork ?? null
       )
     );
@@ -144,6 +148,7 @@ export interface PlayHistoryItem {
   duration_listened: number;
   title?: string | null;
   artist?: string | null;
+  album?: string | null;
   artwork?: string | null;
 }
 
@@ -252,6 +257,52 @@ export async function addListeningTime(seconds: number) {
     });
   } catch (error) {
     console.warn('Failed to add listening time:', error);
+  }
+}
+
+/**
+ * Belirli bir zaman aralığındaki dinlemeleri döner (Wrapped için).
+ *
+ * `startSql` / `endSql`: `YYYY-MM-DD HH:MM:SS` (UTC) — `played_at` ile aynı
+ * biçim. SQLite'ta metin karşılaştırması bu biçimde kronolojik sıralamayla
+ * aynı sonucu verir.
+ */
+export async function getHistoryInRange(
+  startSql: string,
+  endSql: string
+): Promise<PlayHistoryItem[]> {
+  try {
+    return await withStatsDB((database) =>
+      database.getAllAsync<PlayHistoryItem>(
+        'SELECT * FROM play_history WHERE played_at >= ? AND played_at < ? ORDER BY played_at ASC',
+        startSql,
+        endSql
+      )
+    );
+  } catch (error) {
+    console.warn('Failed to get history range:', error);
+    return [];
+  }
+}
+
+/** İlk ve son dinlemenin zaman damgası (Wrapped "tüm zamanlar" penceresi için). */
+export async function getHistoryBounds(): Promise<{
+  first: string | null;
+  last: string | null;
+  count: number;
+}> {
+  try {
+    return await withStatsDB(async (database) => {
+      const row = await database.getFirstAsync<{
+        first: string | null;
+        last: string | null;
+        cnt: number;
+      }>('SELECT MIN(played_at) as first, MAX(played_at) as last, COUNT(*) as cnt FROM play_history');
+      return { first: row?.first ?? null, last: row?.last ?? null, count: row?.cnt ?? 0 };
+    });
+  } catch (error) {
+    console.warn('Failed to get history bounds:', error);
+    return { first: null, last: null, count: 0 };
   }
 }
 
