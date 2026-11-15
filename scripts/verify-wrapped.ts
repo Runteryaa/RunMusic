@@ -13,7 +13,10 @@
  */
 
 import {
+  DEFAULT_LEGACY_PLAY_SECONDS,
   DEFAULT_WRAPPED_PREFERENCES,
+  DEFAULT_WRAPPED_SHARE_ITEMS,
+  WRAPPED_SHARE_ITEMS,
   WRAPPED_SLIDE_IDS,
   buildWrappedStats,
   formatDateInput,
@@ -164,15 +167,11 @@ check('toplam dinleme', stats.totalPlays === 5);
 check('toplam süre (5 × 200 sn)', stats.totalSeconds === 1000);
 check('farklı parça', stats.uniqueTracks === 3);
 check('farklı sanatçı', stats.uniqueArtists === 3);
-// Albüm anahtarı ada + sanatçıya göre: aynı ada sahip farklı sanatçı albümleri
-// (derleme / aynı isimli albüm) birbirine karışmasın.
-check('farklı albüm (ad + sanatçı)', stats.uniqueAlbums === 3);
 check('aktif gün', stats.activeDays === 3);
 check('en çok dinlenen parça', stats.topTracks[0].label === 'Alpha' && stats.topTracks[0].plays === 3);
 check('ikinci parça', stats.topTracks[1].label === 'Beta');
 check('limit uygulanır', stats.topTracks.length === 3);
 check('en çok dinlenen sanatçı', stats.topArtists[0].label === 'A1');
-check('albüm sıralaması', stats.topAlbums[0].label === 'Alb1' && stats.topAlbums[0].plays === 3);
 check('tek dinlemelik sanatçı sayısı', stats.onePlayArtists === 2);
 check('parça payı 3/5', Math.abs(stats.topTrackShare - 0.6) < 1e-9);
 check('ilk ve son dinleme', stats.lastPlayAt! > stats.firstPlayAt!);
@@ -212,7 +211,7 @@ check(
 section('Boş veri');
 const emptyStats = buildWrappedStats([]);
 check('boşta toplam 0', emptyStats.totalPlays === 0 && emptyStats.totalSeconds === 0);
-check('boşta liste boş', emptyStats.topTracks.length === 0 && emptyStats.topAlbums.length === 0);
+check('boşta liste boş', emptyStats.topTracks.length === 0 && emptyStats.topArtists.length === 0);
 check('boşta pay 0', emptyStats.topTrackShare === 0);
 check('boşta saat yok', emptyStats.busiestHour === null);
 
@@ -222,8 +221,17 @@ const missingMeta = buildWrappedStats([
 ]);
 check('başlıksız satır sayılır', missingMeta.totalPlays === 1);
 check('boş sanatçı tek grupta toplanır', missingMeta.uniqueArtists === 1);
-check('boş albüm listeye girmez', missingMeta.uniqueAlbums === 0);
-check('eksik süre 0 sayılır', missingMeta.totalSeconds === 0);
+check(
+  'eksik süre eski kayıt tahminiyle doldurulur',
+  missingMeta.totalSeconds === DEFAULT_LEGACY_PLAY_SECONDS
+);
+check(
+  'süre tahmini kapatılabilir',
+  buildWrappedStats(
+    [row('2026-01-01 10:00:00', { duration_listened: 0 })],
+    { fallbackSeconds: 0 }
+  ).totalSeconds === 0
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('Kişiselleştirme normalizasyonu');
@@ -243,6 +251,24 @@ check(
 check(
   'showArtwork verilmezse açık',
   normalizeWrappedPreferences({ slides: ['intro'] }).showArtwork === true
+);
+check(
+  'albüm slaytı kaldırıldı',
+  !(WRAPPED_SLIDE_IDS as readonly string[]).includes('albums')
+);
+check(
+  'paylaşım öğeleri varsayılanı',
+  normalizeWrappedPreferences({ slides: ['intro'] }).shareItems.length ===
+    DEFAULT_WRAPPED_SHARE_ITEMS.length
+);
+check(
+  'bilinmeyen paylaşım öğesi atılır',
+  normalizeWrappedPreferences({ shareItems: ['plays', 'nope', 'plays'] }).shareItems.join(',') ===
+    'plays'
+);
+check(
+  'boş paylaşım seçimi korunur (kullanıcı hepsini kapatabilir)',
+  normalizeWrappedPreferences({ shareItems: [] }).shareItems.length === 0
 );
 
 // ─────────────────────────────────────────────────────────────────────────────

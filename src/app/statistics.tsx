@@ -18,7 +18,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { useStore } from '../store/useStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { AdBanner } from '../components/AdBanner';
-import { cleanDisplayTitle } from '../services/lyricsService';
+import { cleanTrackFields } from '../services/displayNames';
 import { useTranslation } from '../services/i18n';
 
 const PAGE_SIZE = 50;
@@ -180,12 +180,12 @@ export default function StatisticsScreen() {
     const unknownTrack = t('common.unknown_track');
 
     if (historyItem?.title) {
-      const artist = historyItem.artist?.trim() || unknownArtist;
+      const fields = cleanTrackFields(historyItem.title, historyItem.artist);
       const asset = allAssets.find((a) => a.id === trackId) || library.find((a) => a.id === trackId);
       const task = downloadTasks.find((t) => t.id === trackId || t.mediaLibraryAssetId === trackId);
       return {
-        title: cleanDisplayTitle(historyItem.title, artist !== unknownArtist ? artist : undefined),
-        artist: artist === 'Local Audio' || artist === 'Bilinmeyen Sanatçı' ? unknownArtist : artist,
+        title: fields.title || unknownTrack,
+        artist: fields.artist || unknownArtist,
         uri: asset?.uri || task?.localFileUri,
         artwork: historyItem.artwork || metadataMap[trackId]?.artwork || artworkMap[trackId],
       };
@@ -195,21 +195,12 @@ export default function StatisticsScreen() {
     const asset = allAssets.find((a) => a.id === trackId) || library.find((a) => a.id === trackId);
     const task = downloadTasks.find((t) => t.id === trackId || t.mediaLibraryAssetId === trackId);
 
-    let artist = meta?.artist?.trim() || task?.artist?.trim() || unknownArtist;
-    if (artist === 'Local Audio' || artist === 'Bilinmeyen Sanatçı') artist = unknownArtist;
-
-    let rawTitle = meta?.title?.trim() || task?.title?.trim() || '';
-    if (!rawTitle && asset) {
-      rawTitle = asset.filename;
-    }
-
-    let title = rawTitle
-      ? cleanDisplayTitle(rawTitle, artist !== unknownArtist ? artist : undefined)
-      : unknownTrack;
+    const rawTitle = meta?.title?.trim() || task?.title?.trim() || asset?.filename || '';
+    const fields = cleanTrackFields(rawTitle, meta?.artist || task?.artist);
 
     return {
-      title,
-      artist,
+      title: fields.title || unknownTrack,
+      artist: fields.artist || unknownArtist,
       uri: asset?.uri || task?.localFileUri,
       artwork: meta?.artwork || task?.artwork || artworkMap[trackId],
     };

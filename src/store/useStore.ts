@@ -132,6 +132,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   wrapped: {
     slides: [...DEFAULT_WRAPPED_PREFERENCES.slides],
     showArtwork: DEFAULT_WRAPPED_PREFERENCES.showArtwork,
+    shareItems: [...DEFAULT_WRAPPED_PREFERENCES.shareItems],
   },
 };
 
@@ -265,8 +266,11 @@ interface AppState {
  *
  * v19: `preferences.wrapped` (Wrapped slayt seçimleri). Eski kayıtlarda alan
  * yok; migrasyon varsayılanlarla doldurup normalize eder.
+ * v20: Wrapped'ten albüm slaytı kaldırıldı, paylaşım kartı seçimleri
+ * (`shareItems`) eklendi. Migrasyon yeniden normalize eder: eski kayıtlardaki
+ * `albums` slaytı düşer, paylaşım öğeleri varsayılana döner.
  */
-const PERSIST_VERSION = 19;
+const PERSIST_VERSION = 20;
 
 export const useStore = create<AppState>()(
   persist(

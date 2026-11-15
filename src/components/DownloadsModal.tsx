@@ -18,6 +18,7 @@ import { useExtensionStore } from '../store/useExtensionStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useStore } from '../store/useStore';
 import { useTranslation } from '../services/i18n';
+import { cleanTrackFields } from '../services/displayNames';
 import { setupTrackPlayerIfNeeded } from '../services/playerBootstrap';
 import { toPlayableTrack } from '../services/playbackUri';
 import {
@@ -53,13 +54,14 @@ export const DownloadsModal: React.FC = () => {
 
   const handlePlayTrack = async (item: DownloadTask) => {
     if (!item.localFileUri) return;
+    const fields = cleanTrackFields(item.title, item.artist);
     try {
       await setupTrackPlayerIfNeeded();
       const track: Track = toPlayableTrack({
         id: item.id,
         url: item.localFileUri,
-        title: item.title,
-        artist: item.artist,
+        title: fields.title || item.title,
+        artist: fields.artist || item.artist,
         artwork: item.artwork,
       });
       await TrackPlayer.setQueue([track]);
@@ -68,8 +70,8 @@ export const DownloadsModal: React.FC = () => {
         useStore.getState().setArtwork(item.id, item.artwork);
       }
       useStore.getState().setTrackMetadata(item.id, {
-        title: item.title,
-        artist: item.artist,
+        title: fields.title || item.title,
+        artist: fields.artist || item.artist,
         artwork: item.artwork,
       });
       useStore.setState({
@@ -91,7 +93,12 @@ export const DownloadsModal: React.FC = () => {
     setAddingMap((prev) => ({ ...prev, [item.id]: true }));
     try {
       await addDownloadToLibrary(item.id);
-      Alert.alert(t('common.success'), t('downloads.added_to_library_success', { title: item.title }));
+      Alert.alert(
+        t('common.success'),
+        t('downloads.added_to_library_success', {
+          title: cleanTrackFields(item.title, item.artist).title || item.title,
+        })
+      );
     } catch (err: any) {
       Alert.alert(t('downloads.add_to_library_error_title'), err?.message || t('common.error'));
     } finally {
@@ -122,6 +129,7 @@ export const DownloadsModal: React.FC = () => {
       )
     );
     const isAdding = !!addingMap[item.id];
+    const display = cleanTrackFields(item.title, item.artist);
 
     return (
       <View style={styles.taskCard}>
@@ -155,10 +163,10 @@ export const DownloadsModal: React.FC = () => {
             onPress={() => isCompleted && handlePlayTrack(item)}
           >
             <Text style={styles.taskTitle} numberOfLines={1}>
-              {item.title}
+              {display.title || item.title}
             </Text>
             <Text style={styles.taskArtist} numberOfLines={1}>
-              {item.artist}
+              {display.artist || item.artist}
               {item.totalBytes > 0 || item.downloadedBytes > 0
                 ? ` • ${formatBytes(item.totalBytes || item.downloadedBytes)}`
                 : ''}

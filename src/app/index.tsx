@@ -34,7 +34,8 @@ import { TrackArtwork } from '../components/TrackArtwork';
 import { EditTrackModal, EditTrackTarget } from '../components/EditTrackModal';
 import { AdBanner } from '../components/AdBanner';
 import { getBatchMetadataAsync, getArtworkAsync } from '../../modules/audio-artwork/src';
-import { cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
+import { getSearchKeywords } from '../services/lyricsService';
+import { cleanArtistName, cleanTrackTitle, isPlaceholderArtist } from '../services/displayNames';
 import {
   addToQueue,
   beginPlayRequest,
@@ -143,27 +144,21 @@ export default function LibraryScreen() {
       const meta = metadataMap[asset.id] || metadataMap[asset.uri];
       const metaTitle = meta?.title?.trim() || '';
       const rawMetaArtist = meta?.artist?.trim() || '';
-      const metaArtist =
-        rawMetaArtist && rawMetaArtist !== 'Local Audio' && rawMetaArtist !== 'Bilinmeyen Sanatçı'
-          ? rawMetaArtist
-          : '';
+      const metaArtist = isPlaceholderArtist(rawMetaArtist) ? '' : cleanArtistName(rawMetaArtist);
 
       // Başlık ve sanatçı etiketten geliyorsa dosya adını ayrıştırmaya gerek
       // yok. Bu, büyük kütüphanelerde açılıştaki en pahalı adımı atlar.
       if (metaTitle && metaArtist) {
-        return { title: cleanDisplayTitle(metaTitle, metaArtist), artist: metaArtist };
+        return { title: cleanTrackTitle(metaTitle, metaArtist), artist: metaArtist };
       }
 
       const keywords = getSearchKeywords(asset.filename);
-      const keywordArtist =
-        keywords.expectedArtist &&
-        keywords.expectedArtist !== 'Local Audio' &&
-        keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
-          ? keywords.expectedArtist
-          : '';
+      const keywordArtist = isPlaceholderArtist(keywords.expectedArtist)
+        ? ''
+        : cleanArtistName(keywords.expectedArtist);
       const artist = metaArtist || keywordArtist;
       const rawTitle = metaTitle || keywords.expectedTrack || asset.filename;
-      const title = cleanDisplayTitle(rawTitle, artist);
+      const title = cleanTrackTitle(rawTitle, artist);
       return { title, artist };
     },
     [metadataMap]

@@ -16,11 +16,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getHistoryInRange } from '../services/statsDatabase';
+import { cleanTrackFields } from '../services/displayNames';
+import { loadArtistImages, normalizeArtistKey } from '../services/artistImages';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useTranslation } from '../services/i18n';
 import type { ThemeColors } from '../services/colorThemeService';
 import {
+  WRAPPED_SHARE_ITEMS,
   WRAPPED_SLIDE_IDS,
   buildWrappedStats,
   formatDateInput,
@@ -30,8 +33,10 @@ import {
   resolveWrappedPersona,
   resolveWrappedWindow,
   type WrappedPeriod,
+  type WrappedPersona,
   type WrappedPreferences,
   type WrappedRankedItem,
+  type WrappedShareItem,
   type WrappedSlideId,
   type WrappedStats,
 } from '../services/wrappedStats';
@@ -55,10 +60,54 @@ const SLIDE_TITLE_KEYS: Record<WrappedSlideId, string> = {
   totals: 'wrapped.slide_totals',
   tracks: 'wrapped.slide_tracks',
   artists: 'wrapped.slide_artists',
-  albums: 'wrapped.slide_albums',
   time: 'wrapped.slide_time',
   streak: 'wrapped.slide_streak',
   persona: 'wrapped.slide_persona',
+};
+
+/**
+ * Her slaytın kendi renk çifti. Tema rengi tek başına kullanıldığında ekran
+ * siyah-beyazımsı görünüyordu; bu çiftler slayt arka planına ve vurgulara
+ * renk katar. Yarı saydam katmanlarla uygulanır (gradient native modülü yok).
+ */
+const SLIDE_PALETTES: Record<WrappedSlideId, { a: string; b: string }> = {
+  intro: { a: '#a855f7', b: '#ec4899' },
+  totals: { a: '#38bdf8', b: '#818cf8' },
+  tracks: { a: '#f472b6', b: '#a855f7' },
+  artists: { a: '#fbbf24', b: '#f97316' },
+  time: { a: '#22d3ee', b: '#3b82f6' },
+  streak: { a: '#34d399', b: '#22d3ee' },
+  persona: { a: '#f43f5e', b: '#fbbf24' },
+};
+
+function slidePalette(slide: WrappedSlideId | undefined) {
+  return SLIDE_PALETTES[slide ?? 'intro'] ?? SLIDE_PALETTES.intro;
+}
+
+const SHARE_ITEM_KEYS: Record<WrappedShareItem, string> = {
+  plays: 'wrapped.share_item_plays',
+  time: 'wrapped.share_item_time',
+  topTrack: 'wrapped.share_item_top_track',
+  topArtist: 'wrapped.share_item_top_artist',
+  persona: 'wrapped.share_item_persona',
+  streak: 'wrapped.share_item_streak',
+  busiestHour: 'wrapped.share_item_busiest_hour',
+};
+
+const PERSONA_TITLE_KEYS: Record<WrappedPersona, string> = {
+  explorer: 'wrapped.persona_explorer',
+  devoted: 'wrapped.persona_devoted',
+  nightowl: 'wrapped.persona_nightowl',
+  marathoner: 'wrapped.persona_marathoner',
+  balanced: 'wrapped.persona_balanced',
+};
+
+const PERSONA_DESC_KEYS: Record<WrappedPersona, string> = {
+  explorer: 'wrapped.persona_explorer_desc',
+  devoted: 'wrapped.persona_devoted_desc',
+  nightowl: 'wrapped.persona_nightowl_desc',
+  marathoner: 'wrapped.persona_marathoner_desc',
+  balanced: 'wrapped.persona_balanced_desc',
 };
 
 const WEEKDAY_KEYS = [
@@ -92,6 +141,7 @@ export default function WrappedScreen() {
   const [customError, setCustomError] = useState(false);
 
   const [stats, setStats] = useState<WrappedStats>(EMPTY_STATS);
+  const [artistImages, setArtistImages] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [pageIndex, setPageIndex] = useState(0);
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -99,8 +149,7 @@ export default function WrappedScreen() {
   const scrollRef = useRef<ScrollView>(null);
 
   const slides = useMemo(() => {
-    const selected = wrappedPrefs?.slides?.length ? wrappedPrefs.slides : [...WRAPPED_SLIDE_IDS];
-    return selected;
+    return normalizeWrappedPreferences(wrappedPrefs).slides;
   }, [wrappedPrefs]);
 
   const loadStats = useCallback(
@@ -125,10 +174,26 @@ export default function WrappedScreen() {
         }
 
         const range = resolveWrappedWindow(nextPeriod, Date.now(), customRange);
-        const rows = await getHistoryInRange(range.startSql, range.endSql);
-        setStats(buildWrappedStats(rows, { limit: 5 }));
+        const rawRows = await getHistoryInRange(range.startSql, range.endSql);
+        // Geçmişte kaydedilmiş ham isimler de düzenlenmiş halleriyle gösterilsin.
+        const rows = rawRows.map((row) => {
+          const fields = cleanTrackFields(row.title, row.artist);
+          return {
+            ...row,
+            title: fields.title || row.title,
+            artist: fields.artist,
+          };
+        });
+        const nextStats = buildWrappedStats(rows, { limit: 5 });
+        setStats(nextStats);
         setPageIndex(0);
         scrollRef.current?.scrollTo({ x: 0, animated: false });
+
+        // Sanatçı fotoğrafları arka planda yüklenir; hazır olunca satırlar
+        // harf rozetinden gerçek fotoğrafa geçer.
+        void loadArtistImages(nextStats.topArtists.map((artist) => artist.label))
+          .then((images) => setArtistImages(images))
+          .catch(() => {});
       } catch {
         setStats(EMPTY_STATS);
       } finally {
@@ -190,8 +255,9 @@ export default function WrappedScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={[styles.glowTop, { backgroundColor: theme.glowColor }]} />
-      <View style={[styles.glowBottom, { backgroundColor: theme.glowColor }]} />
+      <View style={[styles.glowTop, { backgroundColor: slidePalette(slides[pageIndex]).a }]} />
+      <View style={[styles.glowBottom, { backgroundColor: slidePalette(slides[pageIndex]).b }]} />
+      <View style={[styles.glowMid, { backgroundColor: theme.primary }]} />
 
       {/* Başlık */}
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
@@ -322,7 +388,9 @@ export default function WrappedScreen() {
                   periodLabel={periodLabel}
                   durationLabels={durationLabels}
                   language={resolvedLanguage}
-                  showArtwork={wrappedPrefs?.showArtwork !== false}
+                  showArtwork={normalizeWrappedPreferences(wrappedPrefs).showArtwork !== false}
+                  palette={slidePalette(slide)}
+                  artistImages={artistImages}
                   onNext={() => goToPage(index + 1)}
                   t={t}
                 />
@@ -384,6 +452,8 @@ export default function WrappedScreen() {
         periodLabel={periodLabel}
         theme={theme}
         durationLabels={durationLabels}
+        shareItems={normalizeWrappedPreferences(wrappedPrefs).shareItems}
+        palette={slidePalette(slides[pageIndex])}
       />
     </View>
   );
@@ -401,6 +471,8 @@ interface SlideProps {
   durationLabels: { hour: string; minute: string; second: string };
   language: string;
   showArtwork: boolean;
+  palette: { a: string; b: string };
+  artistImages: Record<string, string>;
   onNext: () => void;
   t: (key: string, params?: Record<string, string | number>) => string;
 }
@@ -414,18 +486,22 @@ function Slide({
   durationLabels,
   language,
   showArtwork,
+  palette,
+  artistImages,
   onNext,
   t,
 }: SlideProps) {
   const innerWidth = Math.min(width - 48, 460);
+  const accent = palette.a;
+  const accentSoft = `${palette.a}55`;
 
   if (slide === 'intro') {
     return (
       <View style={[styles.slideBody, { width: innerWidth }]}>
-        <Text style={[styles.kicker, { color: theme.primary }]}>{t('wrapped.intro_kicker')}</Text>
+        <Text style={[styles.kicker, { color: accent }]}>{t('wrapped.intro_kicker')}</Text>
         <Text style={styles.introTitle}>RunMusic Wrapped</Text>
         <Text style={styles.introPeriod}>{periodLabel}</Text>
-        <View style={[styles.introBadge, { borderColor: `${theme.primary}55` }]}>
+        <View style={[styles.introBadge, { borderColor: accentSoft }]}>
           <Text style={styles.introBadgeValue}>{stats.totalPlays}</Text>
           <Text style={styles.introBadgeLabel}>{t('wrapped.total_plays')}</Text>
         </View>
@@ -433,7 +509,7 @@ function Slide({
           {formatWrappedDuration(stats.totalSeconds, durationLabels)}
         </Text>
         <TouchableOpacity
-          style={[styles.primaryAction, { backgroundColor: theme.primary }]}
+          style={[styles.primaryAction, { backgroundColor: accent }]}
           onPress={onNext}
           activeOpacity={0.85}>
           <Text style={styles.primaryActionText}>{t('wrapped.intro_button')}</Text>
@@ -446,63 +522,57 @@ function Slide({
   if (slide === 'totals') {
     return (
       <View style={[styles.slideBody, { width: innerWidth }]}>
-        <Text style={styles.slideTitle}>{t('wrapped.totals_title')}</Text>
+        <Text style={[styles.slideTitle, { color: accent }]}>{t('wrapped.totals_title')}</Text>
         <View style={styles.statGrid}>
           <StatTile
             value={String(stats.totalPlays)}
             label={t('wrapped.total_plays')}
-            theme={theme}
+            accent={accent}
+            accentSoft={accentSoft}
           />
           <StatTile
             value={formatWrappedDuration(stats.totalSeconds, durationLabels)}
             label={t('wrapped.total_time')}
-            theme={theme}
+            accent={accent}
+            accentSoft={accentSoft}
           />
           <StatTile
             value={String(stats.uniqueTracks)}
             label={t('wrapped.total_tracks')}
-            theme={theme}
+            accent={accent}
+            accentSoft={accentSoft}
           />
           <StatTile
             value={String(stats.uniqueArtists)}
             label={t('wrapped.total_artists')}
-            theme={theme}
-          />
-          <StatTile
-            value={String(stats.uniqueAlbums)}
-            label={t('wrapped.total_albums')}
-            theme={theme}
+            accent={accent}
+            accentSoft={accentSoft}
           />
         </View>
       </View>
     );
   }
 
-  if (slide === 'tracks' || slide === 'artists' || slide === 'albums') {
-    const titleKey =
-      slide === 'tracks'
-        ? 'wrapped.tracks_title'
-        : slide === 'artists'
-          ? 'wrapped.artists_title'
-          : 'wrapped.albums_title';
-    const items =
-      slide === 'tracks'
-        ? stats.topTracks
-        : slide === 'artists'
-          ? stats.topArtists
-          : stats.topAlbums;
+  if (slide === 'tracks' || slide === 'artists') {
+    const titleKey = slide === 'tracks' ? 'wrapped.tracks_title' : 'wrapped.artists_title';
+    const items = slide === 'tracks' ? stats.topTracks : stats.topArtists;
 
     return (
       <View style={[styles.slideBody, { width: innerWidth }]}>
-        <Text style={styles.slideTitle}>{t(titleKey)}</Text>
+        <Text style={[styles.slideTitle, { color: accent }]}>{t(titleKey)}</Text>
         <View style={styles.rankList}>
           {items.map((item, index) => (
             <RankRow
               key={item.key}
               index={index}
               item={item}
-              theme={theme}
+              accent={accent}
               showArtwork={showArtwork}
+              artistImage={
+                slide === 'artists'
+                  ? artistImages[normalizeArtistKey(item.label)]
+                  : undefined
+              }
               playsLabel={t('wrapped.plays', { count: item.plays })}
             />
           ))}
@@ -515,7 +585,7 @@ function Slide({
     const maxHour = Math.max(1, ...stats.hourHistogram);
     return (
       <View style={[styles.slideBody, { width: innerWidth }]}>
-        <Text style={styles.slideTitle}>{t('wrapped.time_title')}</Text>
+        <Text style={[styles.slideTitle, { color: accent }]}>{t('wrapped.time_title')}</Text>
         <View style={styles.hourChart}>
           {stats.hourHistogram.map((count, hour) => (
             <View key={hour} style={styles.hourBarTrack}>
@@ -524,8 +594,7 @@ function Slide({
                   styles.hourBar,
                   {
                     height: Math.max(3, Math.round((count / maxHour) * 92)),
-                    backgroundColor:
-                      stats.busiestHour === hour ? theme.primary : `${theme.primary}44`,
+                    backgroundColor: stats.busiestHour === hour ? accent : `${accent}44`,
                   },
                 ]}
               />
@@ -548,7 +617,7 @@ function Slide({
                 ? '—'
                 : t('wrapped.time_hour_format', { hour: stats.busiestHour })
             }
-            theme={theme}
+            accent={accent}
           />
           <Fact
             icon="calendar-outline"
@@ -558,7 +627,7 @@ function Slide({
                 ? '—'
                 : t(WEEKDAY_KEYS[stats.busiestWeekday])
             }
-            theme={theme}
+            accent={accent}
           />
         </View>
       </View>
@@ -568,28 +637,32 @@ function Slide({
   if (slide === 'streak') {
     return (
       <View style={[styles.slideBody, { width: innerWidth }]}>
-        <Text style={styles.slideTitle}>{t('wrapped.streak_title')}</Text>
+        <Text style={[styles.slideTitle, { color: accent }]}>{t('wrapped.streak_title')}</Text>
         <View style={styles.statGrid}>
           <StatTile
             value={t('wrapped.streak_days', { count: stats.longestStreak })}
             label={t('wrapped.streak_longest')}
-            theme={theme}
+            accent={accent}
+            accentSoft={accentSoft}
           />
           <StatTile
             value={String(stats.activeDays)}
             label={t('wrapped.streak_active')}
-            theme={theme}
+            accent={accent}
+            accentSoft={accentSoft}
           />
           <StatTile
             value={String(stats.onePlayArtists)}
             label={t('wrapped.streak_discovery')}
-            theme={theme}
+            accent={accent}
+            accentSoft={accentSoft}
           />
           {stats.busiestDay ? (
             <StatTile
               value={formatLocalDateKey(stats.busiestDay.dateKey, language)}
               label={t('wrapped.streak_busiest')}
-              theme={theme}
+              accent={accent}
+              accentSoft={accentSoft}
             />
           ) : null}
         </View>
@@ -599,34 +672,16 @@ function Slide({
 
   // persona
   const persona = resolveWrappedPersona(stats);
-  const personaTitleKey =
-    persona === 'explorer'
-      ? 'wrapped.persona_explorer'
-      : persona === 'devoted'
-        ? 'wrapped.persona_devoted'
-        : persona === 'nightowl'
-          ? 'wrapped.persona_nightowl'
-          : persona === 'marathoner'
-            ? 'wrapped.persona_marathoner'
-            : 'wrapped.persona_balanced';
-  const personaDescKey =
-    persona === 'explorer'
-      ? 'wrapped.persona_explorer_desc'
-      : persona === 'devoted'
-        ? 'wrapped.persona_devoted_desc'
-        : persona === 'nightowl'
-          ? 'wrapped.persona_nightowl_desc'
-          : persona === 'marathoner'
-            ? 'wrapped.persona_marathoner_desc'
-            : 'wrapped.persona_balanced_desc';
 
   return (
     <View style={[styles.slideBody, { width: innerWidth }]}>
-      <Text style={[styles.kicker, { color: theme.primary }]}>{t('wrapped.persona_title')}</Text>
-      <Text style={styles.personaTitle}>{t(personaTitleKey)}</Text>
-      <Text style={styles.personaDesc}>{t(personaDescKey)}</Text>
+      <Text style={[styles.kicker, { color: accent }]}>{t('wrapped.persona_title')}</Text>
+      <Text style={[styles.personaTitle, { color: accent }]}>
+        {t(PERSONA_TITLE_KEYS[persona])}
+      </Text>
+      <Text style={styles.personaDesc}>{t(PERSONA_DESC_KEYS[persona])}</Text>
       {stats.topTracks[0] ? (
-        <View style={[styles.personaHighlight, { borderColor: `${theme.primary}44` }]}>
+        <View style={[styles.personaHighlight, { borderColor: accentSoft }]}>
           <Text style={styles.personaHighlightLabel}>{t('wrapped.tracks_title')}</Text>
           <Text style={styles.personaHighlightValue} numberOfLines={1}>
             {stats.topTracks[0].label || t('common.unknown_track')}
@@ -656,10 +711,20 @@ function formatLocalDateKey(dateKey: string, language: string): string {
   }
 }
 
-function StatTile({ value, label, theme }: { value: string; label: string; theme: ThemeColors }) {
+function StatTile({
+  value,
+  label,
+  accent,
+  accentSoft,
+}: {
+  value: string;
+  label: string;
+  accent: string;
+  accentSoft: string;
+}) {
   return (
-    <View style={[styles.statTile, { borderColor: `${theme.primary}33` }]}>
-      <Text style={styles.statTileValue} numberOfLines={2}>
+    <View style={[styles.statTile, { borderColor: accentSoft, backgroundColor: `${accent}14` }]}>
+      <Text style={[styles.statTileValue, { color: accent }]} numberOfLines={2}>
         {value}
       </Text>
       <Text style={styles.statTileLabel}>{label}</Text>
@@ -671,16 +736,16 @@ function Fact({
   icon,
   label,
   value,
-  theme,
+  accent,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   value: string;
-  theme: ThemeColors;
+  accent: string;
 }) {
   return (
-    <View style={styles.fact}>
-      <Ionicons name={icon} size={16} color={theme.primary} />
+    <View style={[styles.fact, { backgroundColor: `${accent}14` }]}>
+      <Ionicons name={icon} size={16} color={accent} />
       <Text style={styles.factLabel}>{label}</Text>
       <Text style={styles.factValue}>{value}</Text>
     </View>
@@ -690,25 +755,37 @@ function Fact({
 function RankRow({
   index,
   item,
-  theme,
+  accent,
   showArtwork,
+  artistImage,
   playsLabel,
 }: {
   index: number;
   item: WrappedRankedItem;
-  theme: ThemeColors;
+  accent: string;
   showArtwork: boolean;
+  artistImage?: string;
   playsLabel: string;
 }) {
   const initial = (item.label || '?').trim().charAt(0).toUpperCase();
+  const artwork = artistImage || item.artwork;
   return (
     <View style={styles.rankRow}>
-      <Text style={[styles.rankIndex, index === 0 && { color: theme.primary }]}>{index + 1}</Text>
+      <Text style={[styles.rankIndex, index === 0 && { color: accent }]}>{index + 1}</Text>
       {showArtwork ? (
-        item.artwork ? (
-          <Image source={{ uri: item.artwork }} style={styles.rankArtwork} contentFit="cover" />
+        artwork ? (
+          <Image
+            source={{ uri: artwork }}
+            style={[styles.rankArtwork, artistImage ? styles.rankArtistArtwork : null]}
+            contentFit="cover"
+          />
         ) : (
-          <View style={[styles.rankArtwork, styles.rankFallback, { backgroundColor: `${theme.primary}33` }]}>
+          <View
+            style={[
+              styles.rankArtwork,
+              styles.rankFallback,
+              { backgroundColor: `${accent}33` },
+            ]}>
             <Text style={styles.rankFallbackText}>{initial}</Text>
           </View>
         )
@@ -762,6 +839,16 @@ function CustomizeSheet({
     );
   };
 
+  const toggleShareItem = (item: WrappedShareItem) => {
+    const has = pref.shareItems.includes(item);
+    onChange({
+      ...pref,
+      shareItems: has
+        ? pref.shareItems.filter((value) => value !== item)
+        : [...pref.shareItems, item],
+    });
+  };
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.sheetOverlay}>
@@ -776,39 +863,69 @@ function CustomizeSheet({
           </View>
           <Text style={styles.sheetHint}>{t('wrapped.customize_hint')}</Text>
 
-          <View style={styles.slideToggleList}>
-            {WRAPPED_SLIDE_IDS.map((slide) => {
-              const enabled = pref.slides.includes(slide);
-              return (
-                <TouchableOpacity
-                  key={slide}
-                  style={styles.slideToggleRow}
-                  activeOpacity={0.7}
-                  onPress={() => toggleSlide(slide)}>
-                  <View style={styles.slideToggleText}>
-                    <Text style={styles.slideToggleLabel}>{t(SLIDE_TITLE_KEYS[slide])}</Text>
-                  </View>
-                  <View
-                    style={[
-                      styles.checkBox,
-                      enabled && { backgroundColor: theme.primary, borderColor: theme.primary },
-                    ]}>
-                    {enabled ? <Ionicons name="checkmark" size={14} color="#ffffff" /> : null}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          <ScrollView
+            style={styles.sheetScroll}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 8 }}>
+            <View style={styles.slideToggleList}>
+              {WRAPPED_SLIDE_IDS.map((slide) => {
+                const enabled = pref.slides.includes(slide);
+                return (
+                  <TouchableOpacity
+                    key={slide}
+                    style={styles.slideToggleRow}
+                    activeOpacity={0.7}
+                    onPress={() => toggleSlide(slide)}>
+                    <View style={styles.slideToggleText}>
+                      <Text style={styles.slideToggleLabel}>{t(SLIDE_TITLE_KEYS[slide])}</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.checkBox,
+                        enabled && { backgroundColor: theme.primary, borderColor: theme.primary },
+                      ]}>
+                      {enabled ? <Ionicons name="checkmark" size={14} color="#ffffff" /> : null}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
-          <View style={styles.artworkRow}>
-            <Text style={styles.slideToggleLabel}>{t('wrapped.customize_artwork')}</Text>
-            <Switch
-              value={pref.showArtwork}
-              onValueChange={(value) => onChange({ ...pref, showArtwork: value })}
-              trackColor={{ false: '#3f3f46', true: theme.primary }}
-              thumbColor="#ffffff"
-            />
-          </View>
+            <View style={styles.artworkRow}>
+              <Text style={styles.slideToggleLabel}>{t('wrapped.customize_artwork')}</Text>
+              <Switch
+                value={pref.showArtwork}
+                onValueChange={(value) => onChange({ ...pref, showArtwork: value })}
+                trackColor={{ false: '#3f3f46', true: theme.primary }}
+                thumbColor="#ffffff"
+              />
+            </View>
+
+            <Text style={styles.sheetSectionTitle}>{t('wrapped.customize_share')}</Text>
+            <View style={styles.slideToggleList}>
+              {WRAPPED_SHARE_ITEMS.map((item) => {
+                const enabled = pref.shareItems.includes(item);
+                return (
+                  <TouchableOpacity
+                    key={item}
+                    style={styles.slideToggleRow}
+                    activeOpacity={0.7}
+                    onPress={() => toggleShareItem(item)}>
+                    <View style={styles.slideToggleText}>
+                      <Text style={styles.slideToggleLabel}>{t(SHARE_ITEM_KEYS[item])}</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.checkBox,
+                        enabled && { backgroundColor: theme.primary, borderColor: theme.primary },
+                      ]}>
+                      {enabled ? <Ionicons name="checkmark" size={14} color="#ffffff" /> : null}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -874,6 +991,8 @@ function SharePreviewModal({
   periodLabel,
   theme,
   durationLabels,
+  shareItems,
+  palette,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -881,6 +1000,8 @@ function SharePreviewModal({
   periodLabel: string;
   theme: ThemeColors;
   durationLabels: { hour: string; minute: string; second: string };
+  shareItems: WrappedShareItem[];
+  palette: { a: string; b: string };
 }) {
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
@@ -968,6 +1089,59 @@ function SharePreviewModal({
     }
   }, [busy, capture]);
 
+  const included = new Set(shareItems);
+  const persona = resolveWrappedPersona(stats);
+  const showPlays = included.has('plays');
+  const showTime = included.has('time');
+  const heroValue = showPlays
+    ? String(stats.totalPlays)
+    : showTime
+      ? formatWrappedDuration(stats.totalSeconds, durationLabels)
+      : t(PERSONA_TITLE_KEYS[persona]);
+  const heroLabel = showPlays
+    ? t('wrapped.total_plays')
+    : showTime
+      ? t('wrapped.total_time')
+      : t('wrapped.persona_title');
+
+  const shareLines: { label: string; value: string }[] = [];
+  if (showPlays && showTime) {
+    shareLines.push({
+      label: t('wrapped.total_time'),
+      value: formatWrappedDuration(stats.totalSeconds, durationLabels),
+    });
+  }
+  if (included.has('topArtist') && stats.topArtists[0]) {
+    shareLines.push({
+      label: t('wrapped.artists_title'),
+      value: stats.topArtists[0].label,
+    });
+  }
+  if (included.has('topTrack') && stats.topTracks[0]) {
+    shareLines.push({
+      label: t('wrapped.tracks_title'),
+      value: stats.topTracks[0].label,
+    });
+  }
+  if (included.has('persona')) {
+    shareLines.push({
+      label: t('wrapped.persona_title'),
+      value: t(PERSONA_TITLE_KEYS[persona]),
+    });
+  }
+  if (included.has('streak')) {
+    shareLines.push({
+      label: t('wrapped.streak_longest'),
+      value: t('wrapped.streak_days', { count: stats.longestStreak }),
+    });
+  }
+  if (included.has('busiestHour') && stats.busiestHour !== null) {
+    shareLines.push({
+      label: t('wrapped.time_busiest_hour'),
+      value: t('wrapped.time_hour_format', { hour: stats.busiestHour }),
+    });
+  }
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.shareOverlay}>
@@ -980,35 +1154,33 @@ function SharePreviewModal({
           </View>
 
           <ScrollView contentContainerStyle={styles.shareCardArea} showsVerticalScrollIndicator={false}>
-            <View ref={cardRef} collapsable={false} style={[styles.shareCard, { borderColor: `${theme.primary}55` }]}>
-              <View style={[styles.shareCardGlow, { backgroundColor: theme.glowColor }]} />
-              <Text style={[styles.shareKicker, { color: theme.primary }]}>
+            <View
+              ref={cardRef}
+              collapsable={false}
+              style={[styles.shareCard, { borderColor: `${palette.a}66` }]}>
+              <View style={[styles.shareCardGlow, { backgroundColor: palette.a }]} />
+              <View
+                style={[styles.shareCardGlowBottom, { backgroundColor: palette.b }]}
+              />
+              <Text style={[styles.shareKicker, { color: palette.a }]}>
                 {t('wrapped.share_card_kicker')}
               </Text>
               <Text style={styles.sharePeriod}>{periodLabel}</Text>
-              <Text style={styles.sharePlays}>{stats.totalPlays}</Text>
-              <Text style={styles.sharePlaysLabel}>{t('wrapped.total_plays')}</Text>
-              <Text style={styles.shareDuration}>
-                {formatWrappedDuration(stats.totalSeconds, durationLabels)}
-              </Text>
+              <Text style={styles.sharePlays}>{heroValue}</Text>
+              <Text style={styles.sharePlaysLabel}>{heroLabel}</Text>
 
-              <View style={styles.shareDivider} />
-
-              {stats.topArtists[0] ? (
-                <View style={styles.shareLine}>
-                  <Text style={styles.shareLineLabel}>{t('wrapped.artists_title')}</Text>
-                  <Text style={styles.shareLineValue} numberOfLines={1}>
-                    {stats.topArtists[0].label}
-                  </Text>
-                </View>
-              ) : null}
-              {stats.topTracks[0] ? (
-                <View style={styles.shareLine}>
-                  <Text style={styles.shareLineLabel}>{t('wrapped.tracks_title')}</Text>
-                  <Text style={styles.shareLineValue} numberOfLines={1}>
-                    {stats.topTracks[0].label}
-                  </Text>
-                </View>
+              {shareLines.length > 0 ? (
+                <>
+                  <View style={styles.shareDivider} />
+                  {shareLines.map((line) => (
+                    <View key={line.label} style={styles.shareLine}>
+                      <Text style={styles.shareLineLabel}>{line.label}</Text>
+                      <Text style={styles.shareLineValue} numberOfLines={1}>
+                        {line.value}
+                      </Text>
+                    </View>
+                  ))}
+                </>
               ) : null}
 
               <Text style={styles.shareBrand}>RunMusic</Text>
@@ -1077,6 +1249,15 @@ const styles = StyleSheet.create({
     height: 360,
     borderRadius: 180,
     opacity: 0.4,
+  },
+  glowMid: {
+    position: 'absolute',
+    top: '38%',
+    left: '-30%',
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    opacity: 0.18,
   },
   header: {
     flexDirection: 'row',
@@ -1307,6 +1488,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#18181b',
   },
+  rankArtistArtwork: {
+    borderRadius: 20,
+  },
   rankFallback: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -1484,6 +1668,18 @@ const styles = StyleSheet.create({
     color: '#71717a',
     marginBottom: 10,
   },
+  sheetScroll: {
+    maxHeight: 520,
+  },
+  sheetSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#a1a1aa',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginTop: 14,
+    marginBottom: 4,
+  },
   slideToggleList: {
     marginBottom: 6,
   },
@@ -1549,7 +1745,16 @@ const styles = StyleSheet.create({
     width: 200,
     height: 200,
     borderRadius: 100,
-    opacity: 0.55,
+    opacity: 0.4,
+  },
+  shareCardGlowBottom: {
+    position: 'absolute',
+    bottom: -90,
+    left: -70,
+    width: 210,
+    height: 210,
+    borderRadius: 105,
+    opacity: 0.25,
   },
   shareKicker: {
     fontSize: 10,

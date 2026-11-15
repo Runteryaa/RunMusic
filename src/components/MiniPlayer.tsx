@@ -21,7 +21,8 @@ import { useActivePlayer } from '../hooks/useActivePlayer';
 import { useActiveProgress } from '../hooks/useActiveProgress';
 import { TrackArtwork } from './TrackArtwork';
 import { MarqueeText } from './ui/MarqueeText';
-import { cleanYouTubeTitle, cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
+import { cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
+import { cleanArtistName } from '../services/displayNames';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import { useTranslation } from '../services/i18n';
 import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
@@ -137,7 +138,7 @@ function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
         (keywords.expectedArtist && keywords.expectedArtist !== 'Local Audio' && keywords.expectedArtist !== 'Bilinmeyen Sanatçı'
           ? keywords.expectedArtist
           : track.artist && track.artist !== 'Local Audio' && track.artist !== 'Bilinmeyen Sanatçı'
-          ? cleanYouTubeTitle(track.artist)
+          ? cleanArtistName(track.artist)
           : unknownArtist);
 
       let rawTitle =

@@ -57,7 +57,6 @@ import {
   resolveCandidateToLyricsResult,
   parseAnySyncedLyrics,
   getLyricsCacheKeys,
-  cleanYouTubeTitle,
   cleanDisplayTitle,
   getSearchKeywords,
   LRCLIB_HEADERS,
@@ -68,6 +67,7 @@ import {
   getGeniusSectionLabel,
   type LyricDisplayRow,
 } from '../services/lyricsService';
+import { cleanArtistName } from '../services/displayNames';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import {
   buildQueueRows,
@@ -2491,7 +2491,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       const rawArtist = meta?.artist || track.artist || '';
       const displayArtist =
         rawArtist && rawArtist !== 'Local Audio' && rawArtist !== 'Bilinmeyen Sanatçı'
-          ? cleanYouTubeTitle(rawArtist)
+          ? cleanArtistName(rawArtist)
           : (rawArtist || t('common.unknown_artist'));
 
       const rawTitle = meta?.title || track.title || '';
@@ -2702,7 +2702,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
 
         const cleanArt =
           artist && artist !== 'Local Audio' && artist !== 'Bilinmeyen Sanatçı'
-            ? cleanYouTubeTitle(artist)
+            ? cleanArtistName(artist)
             : (artist || 'Unknown Artist');
         const cleanTit =
           cleanDisplayTitle(title, cleanArt !== 'Unknown Artist' ? cleanArt : undefined) ||
@@ -3083,12 +3083,12 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
         ? activeMeta.artist.trim()
         : '') ||
       (player.activeTrack?.artist && player.activeTrack.artist !== 'Local Audio' && player.activeTrack.artist !== 'Bilinmeyen Sanatçı' && player.activeTrack.artist !== 'Unknown Artist'
-        ? cleanYouTubeTitle(player.activeTrack.artist)
+        ? cleanArtistName(player.activeTrack.artist)
         : '') ||
       (activeKeywords.expectedArtist && activeKeywords.expectedArtist !== 'Local Audio' && activeKeywords.expectedArtist !== 'Bilinmeyen Sanatçı'
         ? activeKeywords.expectedArtist
         : (sourceArtist && sourceArtist !== 'Local Audio' && sourceArtist !== 'Bilinmeyen Sanatçı'
-            ? cleanYouTubeTitle(sourceArtist)
+            ? cleanArtistName(sourceArtist)
             : unknownArtist));
 
   const rawTitle = player.isRemote

@@ -8,6 +8,7 @@ import { useConnectionsStore, hasActiveScrobbling } from '../store/useConnection
 import { useResilientActiveTrack } from './useResilientActiveTrack';
 import { broadcastNowPlaying, flushScrobbles, queueScrobble } from '../services/connections/scrobbleService';
 import { scrobbleThresholdSeconds } from '../services/connections/scrobbleThreshold';
+import { cleanTrackFields } from '../services/displayNames';
 
 /**
  * Last.fm / ListenBrainz scrobble köprüsü.
@@ -56,14 +57,13 @@ export function useScrobbler(): void {
     );
     const meta = metadataMap[activeTrack.id] || (activeTrack.url ? metadataMap[activeTrack.url] : undefined);
 
-    const artist = (task?.artist || meta?.artist || activeTrack.artist || '').trim();
-    const title = (task?.title || meta?.title || activeTrack.title || '').trim();
-    if (!artist || !title) return null;
+    const rawArtist = (task?.artist || meta?.artist || activeTrack.artist || '').trim();
+    const rawTitle = (task?.title || meta?.title || activeTrack.title || '').trim();
 
-    // Yerel dosya adı sanatçı/parça olarak kullanılabiliyor; bunları gönderme.
-    if (artist === 'Local Audio' || artist === 'Bilinmeyen Sanatçı' || artist === 'Unknown Artist') {
-      return null;
-    }
+    // Dış servislere de uygulamanın her yerinde görünen **düzenlenmiş** isimler
+    // gider; ham başlık yalnızca "şarkı bilgilerini düzenle" ekranında görünür.
+    const fields = cleanTrackFields(rawTitle, rawArtist);
+    if (!fields.artist || !fields.title) return null;
 
     const duration =
       activeTrack.duration && activeTrack.duration > 0
@@ -73,8 +73,8 @@ export function useScrobbler(): void {
         : undefined;
 
     return {
-      artist,
-      track: title,
+      artist: fields.artist,
+      track: fields.title,
       album: (meta?.album || '').trim() || undefined,
       duration,
       startedAt: listenStartRef.current || Math.floor(Date.now() / 1000),

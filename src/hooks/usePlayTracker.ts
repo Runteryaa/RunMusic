@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import TrackPlayer, { useActiveTrack, useProgress, useIsPlaying } from 'react-native-track-player';
 import { recordPlay, addListeningTime } from '../services/statsDatabase';
+import { cleanTrackFields } from '../services/displayNames';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import { useStore } from '../store/useStore';
 import { useDownloadStore } from '../store/useDownloadStore';
@@ -31,9 +32,24 @@ export function usePlayTracker() {
   // Exact time tracking state
   const sessionStartTimeRef = useRef<number | null>(null);
 
+  // Parça başına gerçekten dinlenen süre. `play_history.duration_listened`
+  // uzun süre 0 yazıldığı için Wrapped "0 sn" gösteriyordu; artık eşik
+  // dolduğunda o ana kadar biriken süre kaydediliyor.
+  const listenedTrackIdRef = useRef<string | null>(null);
+  const sessionListenedSecondsRef = useRef(0);
+
   useEffect(() => {
     if (shouldSkipTracking || !activeTrack?.id) return;
     recordEvent('track_change');
+  }, [activeTrack?.id, shouldSkipTracking]);
+
+  // Yeni parçaya geçildiğinde parça başına dinleme sayacını sıfırla.
+  useEffect(() => {
+    if (shouldSkipTracking || !activeTrack?.id) return;
+    if (listenedTrackIdRef.current !== activeTrack.id) {
+      listenedTrackIdRef.current = activeTrack.id;
+      sessionListenedSecondsRef.current = 0;
+    }
   }, [activeTrack?.id, shouldSkipTracking]);
 
   useEffect(() => {
@@ -59,13 +75,29 @@ export function usePlayTracker() {
       );
 
       const meta = metadataMap[activeTrack.id] || (activeTrack.url ? metadataMap[activeTrack.url] : undefined);
-      const title = dlTask?.title || meta?.title || activeTrack.title || null;
-      const artist = dlTask?.artist || meta?.artist || activeTrack.artist || null;
+      const rawTitle = dlTask?.title || meta?.title || activeTrack.title || null;
+      const rawArtist = dlTask?.artist || meta?.artist || activeTrack.artist || null;
+      const fields = cleanTrackFields(rawTitle, rawArtist);
       const album = meta?.album || null;
       const artwork = dlTask?.artwork || meta?.artwork || (typeof activeTrack.artwork === 'string' ? activeTrack.artwork : null);
 
-      // Dinlenme geçmişe şarkının başlığı, sanatçısı ve kapağı ile birlikte kaydediliyor
-      recordPlay(activeTrack.id, 0, { title, artist, album, artwork });
+      // O ana kadar gerçekten dinlenen süre; sayaç henüz dolmadıysa eşik kadar.
+      const trackDuration =
+        activeTrack.duration && activeTrack.duration > 0 ? activeTrack.duration : 0;
+      let listened = Math.max(
+        Math.round(sessionListenedSecondsRef.current),
+        Math.ceil(threshold)
+      );
+      if (trackDuration > 0) listened = Math.min(listened, Math.round(trackDuration));
+      listened = Math.max(1, listened);
+
+      // Dinlenme geçmişe şarkının (temizlenmiş) başlığı, sanatçısı ve kapağı ile kaydediliyor
+      recordPlay(activeTrack.id, listened, {
+        title: fields.title || null,
+        artist: fields.artist || null,
+        album,
+        artwork,
+      });
       trackedSessionIdRef.current = activeTrack.id;
     }
   }, [progress.position, activeTrack, shouldSkipTracking]);
@@ -78,13 +110,16 @@ export function usePlayTracker() {
 
     // Exact listening time accumulator
     if (playing) {
-      sessionStartTimeRef.current = Date.now();
+      if (sessionStartTimeRef.current === null) {
+        sessionStartTimeRef.current = Date.now();
+      }
     } else {
       if (sessionStartTimeRef.current) {
         const diffMs = Date.now() - sessionStartTimeRef.current;
         const diffSecs = Math.floor(diffMs / 1000);
         if (diffSecs > 0) {
           addListeningTime(diffSecs);
+          sessionListenedSecondsRef.current += diffSecs;
         }
         sessionStartTimeRef.current = null;
       }
@@ -97,6 +132,7 @@ export function usePlayTracker() {
         const diffSecs = Math.floor(diffMs / 1000);
         if (diffSecs > 0) {
           addListeningTime(diffSecs);
+          sessionListenedSecondsRef.current += diffSecs;
         }
         sessionStartTimeRef.current = Date.now(); // Eğer playing hala true ise sıfırdan başlasın
       }
@@ -115,6 +151,7 @@ export function usePlayTracker() {
       const diffSecs = Math.floor((Date.now() - startedAt) / 1000);
       if (diffSecs <= 0) return;
       addListeningTime(diffSecs);
+      sessionListenedSecondsRef.current += diffSecs;
       sessionStartTimeRef.current = Date.now();
     }, 15000);
 

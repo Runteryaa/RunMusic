@@ -1,5 +1,5 @@
 import { useStore, type TrackMetadata } from '../store/useStore';
-import { cleanDisplayTitle, cleanYouTubeTitle } from './lyricsService';
+import { cleanTrackFields, isPlaceholderArtist } from './displayNames';
 import { t } from './i18n';
 
 /**
@@ -9,7 +9,9 @@ import { t } from './i18n';
  * bilgisi düzenleme ekranı `metadataMap`'e yazar). Bildirim, kilit ekranı ve ana
  * ekran widget'ı ise uzun süre kuyruktaki ham başlığı (çoğu zaman dosya adı)
  * gösteriyordu. Bu yardımcı, oyuncu ekranının kullandığı çözümlemenin aynısını
- * uygular: önce `metadataMap`, sonra kuyruk kaydı.
+ * uygular: önce `metadataMap`, sonra kuyruk kaydı. Ardından isimler
+ * `displayNames` üzerinden temizlenir; ham biçim yalnızca düzenleme ekranında
+ * görünür.
  *
  * `metadataMap` anahtarları kanonik kimlik veya URL olabildiği için ikisine de
  * bakılır (düzenleme sırasında ikisine de yazılıyor).
@@ -18,18 +20,6 @@ export interface DisplayTrackMetadata {
   title: string;
   artist: string;
   artwork: string | null;
-}
-
-function isPlaceholderName(value?: string | null): boolean {
-  if (!value) return true;
-  const lower = value.trim().toLowerCase();
-  return (
-    lower === 'local audio' ||
-    lower === 'unknown artist' ||
-    lower === 'bilinmeyen sanatçı' ||
-    lower === 'bilinmeyen sanatci' ||
-    lower.length === 0
-  );
 }
 
 function pickMetadata(
@@ -76,11 +66,11 @@ export function resolveDisplayMetadata(
   const meta = pickMetadata(metadataMap, [id, url]);
 
   const rawArtist = meta?.artist || track.artist || '';
-  const artist = isPlaceholderName(rawArtist) ? '' : cleanYouTubeTitle(rawArtist) || '';
-
   const rawTitle = (meta?.title?.trim() || track.title || '').trim();
-  const title =
-    cleanDisplayTitle(rawTitle, artist || undefined) || rawTitle || t('common.unknown_track');
+
+  const fields = cleanTrackFields(rawTitle, rawArtist);
+  const title = fields.title || rawTitle || t('common.unknown_track');
+  const artist = isPlaceholderArtist(fields.artist) ? '' : fields.artist;
 
   const artwork =
     meta?.artwork ||

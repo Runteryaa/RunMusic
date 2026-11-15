@@ -17,7 +17,6 @@ export const WRAPPED_SLIDE_IDS = [
   'totals',
   'tracks',
   'artists',
-  'albums',
   'time',
   'streak',
   'persona',
@@ -25,16 +24,39 @@ export const WRAPPED_SLIDE_IDS = [
 
 export type WrappedSlideId = (typeof WRAPPED_SLIDE_IDS)[number];
 
+/** Paylaşım kartında gösterilebilecek satırlar. */
+export const WRAPPED_SHARE_ITEMS = [
+  'plays',
+  'time',
+  'topTrack',
+  'topArtist',
+  'persona',
+  'streak',
+  'busiestHour',
+] as const;
+
+export type WrappedShareItem = (typeof WRAPPED_SHARE_ITEMS)[number];
+
 export interface WrappedPreferences {
   /** Gösterilecek slaytlar; en az bir tane kalır. */
   slides: WrappedSlideId[];
   /** Slaytlarda albüm kapağı gösterilsin mi (kapak yoksa harf rozeti). */
   showArtwork: boolean;
+  /** Paylaşım kartında hangi satırlar görünsün. */
+  shareItems: WrappedShareItem[];
 }
+
+export const DEFAULT_WRAPPED_SHARE_ITEMS: WrappedShareItem[] = [
+  'plays',
+  'time',
+  'topArtist',
+  'topTrack',
+];
 
 export const DEFAULT_WRAPPED_PREFERENCES: WrappedPreferences = {
   slides: [...WRAPPED_SLIDE_IDS],
   showArtwork: true,
+  shareItems: [...DEFAULT_WRAPPED_SHARE_ITEMS],
 };
 
 /** Persist'ten gelen (bozuk/eksik olabilecek) Wrapped tercihlerini onarır. */
@@ -51,9 +73,24 @@ export function normalizeWrappedPreferences(value: unknown): WrappedPreferences 
       slides.push(candidate as WrappedSlideId);
     }
   }
+  const rawShareItems = Array.isArray(source.shareItems) ? source.shareItems : [];
+  const shareItems: WrappedShareItem[] = [];
+  for (const candidate of rawShareItems) {
+    if (
+      typeof candidate === 'string' &&
+      (WRAPPED_SHARE_ITEMS as readonly string[]).includes(candidate) &&
+      !shareItems.includes(candidate as WrappedShareItem)
+    ) {
+      shareItems.push(candidate as WrappedShareItem);
+    }
+  }
   return {
     slides: slides.length > 0 ? slides : [...WRAPPED_SLIDE_IDS],
     showArtwork: source.showArtwork === undefined ? true : Boolean(source.showArtwork),
+    shareItems:
+      source.shareItems === undefined
+        ? [...DEFAULT_WRAPPED_SHARE_ITEMS]
+        : shareItems,
   };
 }
 
@@ -91,11 +128,9 @@ export interface WrappedStats {
   totalSeconds: number;
   uniqueTracks: number;
   uniqueArtists: number;
-  uniqueAlbums: number;
   activeDays: number;
   topTracks: WrappedRankedItem[];
   topArtists: WrappedRankedItem[];
-  topAlbums: WrappedRankedItem[];
   /** 24 eleman: yerel saate göre dinleme sayısı. */
   hourHistogram: number[];
   /** 7 eleman: Pazartesi = 0. */
@@ -114,6 +149,15 @@ export interface WrappedStats {
 
 const DEFAULT_LIMIT = 5;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Süre kaydı olmayan eski satırlar için tahmin.
+ *
+ * `duration_listened` uzun süre 0 yazılıyordu; bu satırlar "0 sn" göstermesin
+ * diye makul bir ortalama kullanılır. Yeni kayıtlar gerçek dinlenme süresini
+ * taşıdığı için bu tahmin yalnızca geçmiş veriyi etkiler.
+ */
+export const DEFAULT_LEGACY_PLAY_SECONDS = 120;
 
 /** Milisaniyeyi `YYYY-MM-DD HH:MM:SS` (UTC) biçimine çevirir. */
 export function toSqlTimestamp(ms: number): string {
@@ -256,13 +300,16 @@ function topOf(map: Map<string, WrappedRankedItem>, limit: number): WrappedRanke
  */
 export function buildWrappedStats(
   rows: WrappedPlayRow[],
-  options?: { limit?: number }
+  options?: { limit?: number; fallbackSeconds?: number }
 ): WrappedStats {
   const limit = options?.limit ?? DEFAULT_LIMIT;
+  const fallbackSeconds = Math.max(
+    0,
+    Math.floor(options?.fallbackSeconds ?? DEFAULT_LEGACY_PLAY_SECONDS)
+  );
 
   const tracks = new Map<string, WrappedRankedItem>();
   const artists = new Map<string, WrappedRankedItem>();
-  const albums = new Map<string, WrappedRankedItem>();
   const artistPlayCounts = new Map<string, number>();
   const days = new Map<string, number>();
   const hourHistogram = new Array<number>(24).fill(0);
@@ -274,12 +321,12 @@ export function buildWrappedStats(
 
   for (const row of rows) {
     const playedAt = parseSqlTimestamp(row.played_at);
-    const seconds = Math.max(0, Math.floor(row.duration_listened ?? 0));
+    const recordedSeconds = Math.max(0, Math.floor(row.duration_listened ?? 0));
+    const seconds = recordedSeconds > 0 ? recordedSeconds : fallbackSeconds;
     totalSeconds += seconds;
 
     const title = clean(row.title);
     const artist = clean(row.artist);
-    const album = clean(row.album);
     const trackKey = clean(row.track_id) || `${artist}|${title}`;
 
     const track = tracks.get(trackKey);
@@ -313,24 +360,6 @@ export function buildWrappedStats(
     }
     artistPlayCounts.set(artistKey, (artistPlayCounts.get(artistKey) ?? 0) + 1);
 
-    if (album) {
-      const albumKey = `${album.toLowerCase()}|${artistKey}`;
-      const albumItem = albums.get(albumKey);
-      if (albumItem) {
-        albumItem.plays += 1;
-        albumItem.seconds += seconds;
-      } else {
-        albums.set(albumKey, {
-          key: albumKey,
-          label: album,
-          subtitle: artist || undefined,
-          plays: 1,
-          seconds,
-          artwork: row.artwork || null,
-        });
-      }
-    }
-
     if (playedAt !== null) {
       if (firstPlayAt === null || playedAt < firstPlayAt) firstPlayAt = playedAt;
       if (lastPlayAt === null || playedAt > lastPlayAt) lastPlayAt = playedAt;
@@ -349,7 +378,6 @@ export function buildWrappedStats(
 
   const topTracks = topOf(tracks, limit);
   const topArtists = topOf(artists, limit);
-  const topAlbums = topOf(albums, limit);
 
   let busiestHour: number | null = null;
   for (let i = 0; i < hourHistogram.length; i++) {
@@ -396,11 +424,9 @@ export function buildWrappedStats(
     totalSeconds,
     uniqueTracks: tracks.size,
     uniqueArtists: artists.size,
-    uniqueAlbums: albums.size,
     activeDays: days.size,
     topTracks,
     topArtists,
-    topAlbums,
     hourHistogram,
     weekdayHistogram,
     busiestHour,

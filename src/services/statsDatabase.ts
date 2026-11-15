@@ -316,7 +316,12 @@ export async function getTotalListeningTime(): Promise<number> {
         'SELECT SUM(duration_listened) as total_duration FROM play_history'
       );
 
-      return (statsResult?.value || 0) + (histResult?.total_duration || 0);
+      // İki kaynak aynı dinlemeyi ölçer: `app_stats` tüm oynatma süresini,
+      // `play_history.duration_listened` ise eşiği geçen dinlemelerin süresini
+      // tutar. Önceden geçmiş süresi hep 0 olduğu için toplamak zararsızdı;
+      // artık gerçek süre yazıldığı için toplamak çift sayardı. Daha büyük
+      // olanı kullanmak hem eski hem yeni kayıtlarda doğru sonuç verir.
+      return Math.max(statsResult?.value || 0, histResult?.total_duration || 0);
     });
   } catch (error) {
     console.warn('Failed to get total listening time:', error);
