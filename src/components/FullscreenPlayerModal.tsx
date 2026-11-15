@@ -302,6 +302,11 @@ function buildShareLines(lines: LyricLine[]): LyricShareLine[] {
  * için bu parçalara ne `opacity` ne de animasyonlu `color` uygulanabiliyordu.
  * Artık her harf ayrı bir `<Text>`; bu yüzden animasyon gerçekten çalışıyor.
  *
+ * Yalnızca **renk** animasyonlu; hâle (text shadow) statik stilden geliyor.
+ * Gölgeyi de her karede animasyonlamak Android'de harf başına yeniden gölge
+ * çizimi demek: gereksiz maliyet ve gölgenin kaybolabildiği bir yol. Statik
+ * stilde kalınca harflerin hâlesi her zaman görünür.
+ *
  * `clock` panelin ortak saatidir; 4 Hz'lik oynatma konumu güncellemeleri harf
  * geçişlerini sıçratmaz.
  */
@@ -330,24 +335,11 @@ function SweepChar({
      */
     const now = Number.isFinite(clock.value) ? clock.value : end;
     const clamped = Math.min(Math.max(now, start), end);
-    const span = end - start;
-    const lit = span > 0 ? (clamped - start) / span : 1;
-    /*
-     * Renk **lineer** kalır: süpürmenin lrc.red ile birebir aynı anda ilerlemesi
-     * gerekiyor. Hâle ise yumuşak bir eğriyle güçlenir; lineer rampa sert
-     * görünüyordu. Hâle rengi az sayıda kademeye yuvarlanıyor: görsel fark yok,
-     * ama Android'de her harf için yeniden gölge çizme maliyeti düşer.
-     */
-    const glowLit = Math.round(smoothstep(lit) * 4) / 4;
     return {
-      color: span > 0 ? interpolateColor(clamped, [start, end], [dimColor, litColor]) : litColor,
-      textShadowColor: interpolateColor(
-        glowLit,
-        [0, 1],
-        ['rgba(255, 255, 255, 0)', LYRIC_TEXT_SHADOW_COLOR]
-      ),
-      textShadowOffset: LYRIC_TEXT_SHADOW_OFFSET,
-      textShadowRadius: LYRIC_TEXT_SHADOW_RADIUS,
+      color:
+        end > start
+          ? interpolateColor(clamped, [start, end], [dimColor, litColor])
+          : litColor,
     };
   });
   return <Reanimated.Text style={[textStyle, animatedStyle]}>{text}</Reanimated.Text>;
@@ -1137,34 +1129,33 @@ function LyricsPanel({
    *
    * `useActiveProgress` konumu saniyede 4 kez (250 ms'de bir) verir; doğrudan
    * kullansaydık harf aydınlanması çeyrek saniyelik adımlarla sıçrardı. Bunun
-   * yerine saat, her konum örneğinde hedefe doğru **sabit hızda** ilerletilir
-   * (`withTiming`, UI thread'inde 60 fps).
+   * yerine saat, her örnekte `konum + LYRIC_CLOCK_LOOKAHEAD` hedefine 250 ms'de
+   * varacak şekilde doğrusal ilerletilir (UI thread'inde 60 fps).
    *
-   * Süre sabit 250 ms değil, `hedef - şu anki değer` kadar: örnekler biraz erken
-   * ya da geç geldiğinde sabit süre kullanmak saatin hızını değiştiriyor ve
-   * süpürme gözle görülür biçimde dalgalanıyordu. Mesafeyle orantılı süre, saati
-   * her zaman gerçek zamanla aynı hızda tutar.
+   * En kritik kural: saat **asla gerçek konumdan kopuk kalmamalı**. Sabit süreli
+   * yaklaşım küçük sapmaları kendiliğinden kapatır, ancak panel açılışı, seek
+   * veya şarkı değişimi gibi büyük sıçramalarda saat eski yerde kalırsa satır
+   * aktif görünürken harfler sönük kalır. Bu yüzden aradaki fark eşiği aşarsa
+   * saat önce konuma **anında** oturtulur, sonra normal ilerlemesine bırakılır.
    */
   const lyricClock = useSharedValue(lyricPosition);
 
   useEffect(() => {
     if (!Number.isFinite(lyricPosition)) return;
-    const from = lyricClock.value;
-    const target = lyricPosition + LYRIC_CLOCK_LOOKAHEAD;
-    // Duraklatıldı, geri sarıldı veya şarkı değişti: sıçramak yerine otur.
-    if (
-      !player.isPlaying ||
-      !Number.isFinite(from) ||
-      lyricPosition < from - 0.05 ||
-      target <= from + 0.005 ||
-      from - lyricPosition > 1.5
-    ) {
+
+    // Duraklatıldı: saati olduğu yere sabitle.
+    if (!player.isPlaying) {
       lyricClock.value = lyricPosition;
       return;
     }
-    lyricClock.value = withTiming(target, {
-      // Sabit hız: 1 saniyelik konum = 1 saniyelik animasyon.
-      duration: (target - from) * 1000,
+
+    const from = lyricClock.value;
+    const drifted = !Number.isFinite(from) || Math.abs(from - lyricPosition) > 0.35;
+    // Kopuklukta önce anlık düzeltme; ardından animasyon bu değerden başlar.
+    if (drifted) lyricClock.value = lyricPosition;
+
+    lyricClock.value = withTiming(lyricPosition + LYRIC_CLOCK_LOOKAHEAD, {
+      duration: LYRIC_CLOCK_LOOKAHEAD * 1000,
       easing: Easing.linear,
     });
   }, [lyricPosition, player.isPlaying, lyricClock]);
@@ -1263,13 +1254,21 @@ function LyricsPanel({
    * Satıra dokununca o ana atla. Tüm satırlar AYNI fonksiyonu paylaşır; her
    * render'da yeni bir ok fonksiyonu üretmek `React.memo`'yu boşa çıkarıp
    * yüzlerce satırı gereksiz yeniden çizdirirdi.
+   *
+   * Kimliği **tamamen sabit** tutmak için güncel hedef ref'te tutuluyor:
+   * `player` nesnesi oynatma konumuyla birlikte saniyede birkaç kez değişiyor,
+   * doğrudan bağımlılık verilseydi bu geri çağrı da (ve dolayısıyla tüm söz
+   * satırları) 4 Hz'de yeniden çizilirdi.
    */
-  const seekToLyricTime = useCallback(
-    (time: number) => {
-      player.seekTo(Math.max(0, time + appliedLyricsOffset));
-    },
-    [player, appliedLyricsOffset]
-  );
+  const seekTargetRef = useRef({ seek: player.seekTo, offset: appliedLyricsOffset });
+  useEffect(() => {
+    seekTargetRef.current = { seek: player.seekTo, offset: appliedLyricsOffset };
+  }, [player.seekTo, appliedLyricsOffset]);
+
+  const seekToLyricTime = useCallback((time: number) => {
+    const { seek, offset } = seekTargetRef.current;
+    seek(Math.max(0, time + offset));
+  }, []);
 
   /**
    * Satır çizici.
@@ -3314,19 +3313,30 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     setIsShareSelecting(true);
   };
 
-  const toggleShareLine = (key: string) => {
-    if (selectedShareKeys.includes(key)) {
-      setShareLimitHit(false);
-      setSelectedShareKeys(selectedShareKeys.filter((item) => item !== key));
-      return;
-    }
-    if (selectedShareKeys.length >= MAX_SHARE_LINES) {
-      setShareLimitHit(true);
-      return;
-    }
-    setShareLimitHit(false);
-    setSelectedShareKeys([...selectedShareKeys, key]);
-  };
+  /**
+   * Satır seçimi geri çağrısı.
+   *
+   * `useCallback` + fonksiyonel güncelleme: kimliği sabit kalıyor. Sabit
+   * olmasaydı söz panelindeki satır çizicisi her ebeveyn render'ında değişir ve
+   * `React.memo` koruması olan tüm satırlar yeniden çizilirdi.
+   */
+  const toggleShareLine = useCallback(
+    (key: string) => {
+      setSelectedShareKeys((previous) => {
+        if (previous.includes(key)) {
+          setShareLimitHit(false);
+          return previous.filter((item) => item !== key);
+        }
+        if (previous.length >= MAX_SHARE_LINES) {
+          setShareLimitHit(true);
+          return previous;
+        }
+        setShareLimitHit(false);
+        return [...previous, key];
+      });
+    },
+    [setSelectedShareKeys, setShareLimitHit]
+  );
 
   const cancelShareSelect = () => {
     setIsShareSelecting(false);
