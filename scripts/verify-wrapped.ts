@@ -26,6 +26,7 @@ import {
   parseSqlTimestamp,
   resolveWrappedPersona,
   resolveWrappedWindow,
+  splitArtistNames,
   toSqlTimestamp,
   type WrappedPlayRow,
 } from '../src/services/wrappedStats';
@@ -175,6 +176,70 @@ check('en çok dinlenen sanatçı', stats.topArtists[0].label === 'A1');
 check('tek dinlemelik sanatçı sayısı', stats.onePlayArtists === 2);
 check('parça payı 3/5', Math.abs(stats.topTrackShare - 0.6) < 1e-9);
 check('ilk ve son dinleme', stats.lastPlayAt! > stats.firstPlayAt!);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('Ortak çalışmalar (çoklu sanatçı)');
+
+const splitCases: [string, number][] = [
+  ['UZI, MODD', 2],
+  ['UZI,MODD', 2],
+  ['UZI feat. MODD', 2],
+  ['UZI ft. MODD', 2],
+  ['UZI featuring MODD', 2],
+  ['UZI (feat. MODD)', 2],
+  ['UZI; MODD', 2],
+  ['UZI, UZI', 1],
+  ['UZI', 1],
+  ['', 0],
+];
+for (const [input, expected] of splitCases) {
+  const names = splitArtistNames(input);
+  check(
+    `"${input}" → ${expected} sanatçı`,
+    names.length === expected,
+    JSON.stringify(names)
+  );
+}
+check(
+  'grup isimleri bölünmez (Mumford & Sons)',
+  splitArtistNames('Mumford & Sons').length === 1
+);
+check('grup isimleri bölünmez (Florence + the Machine)', splitArtistNames('Florence + the Machine').length === 1);
+check('grup isimleri bölünmez (AC/DC)', splitArtistNames('AC/DC').join() === 'AC/DC');
+check('sıra korunur', splitArtistNames('UZI, MODD, EGE').join('|') === 'UZI|MODD|EGE');
+
+const collabStats = buildWrappedStats([
+  localRow(2026, 2, 1, 10, 0, { track_id: 'x1', title: 'Düet', artist: 'UZI, MODD' }),
+  localRow(2026, 2, 2, 11, 0, { track_id: 'x1', title: 'Düet', artist: 'UZI, MODD' }),
+  localRow(2026, 2, 3, 12, 0, { track_id: 'x2', title: 'Solo', artist: 'UZI' }),
+  localRow(2026, 2, 4, 13, 0, { track_id: 'x3', title: 'Başka', artist: 'MODD feat. EGE' }),
+], { limit: 5 });
+
+const artistPlays = (label: string) =>
+  collabStats.topArtists.find((artist) => artist.label === label)?.plays ?? 0;
+check('iki sanatçı ayrı listelenir', collabStats.uniqueArtists === 3);
+check('UZI dinlemesi ortak çalışmalardan da toplanır', artistPlays('UZI') === 3);
+check('MODD ortak çalışmalardan 3 dinleme alır', artistPlays('MODD') === 3);
+check('EGE yalnızca kendi satırından 1 dinleme alır', artistPlays('EGE') === 1);
+check('birleşik sanatçı metni sanatçı listesine sızmaz', artistPlays('UZI, MODD') === 0);
+check('tek dinlemelik sanatçı sayısı', collabStats.onePlayArtists === 1);
+check(
+  'parça alt başlığı birleşik sanatçı metnini korur',
+  collabStats.topTracks[0].subtitle === 'UZI, MODD'
+);
+check('ortak çalışma tek parça olarak sayılır', collabStats.topTracks[0].plays === 2);
+check(
+  '"&" içeren sanatçı tek kişi kalır',
+  buildWrappedStats([
+    localRow(2026, 2, 5, 10, 0, { track_id: 'y1', title: 'S', artist: 'Mumford & Sons' }),
+  ]).uniqueArtists === 1
+);
+check(
+  'sanatçı alanı boşsa tek boş grup korunur',
+  buildWrappedStats([
+    localRow(2026, 2, 6, 10, 0, { track_id: 'z1', title: 'S', artist: '' }),
+  ]).uniqueArtists === 1
+);
 
 section('Saat ve gün dağılımı');
 check('gece dinlemesi doğru saatte sayılır', stats.hourHistogram[23] === 2);

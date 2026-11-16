@@ -286,6 +286,55 @@ function clean(value: string | null | undefined): string {
   return (value ?? '').trim();
 }
 
+/** Tek parçada sayılacak en fazla sanatçı (bozuk etiketlere karşı üst sınır). */
+export const MAX_ARTISTS_PER_TRACK = 8;
+
+/**
+ * Bir parçanın sanatçı alanında birden fazla sanatçı olup olmadığını çözer.
+ *
+ * NEDEN: etiketlerde ortak çalışmalar tek alanda toplanıyor ("UZI, MODD",
+ * "UZI feat. MODD", "UZI (ft. MODD)"). Bu alanı olduğu gibi gruplarsak iki ayrı
+ * sanatçı tek kişiymiş gibi listelenir ve sıralama bozulur. Wrapped bu yüzden
+ * kaydı sanatçı başına sayar.
+ *
+ * Bilinçli olarak YALNIZCA net ayraçlar kullanılır: virgül, noktalı virgül ve
+ * "feat./ft./featuring". "&", "+", "/" ve "x" ayrılmaz; çünkü bunlar gerçek
+ * grup isimlerinin parçası olabiliyor ("Mumford & Sons", "Florence + the
+ * Machine", "AC/DC").
+ */
+export function splitArtistNames(raw?: string | null): string[] {
+  const value = (raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!value) return [];
+
+  const normalized = value
+    // "feat." / "ft." / "featuring" hem düz hem parantez içinde ayraç sayılır.
+    .replace(/[([{]?\s*(?:feat\.?|ft\.?|featuring)\s+/gi, ', ')
+    .replace(/;/g, ',');
+
+  const seen = new Set<string>();
+  const names: string[] = [];
+
+  for (const chunk of normalized.split(',')) {
+    const name = chunk
+      // Ayraçtan arta kalan parantez/tırnak kırıntıları.
+      .replace(/^[\s([{'"`]+/, '')
+      .replace(/[\s)\]}>'"`]+$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!name) continue;
+
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+
+    // Aşırı uzun listeler (ör. derleme etiketleri) sıralamayı bozmasın.
+    if (names.length >= MAX_ARTISTS_PER_TRACK) break;
+  }
+
+  return names;
+}
+
 function topOf(map: Map<string, WrappedRankedItem>, limit: number): WrappedRankedItem[] {
   return [...map.values()]
     .sort((a, b) => b.plays - a.plays || b.seconds - a.seconds || a.label.localeCompare(b.label))
@@ -344,22 +393,26 @@ export function buildWrappedStats(
       });
     }
 
-    const artistKey = artist.toLowerCase();
-    const artistItem = artists.get(artistKey);
-    if (artistItem) {
-      artistItem.plays += 1;
-      artistItem.seconds += seconds;
-    } else {
-      artists.set(artistKey, {
-        key: artistKey,
-        label: artist,
-        plays: 1,
-        seconds,
-        artwork: row.artwork || null,
-      });
+    // Ortak çalışmalar tek alanda geliyor ("UZI, MODD"); her sanatçı ayrı sayılır.
+    // Sanatçı alanı boşsa eski davranış korunur (tek boş grup).
+    const rowArtists = splitArtistNames(artist);
+    for (const name of rowArtists.length > 0 ? rowArtists : [artist]) {
+      const artistKey = name.toLowerCase();
+      const artistItem = artists.get(artistKey);
+      if (artistItem) {
+        artistItem.plays += 1;
+        artistItem.seconds += seconds;
+      } else {
+        artists.set(artistKey, {
+          key: artistKey,
+          label: name,
+          plays: 1,
+          seconds,
+          artwork: row.artwork || null,
+        });
+      }
+      artistPlayCounts.set(artistKey, (artistPlayCounts.get(artistKey) ?? 0) + 1);
     }
-    artistPlayCounts.set(artistKey, (artistPlayCounts.get(artistKey) ?? 0) + 1);
-
     if (playedAt !== null) {
       if (firstPlayAt === null || playedAt < firstPlayAt) firstPlayAt = playedAt;
       if (lastPlayAt === null || playedAt > lastPlayAt) lastPlayAt = playedAt;
