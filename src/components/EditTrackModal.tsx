@@ -390,6 +390,11 @@ export function EditTrackModal({
                           contentFit="cover"
                         />
                         <Text
+                          style={styles.onlineResultTrack}
+                          numberOfLines={1}>
+                          {item.trackName}
+                        </Text>
+                        <Text
                           style={styles.onlineResultArtist}
                           numberOfLines={1}>
                           {item.artistName}
@@ -597,6 +602,14 @@ const styles = StyleSheet.create({
   onlineResultArtist: {
     color: '#a1a1aa',
     fontSize: 10,
+    marginTop: 1,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  onlineResultTrack: {
+    color: '#e4e4e7',
+    fontSize: 10,
+    fontWeight: '600',
     marginTop: 4,
     textAlign: 'center',
   },
