@@ -31,6 +31,7 @@ import { getPersistedSizeKB } from '../services/persistStorage';
 import { clearUpNextQueue } from '../services/queueController';
 import { syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
 import { useTranslation, type AppLanguage } from '../services/i18n';
+import { useBackToLibrary } from '../hooks/useBackToLibrary';
 import { AdBanner } from '../components/AdBanner';
 import { showRewardedAd } from '../services/adService';
 import { useRemoteConnectStore, DEFAULT_DEVICE_NAME } from '../store/useRemoteConnectStore';
@@ -51,6 +52,8 @@ const SORT_OPTIONS: SortOption[] = [
 
 export default function SettingsScreen() {
   const router = useRouter();
+  // Geri tuşu kütüphaneye döner; oynatıcı çalmaya devam eder.
+  useBackToLibrary();
   const theme = useThemeStore((s) => s.theme);
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);

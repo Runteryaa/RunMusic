@@ -9,6 +9,7 @@ import {
   type DiagnosticSnapshot,
 } from '../services/memoryDiagnostics';
 import { useIsAppActive } from '../hooks/useIsAppActive';
+import { shutdownPlayback } from '../services/playerShutdown';
 import { useThemeStore } from '../store/useThemeStore';
 
 type Theme = ReturnType<typeof useThemeStore.getState>['theme'];
@@ -77,6 +78,29 @@ export function MemoryDiagnosticsCard({
           style: 'destructive',
           onPress: () => {
             void clearMemoryDiagnostics().then(refresh);
+          },
+        },
+      ]
+    );
+  }, [refresh, tr]);
+
+  /**
+   * Oynatıcıyı tamamen kapatır: çalma durur, kuyruk temizlenir ve mini
+   * oynatıcı kaybolur. Test sırasında temiz bir başlangıç yapmak için.
+   */
+  const handleShutdown = useCallback(() => {
+    Alert.alert(
+      tr ? 'Oynatıcıyı tamamen kapat' : 'Close the player completely',
+      tr
+        ? 'Çalma durdurulacak, kuyruk ve sırada bekleyenler silinecek, mini oynatıcı kapanacak. Emin misin?'
+        : 'Playback stops, the queue and up-next items are cleared, and the mini player closes. Continue?',
+      [
+        { text: tr ? 'Vazgeç' : 'Cancel', style: 'cancel' },
+        {
+          text: tr ? 'Kapat' : 'Close',
+          style: 'destructive',
+          onPress: () => {
+            void shutdownPlayback().then(refresh);
           },
         },
       ]
@@ -170,6 +194,26 @@ export function MemoryDiagnosticsCard({
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/*
+        Oynatıcıyı tamamen kapatma. Daha önce bu, ikincil ekranlarda donanım
+        geri tuşuna bağlıydı ve yanlışlıkla müziği kesiyordu; artık geri tuşu
+        yalnızca kütüphaneye dönüyor.
+      */}
+      <TouchableOpacity
+        style={[styles.actionBtn, styles.shutdownBtn, { borderColor: `${theme.primary}66` }]}
+        activeOpacity={0.7}
+        onPress={handleShutdown}>
+        <Ionicons name="power" size={16} color={theme.primary} />
+        <Text style={[styles.actionBtnText, { color: theme.primary }]}>
+          {tr ? 'Oynatıcıyı tamamen kapat' : 'Close the player completely'}
+        </Text>
+      </TouchableOpacity>
+      <Text style={styles.shutdownHint}>
+        {tr
+          ? 'Çalmayı durdurur, kuyruğu ve sırada bekleyenleri siler, mini oynatıcıyı kapatır.'
+          : 'Stops playback, clears the queue and up-next items, and closes the mini player.'}
+      </Text>
     </View>
   );
 }
@@ -274,5 +318,19 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 12,
     fontWeight: '700',
+  },
+  shutdownBtn: {
+    // Satır içinde değil, sütunda tek başına duruyor; `flex: 1` burada
+    // düğmeyi dikeyde esnetebilir, bu yüzden esnemeyi kapatıyoruz.
+    flex: 0,
+    marginTop: 12,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+  },
+  shutdownHint: {
+    color: '#71717a',
+    fontSize: 10,
+    lineHeight: 14,
+    marginTop: 6,
   },
 });

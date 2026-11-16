@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useTranslation } from '../services/i18n';
+import { useBackToLibrary } from '../hooks/useBackToLibrary';
 import {
   BUILT_IN_EQUALIZER_PRESETS,
   EQUALIZER_BAND_FREQUENCIES,
@@ -43,6 +44,8 @@ function formatDb(value: number): string {
 
 export default function AudioEffectsScreen() {
   const router = useRouter();
+  // Geri tuşu kütüphaneye döner; oynatıcı çalmaya devam eder.
+  useBackToLibrary();
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
   const theme = useThemeStore((state) => state.theme);

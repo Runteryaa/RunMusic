@@ -22,6 +22,7 @@ import { buildArtistTitleHints } from '../services/artistProfile';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useTranslation } from '../services/i18n';
+import { useBackToLibrary } from '../hooks/useBackToLibrary';
 import type { ThemeColors } from '../services/colorThemeService';
 import {
   WRAPPED_SHARE_ITEMS,
@@ -125,6 +126,8 @@ const EMPTY_STATS: WrappedStats = buildWrappedStats([]);
 
 export default function WrappedScreen() {
   const router = useRouter();
+  // Geri tuşu kütüphaneye döner; oynatıcı çalmaya devam eder.
+  useBackToLibrary();
   const insets = useSafeAreaInsets();
   const theme = useThemeStore((s) => s.theme);
   const { t, resolvedLanguage } = useTranslation();

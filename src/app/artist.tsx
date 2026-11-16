@@ -42,6 +42,7 @@ import { getSearchKeywords } from '../services/lyricsService';
 import { loadArtistImages } from '../services/artistImages';
 import { startPlaybackFromLibrary } from '../services/queueController';
 import { useTranslation } from '../services/i18n';
+import { useBackToLibrary } from '../hooks/useBackToLibrary';
 
 const PERIODS: WrappedPeriod[] = ['year', 'last12m', 'all'];
 const TOP_TRACK_COUNT = 5;
@@ -150,6 +151,8 @@ function formatTrackDuration(seconds: number): string {
 
 export default function ArtistScreen() {
   const router = useRouter();
+  // Geri tuşu kütüphaneye döner; oynatıcı çalmaya devam eder.
+  useBackToLibrary();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ name?: string | string[] }>();
   const theme = useThemeStore((s) => s.theme);

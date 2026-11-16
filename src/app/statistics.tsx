@@ -42,6 +42,7 @@ import { cleanTrackFields } from '../services/displayNames';
 import { loadArtistImages, normalizeArtistKey } from '../services/artistImages';
 import { buildArtistTitleHints } from '../services/artistProfile';
 import { useTranslation } from '../services/i18n';
+import { useBackToLibrary } from '../hooks/useBackToLibrary';
 
 const PAGE_SIZE = 50;
 
@@ -90,6 +91,8 @@ const WEEKDAY_SHORT_KEYS = [
 
 export default function StatisticsScreen() {
   const router = useRouter();
+  // Geri tuşu kütüphaneye döner; oynatıcı çalmaya devam eder.
+  useBackToLibrary();
   const insets = useSafeAreaInsets();
   const theme = useThemeStore((s) => s.theme);
   const { t, resolvedLanguage } = useTranslation();
