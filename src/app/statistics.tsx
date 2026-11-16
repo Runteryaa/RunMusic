@@ -38,6 +38,7 @@ import { useStore } from '../store/useStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { AdBanner } from '../components/AdBanner';
 import { cleanTrackFields } from '../services/displayNames';
+import { loadArtistImages, normalizeArtistKey } from '../services/artistImages';
 import { useTranslation } from '../services/i18n';
 
 const PAGE_SIZE = 50;
@@ -108,6 +109,8 @@ export default function StatisticsScreen() {
   const [detailPeriod, setDetailPeriod] = useState<WrappedPeriod>('all');
   const [detail, setDetail] = useState<WrappedStats>(EMPTY_DETAIL);
   const [detailLoading, setDetailLoading] = useState(true);
+  /** Sanatçı satırlarında harf rozeti yerine gösterilecek profil fotoğrafları. */
+  const [artistImages, setArtistImages] = useState<Record<string, string>>({});
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -149,7 +152,14 @@ export default function StatisticsScreen() {
         const fields = cleanTrackFields(row.title, row.artist);
         return { ...row, title: fields.title || row.title, artist: fields.artist };
       });
-      setDetail(buildWrappedStats(cleaned, { limit: DETAIL_LIMIT }));
+      const nextStats = buildWrappedStats(cleaned, { limit: DETAIL_LIMIT });
+      setDetail(nextStats);
+
+      // Profil fotoğrafları liste göründükten sonra ayrıca yüklenir; harf
+      // rozeti hemen gösterilir, fotoğraf geldikçe yerini alır.
+      void loadArtistImages(nextStats.topArtists.map((artist) => artist.label))
+        .then((images) => setArtistImages(images))
+        .catch(() => {});
     } catch (e) {
       console.warn('Detailed stats fetch error:', e);
       setDetail(EMPTY_DETAIL);
@@ -159,6 +169,8 @@ export default function StatisticsScreen() {
   }, []);
 
   useEffect(() => {
+    // Dönem değişince önceki dönemin fotoğrafları görünmesin.
+    setArtistImages({});
     void loadDetail(detailPeriod);
   }, [detailPeriod, loadDetail]);
 
@@ -373,17 +385,28 @@ export default function StatisticsScreen() {
     );
   };
 
-  /** Ayrıntılı dönem listesindeki sanatçı satırı (harf rozeti). */
+  /** Ayrıntılı dönem listesindeki sanatçı satırı (fotoğraf veya harf rozeti). */
   const renderArtistRow = (item: WrappedRankedItem, index: number) => {
     const initial = (item.label || '?').trim().charAt(0).toUpperCase();
+    const image = artistImages[normalizeArtistKey(item.label)];
     return (
-      <View key={`artist-${item.key}`} style={styles.trackItem}>
+      <TouchableOpacity
+        key={`artist-${item.key}`}
+        style={styles.trackItem}
+        activeOpacity={0.7}
+        onPress={() =>
+          router.push({ pathname: '/artist', params: { name: item.label } })
+        }>
         <Text style={[styles.rankIndex, index === 0 && { color: theme.primary }]}>
           {index + 1}
         </Text>
-        <View style={[styles.artistBadge, { backgroundColor: `${theme.primary}26` }]}>
-          <Text style={[styles.artistBadgeText, { color: theme.primary }]}>{initial}</Text>
-        </View>
+        {image ? (
+          <Image source={{ uri: image }} style={styles.artistPhoto} contentFit="cover" />
+        ) : (
+          <View style={[styles.artistBadge, { backgroundColor: `${theme.primary}26` }]}>
+            <Text style={[styles.artistBadgeText, { color: theme.primary }]}>{initial}</Text>
+          </View>
+        )}
         <View style={styles.trackInfo}>
           <Text style={styles.trackTitle} numberOfLines={1}>{item.label || '—'}</Text>
           <Text style={styles.trackSubtitle} numberOfLines={1}>
@@ -393,7 +416,8 @@ export default function StatisticsScreen() {
         <Text style={[styles.rightText, { color: theme.primary }]}>
           {item.plays} {t('stats.plays_suffix')}
         </Text>
-      </View>
+        <Ionicons name="chevron-forward" size={16} color="#52525b" style={{ marginLeft: 6 }} />
+      </TouchableOpacity>
     );
   };
 
@@ -1211,6 +1235,12 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  artistPhoto: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#27272a',
   },
   artistBadgeText: {
     fontSize: 16,

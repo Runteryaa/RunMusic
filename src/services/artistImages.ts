@@ -11,6 +11,11 @@
  * aranmaz. Tüm hatalar yutulur; görsel bulunamazsa arayüz harf rozetine düşer.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { normalizeArtistKey } from './artistMatch';
+
+// Eşleştirme anahtarı saf modülde tutulur (Node doğrulama betikleri için);
+// mevcut importlar bozulmasın diye buradan yeniden dışa aktarılır.
+export { normalizeArtistKey } from './artistMatch';
 
 const CACHE_KEY = 'runmusic-artist-images-v1';
 const FOUND_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -30,17 +35,6 @@ let loadPromise: Promise<ArtistImageCache> | null = null;
 /** Aynı isim için eşzamanlı istekleri tekilleştirir. */
 const inflight = new Map<string, Promise<string | null>>();
 let writeChain: Promise<void> = Promise.resolve();
-
-/** Sanatçı isimlerini eşleştirme için sadeleştirir. */
-export function normalizeArtistKey(name?: string | null): string {
-  return (name ?? '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\w\s&]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 function wordSimilarity(a?: string | null, b?: string | null): number {
   const setA = new Set(normalizeArtistKey(a).split(' ').filter(Boolean));
@@ -162,19 +156,37 @@ export async function findArtistImage(name: string): Promise<string | null> {
 }
 
 /**
+ * Aynı anda yapılacak en fazla Deezer isteği.
+ *
+ * Deezer'ın ücretsiz kotası kısa sürede çok istek atıldığında 429 dönebiliyor.
+ * İstatistikler 25 sanatçıya kadar listeleyebildiği için hepsini aynı anda
+ * göndermek riskliydi.
+ */
+const MAX_CONCURRENT_FETCHES = 4;
+
+/**
  * Birden çok sanatçı için görsel haritası üretir.
  *
  * Dönen sözlük normalize edilmiş sanatçı anahtarı → görsel URL'i biçimindedir;
- * yalnızca görsel bulunanlar yer alır.
+ * yalnızca görsel bulunanlar yer alır. İstekler eşzamanlılık sınırıyla yapılır.
  */
 export async function loadArtistImages(names: string[]): Promise<Record<string, string>> {
   const unique = [...new Set(names.map((name) => (name ?? '').trim()).filter(Boolean))];
   const out: Record<string, string> = {};
-  await Promise.all(
-    unique.map(async (name) => {
+  let cursor = 0;
+
+  const worker = async () => {
+    while (cursor < unique.length) {
+      const name = unique[cursor++];
       const url = await findArtistImage(name);
       if (url) out[normalizeArtistKey(name)] = url;
-    })
+    }
+  };
+
+  const workers = Array.from(
+    { length: Math.min(MAX_CONCURRENT_FETCHES, unique.length) },
+    () => worker()
   );
+  await Promise.all(workers);
   return out;
 }

@@ -277,6 +277,15 @@ function MainAppLayout({ onFirstLayout }: { onFirstLayout: () => void }) {
               headerShown: false,
             }}
           />
+          <Tabs.Screen
+            name="artist"
+            options={{
+              // Sanatçı sayfası: istatistikler/Wrapped listelerinden açılır,
+              // alt çubukta kendi sekmesi yoktur.
+              href: null,
+              headerShown: false,
+            }}
+          />
         </Tabs>
 
         {/* Genişleyen ve Dönüşen Müzik Çalar (MiniPlayer <---> FullscreenPlayer) */}

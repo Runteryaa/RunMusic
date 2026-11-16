@@ -392,6 +392,7 @@ export default function WrappedScreen() {
                   palette={slidePalette(slide)}
                   artistImages={artistImages}
                   onNext={() => goToPage(index + 1)}
+                  onOpenArtist={(name) => router.push({ pathname: '/artist', params: { name } })}
                   t={t}
                 />
               </ScrollView>
@@ -474,6 +475,7 @@ interface SlideProps {
   palette: { a: string; b: string };
   artistImages: Record<string, string>;
   onNext: () => void;
+  onOpenArtist?: (name: string) => void;
   t: (key: string, params?: Record<string, string | number>) => string;
 }
 
@@ -489,6 +491,7 @@ function Slide({
   palette,
   artistImages,
   onNext,
+  onOpenArtist,
   t,
 }: SlideProps) {
   const innerWidth = Math.min(width - 48, 460);
@@ -574,6 +577,11 @@ function Slide({
                   : undefined
               }
               playsLabel={t('wrapped.plays', { count: item.plays })}
+              onPress={
+                slide === 'artists' && onOpenArtist
+                  ? () => onOpenArtist(item.label)
+                  : undefined
+              }
             />
           ))}
         </View>
@@ -759,6 +767,7 @@ function RankRow({
   showArtwork,
   artistImage,
   playsLabel,
+  onPress,
 }: {
   index: number;
   item: WrappedRankedItem;
@@ -766,10 +775,11 @@ function RankRow({
   showArtwork: boolean;
   artistImage?: string;
   playsLabel: string;
+  onPress?: () => void;
 }) {
   const initial = (item.label || '?').trim().charAt(0).toUpperCase();
   const artwork = artistImage || item.artwork;
-  return (
+  const content = (
     <View style={styles.rankRow}>
       <Text style={[styles.rankIndex, index === 0 && { color: accent }]}>{index + 1}</Text>
       {showArtwork ? (
@@ -802,6 +812,14 @@ function RankRow({
       </View>
       <Text style={styles.rankPlays}>{playsLabel}</Text>
     </View>
+  );
+
+  if (!onPress) return content;
+
+  return (
+    <TouchableOpacity activeOpacity={0.7} onPress={onPress}>
+      {content}
+    </TouchableOpacity>
   );
 }
 
