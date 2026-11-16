@@ -44,6 +44,10 @@ const TOP_TRACK_COUNT = 5;
 const TRACK_INFO_CACHE = new Map<string, { title: string; artist: string }>();
 const MAX_TRACK_INFO_CACHE = 4000;
 
+/** Apple Music'in ince ayraç çizgisi. */
+const HAIRLINE = '#2c2c2e';
+const SECONDARY_TEXT = '#a1a1a6';
+
 type MetadataLike = { title?: string; artist?: string; album?: string; artwork?: string };
 
 /**
@@ -81,6 +85,25 @@ function resolveLibraryInfo(
   if (TRACK_INFO_CACHE.size >= MAX_TRACK_INFO_CACHE) TRACK_INFO_CACHE.clear();
   TRACK_INFO_CACHE.set(cacheKey, info);
   return info;
+}
+
+/** `199` → `3:19` (Apple Music satır sonundaki süre biçimi). */
+function formatTrackDuration(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds || 0));
+  if (total <= 0) return '';
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return `${minutes}:${String(rest).padStart(2, '0')}`;
+}
+
+/** Bölüm başlığı: Apple'ınkiler gibi büyük, kalın ve çerçevesiz. */
+function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
+    </View>
+  );
 }
 
 export default function ArtistScreen() {
@@ -155,7 +178,7 @@ export default function ArtistScreen() {
     void loadProfile(period);
   }, [period, loadProfile]);
 
-  // Fotoğraf yalnızca bir kez (dönemden bağımsız) getirilir.
+  // Fotoğraf dönemden bağımsız olarak bir kez getirilir.
   useEffect(() => {
     let cancelled = false;
     if (!artistName) return;
@@ -190,50 +213,45 @@ export default function ArtistScreen() {
   const stats = profile?.stats;
   const artistHistoryCount = stats?.totalPlays ?? 0;
 
+  const queueFrom = useCallback(
+    (tracks: ArtistTrack[], startId: string, shuffle = false) =>
+      startPlaybackFromLibrary({
+        tracks: tracks.map((track) => ({
+          id: track.id,
+          url: track.uri,
+          title: track.title,
+          artist: track.artist,
+          artwork: track.artwork || undefined,
+          duration: track.duration,
+        })),
+        startId,
+        shuffle,
+      }),
+    []
+  );
+
   const startPlayback = useCallback(
     async (shuffle: boolean) => {
       if (sortedTracks.length === 0) return;
       try {
-        await startPlaybackFromLibrary({
-          tracks: sortedTracks.map((track) => ({
-            id: track.id,
-            url: track.uri,
-            title: track.title,
-            artist: track.artist,
-            artwork: track.artwork || undefined,
-            duration: track.duration,
-          })),
-          startId: sortedTracks[0].id,
-          shuffle,
-        });
+        await queueFrom(sortedTracks, sortedTracks[0].id, shuffle);
       } catch (e) {
         console.warn('Failed to play artist queue:', e);
       }
     },
-    [sortedTracks]
+    [sortedTracks, queueFrom]
   );
 
   const playTrack = useCallback(
     async (track: ArtistTrack) => {
       if (sortedTracks.length === 0) return;
       try {
-        await startPlaybackFromLibrary({
-          tracks: sortedTracks.map((item) => ({
-            id: item.id,
-            url: item.uri,
-            title: item.title,
-            artist: item.artist,
-            artwork: item.artwork || undefined,
-            duration: item.duration,
-          })),
-          startId: track.id,
-          shuffle: false,
-        });
+        await queueFrom(sortedTracks, track.id);
       } catch (e) {
         console.warn('Failed to play artist track:', e);
       }
     },
-    [sortedTracks]
+    [sortedTracks, queueFrom]
   );
 
   const formatDay = (ms: number | null) => {
@@ -245,74 +263,61 @@ export default function ArtistScreen() {
     });
   };
 
-  const summaryTiles = [
+  const initial = (displayName || '?').trim().charAt(0).toUpperCase();
+  const topTracks = stats?.topTracks ?? [];
+
+  /** Apple Music'teki düz metrik satırları (kart/çerçeve yok). */
+  const metrics: { label: string; value: string }[] = [
+    { label: t('wrapped.total_plays'), value: String(stats?.totalPlays ?? 0) },
     {
-      key: 'plays',
-      icon: 'play-circle-outline' as const,
-      value: String(stats?.totalPlays ?? 0),
-      label: t('wrapped.total_plays'),
-    },
-    {
-      key: 'time',
-      icon: 'time-outline' as const,
-      value: formatWrappedDuration(stats?.totalSeconds ?? 0, durationLabels),
       label: t('wrapped.total_time'),
+      value: formatWrappedDuration(stats?.totalSeconds ?? 0, durationLabels),
     },
-    {
-      key: 'tracks',
-      icon: 'musical-notes-outline' as const,
-      value: String(stats?.uniqueTracks ?? 0),
-      label: t('wrapped.total_tracks'),
-    },
-    {
-      key: 'days',
-      icon: 'calendar-outline' as const,
-      value: String(stats?.activeDays ?? 0),
-      label: t('wrapped.streak_active'),
-    },
+    { label: t('wrapped.total_tracks'), value: String(stats?.uniqueTracks ?? 0) },
+    { label: t('wrapped.streak_active'), value: String(stats?.activeDays ?? 0) },
   ];
 
-  const habitRows: { label: string; value: string }[] = [
+  const detailRows: { label: string; value: string }[] = [
     { label: t('artist.first_play'), value: formatDay(stats?.firstPlayAt ?? null) },
     { label: t('artist.last_play'), value: formatDay(stats?.lastPlayAt ?? null) },
   ];
   if (stats?.busiestHour != null) {
-    habitRows.push({
+    detailRows.push({
       label: t('wrapped.time_busiest_hour'),
       value: t('wrapped.time_hour_format', { hour: stats.busiestHour }),
     });
   }
   if (stats?.longestStreak) {
-    habitRows.push({
+    detailRows.push({
       label: t('wrapped.streak_longest'),
       value: t('wrapped.streak_days', { count: stats.longestStreak }),
     });
   }
 
-  const topTracks = stats?.topTracks ?? [];
-  const initial = (displayName || '?').trim().charAt(0).toUpperCase();
-
   const renderHeader = () => (
     <View>
-      {/* Hero: bulanık fotoğraf + katman + yuvarlak fotoğraf */}
-      <View style={styles.hero}>
+      {/* ── HERO: tam genişlik bulanık zemin + dev yuvarlak fotoğraf + dev isim ── */}
+      <View style={[styles.hero, { paddingTop: Math.max(insets.top, 12) }]}>
         {artistImage ? (
           <Image
             source={{ uri: artistImage }}
-            style={StyleSheet.absoluteFill}
+            style={styles.heroBackdrop}
             contentFit="cover"
-            blurRadius={40}
+            blurRadius={60}
           />
         ) : null}
-        <View style={styles.heroOverlay} />
-        <View style={styles.heroContent}>
+        <View style={styles.heroScrim} />
+        <View style={styles.heroScrimBottom} />
+
+        <View style={styles.heroBody}>
           {artistImage ? (
-            <Image source={{ uri: artistImage }} style={styles.heroAvatar} contentFit="cover" />
+            <Image source={{ uri: artistImage }} style={styles.heroPhoto} contentFit="cover" />
           ) : (
-            <View style={[styles.heroAvatar, styles.heroAvatarFallback]}>
-              <Text style={[styles.heroAvatarText, { color: '#ffffff' }]}>{initial}</Text>
+            <View style={[styles.heroPhoto, styles.heroPhotoFallback]}>
+              <Text style={styles.heroPhotoText}>{initial}</Text>
             </View>
           )}
+
           <Text style={styles.heroName} numberOfLines={2}>
             {displayName || t('common.unknown_artist')}
           </Text>
@@ -325,183 +330,184 @@ export default function ArtistScreen() {
         </View>
       </View>
 
-      <View style={styles.body}>
-        {/* Çal / Karıştır */}
-        <View style={styles.actionRow}>
-          <TouchableOpacity
-            style={[
-              styles.playButton,
-              { backgroundColor: artistTracks.length > 0 ? theme.primary : '#27272a' },
-            ]}
-            activeOpacity={0.85}
-            disabled={artistTracks.length === 0}
-            onPress={() => void startPlayback(false)}>
-            <Ionicons name="play" size={18} color="#ffffff" />
-            <Text style={styles.playButtonText}>{t('artist.play')}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.shuffleButton, { borderColor: `${theme.primary}88` }]}
-            activeOpacity={0.85}
-            disabled={artistTracks.length === 0}
-            onPress={() => void startPlayback(true)}>
-            <Ionicons name="shuffle" size={18} color={theme.primary} />
-            <Text style={[styles.shuffleButtonText, { color: theme.primary }]}>
-              {t('artist.shuffle')}
-            </Text>
-          </TouchableOpacity>
-        </View>
+      {/* ── Eylemler: büyük dolu "Çal" + ikincil "Karıştır" ── */}
+      <View style={styles.actionRow}>
+        <TouchableOpacity
+          style={[
+            styles.primaryButton,
+            { backgroundColor: artistTracks.length > 0 ? theme.primary : '#2c2c2e' },
+          ]}
+          activeOpacity={0.82}
+          disabled={artistTracks.length === 0}
+          onPress={() => void startPlayback(false)}>
+          <Ionicons name="play" size={19} color="#ffffff" />
+          <Text style={styles.primaryButtonText}>{t('artist.play')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.secondaryButton}
+          activeOpacity={0.82}
+          disabled={artistTracks.length === 0}
+          onPress={() => void startPlayback(true)}>
+          <Ionicons name="shuffle" size={19} color={theme.primary} />
+          <Text style={[styles.secondaryButtonText, { color: theme.primary }]}>
+            {t('artist.shuffle')}
+          </Text>
+        </TouchableOpacity>
+      </View>
 
-        {/* Dönem seçici */}
-        <View style={styles.periodRow}>
-          {PERIODS.map((item) => {
-            const active = period === item;
-            const labelKey =
-              item === 'year'
-                ? 'wrapped.period_year'
-                : item === 'last12m'
-                  ? 'wrapped.period_last12m'
-                  : 'wrapped.period_all';
-            return (
-              <TouchableOpacity
-                key={item}
-                style={[
-                  styles.periodChip,
-                  active && { backgroundColor: `${theme.primary}26`, borderColor: theme.primary },
-                ]}
-                onPress={() => setPeriod(item)}
-                activeOpacity={0.8}>
-                <Text
-                  style={[
-                    styles.periodChipText,
-                    active && { color: theme.primary, fontWeight: '700' },
-                  ]}>
-                  {t(labelKey)}
+      {/* ── Dönem: iOS segmentli kontrol görünümü ── */}
+      <View style={styles.segmented}>
+        {PERIODS.map((item) => {
+          const active = period === item;
+          const labelKey =
+            item === 'year'
+              ? 'wrapped.period_year'
+              : item === 'last12m'
+                ? 'wrapped.period_last12m'
+                : 'wrapped.period_all';
+          return (
+            <TouchableOpacity
+              key={item}
+              style={[styles.segment, active && styles.segmentActive]}
+              onPress={() => setPeriod(item)}
+              activeOpacity={0.8}>
+              <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                {t(labelKey)}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* ── İstatistikler: Apple'ın editoryal blokları gibi çerçevesiz ── */}
+      {loading ? (
+        <View style={styles.loadingBox}>
+          <ActivityIndicator size="small" color={theme.primary} />
+        </View>
+      ) : artistHistoryCount === 0 ? (
+        <Text style={styles.emptyNote}>{t('artist.no_stats')}</Text>
+      ) : (
+        <>
+          <View style={styles.metricGrid}>
+            {metrics.map((metric) => (
+              <View key={metric.label} style={styles.metricCell}>
+                <Text style={styles.metricValue} numberOfLines={1} adjustsFontSizeToFit>
+                  {metric.value}
                 </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {loading ? (
-          <View style={styles.loadingBox}>
-            <ActivityIndicator size="small" color={theme.primary} />
+                <Text style={styles.metricLabel} numberOfLines={1}>
+                  {metric.label}
+                </Text>
+              </View>
+            ))}
           </View>
-        ) : !stats || stats.totalPlays === 0 ? (
-          <Text style={styles.emptyText}>{t('artist.no_stats')}</Text>
-        ) : (
-          <>
-            {/* Özet kutuları */}
-            <View style={styles.summaryGrid}>
-              {summaryTiles.map((tile) => (
-                <View key={tile.key} style={styles.summaryTile}>
-                  <Ionicons name={tile.icon} size={16} color={theme.primary} />
-                  <Text style={styles.summaryValue} numberOfLines={1}>
-                    {tile.value}
-                  </Text>
-                  <Text style={styles.summaryLabel} numberOfLines={1}>
-                    {tile.label}
-                  </Text>
-                </View>
-              ))}
-            </View>
 
-            {/* Alışkanlıklar */}
-            <View style={[styles.habitCard, { borderColor: `${theme.primary}33` }]}>
-              {habitRows.map((row) => (
-                <View key={row.label} style={styles.habitRow}>
-                  <Text style={styles.habitLabel}>{row.label}</Text>
-                  <Text style={styles.habitValue} numberOfLines={1}>
-                    {row.value}
-                  </Text>
-                </View>
-              ))}
-            </View>
+          <View style={styles.detailBlock}>
+            {detailRows.map((row) => (
+              <View key={row.label} style={styles.detailRow}>
+                <Text style={styles.detailLabel}>{row.label}</Text>
+                <Text style={styles.detailValue} numberOfLines={1}>
+                  {row.value}
+                </Text>
+              </View>
+            ))}
+          </View>
 
-            {/* En çok dinlediğin */}
-            {topTracks.length > 0 ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>{t('artist.top_tracks')}</Text>
-                {topTracks.map((item, index) => (
+          {/* ── En Çok Dinlediklerin ── */}
+          {topTracks.length > 0 ? (
+            <View style={styles.section}>
+              <SectionHeader title={t('artist.top_tracks')} />
+              {topTracks.map((item, index) => {
+                const match = sortedTracks.find(
+                  (track) => track.id === item.key || track.uri === item.key
+                );
+                return (
                   <TouchableOpacity
                     key={`top-${item.key}`}
-                    style={styles.topRow}
-                    activeOpacity={0.75}
+                    style={styles.row}
+                    activeOpacity={match ? 0.6 : 1}
                     onPress={() => {
-                      const match = sortedTracks.find(
-                        (track) => track.id === item.key || track.uri === item.key
-                      );
                       if (match) void playTrack(match);
                     }}>
-                    <Text style={[styles.rankIndex, index === 0 && { color: theme.primary }]}>
-                      {index + 1}
-                    </Text>
+                    <View style={styles.rankSlot}>
+                      <Text style={styles.rankText}>{index + 1}</Text>
+                    </View>
                     {item.artwork ? (
                       <Image
                         source={{ uri: item.artwork }}
-                        style={styles.rankArtwork}
+                        style={styles.rowArtwork}
                         contentFit="cover"
                       />
                     ) : (
-                      <View style={[styles.rankArtwork, styles.rankArtworkFallback]}>
-                        <Ionicons name="musical-note" size={16} color="#71717a" />
+                      <View style={[styles.rowArtwork, styles.rowArtworkFallback]}>
+                        <Ionicons name="musical-note" size={18} color="#6e6e73" />
                       </View>
                     )}
-                    <View style={styles.trackInfo}>
-                      <Text style={styles.trackTitle} numberOfLines={1}>
+                    <View style={styles.rowText}>
+                      <Text style={styles.rowTitle} numberOfLines={1}>
                         {item.label || '—'}
                       </Text>
-                      <Text style={styles.trackSubtitle} numberOfLines={1}>
-                        {formatWrappedDuration(item.seconds, durationLabels)}
+                      <Text style={styles.rowSubtitle} numberOfLines={1}>
+                        {item.plays} {t('stats.plays_suffix')}
                       </Text>
                     </View>
-                    <Text style={[styles.rightText, { color: theme.primary }]}>
-                      {item.plays} {t('stats.plays_suffix')}
-                    </Text>
+                    <Ionicons name="ellipsis-horizontal" size={16} color="#6e6e73" />
                   </TouchableOpacity>
-                ))}
-              </View>
-            ) : null}
-          </>
-        )}
+                );
+              })}
+            </View>
+          ) : null}
+        </>
+      )}
 
-        <Text style={styles.sectionTitle}>
-          {t('artist.songs')}
-          {artistTracks.length > 0 ? ` (${artistTracks.length})` : ''}
-        </Text>
+      <View style={styles.section}>
+        <SectionHeader
+          title={t('artist.songs')}
+          subtitle={
+            artistTracks.length > 0
+              ? t('artist.songs_count', { count: artistTracks.length })
+              : undefined
+          }
+        />
       </View>
     </View>
   );
 
-  const renderTrack = ({ item }: { item: ArtistTrack }) => {
-    const isCurrent = activeTrack != null && (activeTrack.id === item.id || activeTrack.url === item.uri);
+  const renderTrack = ({ item, index }: { item: ArtistTrack; index: number }) => {
+    const isCurrent =
+      activeTrack != null && (activeTrack.id === item.id || activeTrack.url === item.uri);
     const plays =
       profile?.playCounts.get(item.id) ?? (item.uri ? profile?.playCounts.get(item.uri) : 0) ?? 0;
 
     return (
       <TouchableOpacity
-        style={[styles.trackRow, isCurrent && { backgroundColor: `${theme.primary}1f` }]}
-        activeOpacity={0.7}
+        style={styles.row}
+        activeOpacity={0.6}
         onPress={() => void playTrack(item)}>
         <TrackArtwork
           uri={item.artwork || metadataMap[item.id]?.artwork || artworkMap[item.id]}
           trackId={item.id}
           trackUri={item.uri}
-          size={48}
-          borderRadius={8}
+          size={52}
+          borderRadius={4}
           iconSize={20}
         />
-        <View style={styles.trackInfo}>
+        <View style={styles.rowText}>
           <Text
-            style={[styles.trackTitle, isCurrent && { color: theme.primary }]}
+            style={[styles.rowTitle, isCurrent && { color: theme.primary }]}
             numberOfLines={1}>
             {item.title || t('common.unknown_track')}
           </Text>
-          <Text style={styles.trackSubtitle} numberOfLines={1}>
+          <Text style={styles.rowSubtitle} numberOfLines={1}>
             {item.album ? `${item.album} · ` : ''}
             {plays > 0 ? t('artist.plays_total', { count: plays }) : t('artist.not_played')}
           </Text>
         </View>
-        {isCurrent ? <Ionicons name="volume-medium" size={18} color={theme.primary} /> : null}
+        {isCurrent ? (
+          <Ionicons name="volume-medium" size={17} color={theme.primary} />
+        ) : (
+          <Text style={styles.rowDuration}>{formatTrackDuration(item.duration)}</Text>
+        )}
+        <View style={styles.rowDivider} />
       </TouchableOpacity>
     );
   };
@@ -514,26 +520,26 @@ export default function ArtistScreen() {
         renderItem={renderTrack}
         ListHeaderComponent={renderHeader()}
         ListEmptyComponent={
-          <View style={styles.body}>
-            <Text style={styles.emptyText}>{t('artist.no_songs')}</Text>
-          </View>
+          <Text style={[styles.emptyNote, { paddingHorizontal: 20 }]}>{t('artist.no_songs')}</Text>
         }
         ListFooterComponent={
-          <View style={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 120 }}>
-            <AdBanner style={{ marginTop: 12 }} />
+          <View style={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 130 }}>
+            <AdBanner style={{ marginTop: 20 }} />
           </View>
         }
-        contentContainerStyle={{ paddingBottom: 24 }}
+        contentContainerStyle={{ paddingBottom: 16 }}
         showsVerticalScrollIndicator={false}
       />
 
-      {/* Geri düğmesi hero üzerinde */}
-      <TouchableOpacity
-        style={[styles.backBtn, { top: Math.max(insets.top, 12) }]}
-        onPress={() => (router.canGoBack() ? router.back() : router.replace('/statistics'))}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-        <Ionicons name="chevron-back" size={24} color="#ffffff" />
-      </TouchableOpacity>
+      {/* Geri / menü: hero üzerinde yüzen düğmeler */}
+      <View style={[styles.topBar, { top: Math.max(insets.top, 12) }]} pointerEvents="box-none">
+        <TouchableOpacity
+          style={styles.circleButton}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace('/statistics'))}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Ionicons name="chevron-back" size={22} color="#ffffff" />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -541,240 +547,291 @@ export default function ArtistScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
+    backgroundColor: '#000000',
   },
+
+  // ── Hero ────────────────────────────────────────────────────────────────
   hero: {
-    height: 300,
-    justifyContent: 'flex-end',
+    paddingBottom: 4,
     overflow: 'hidden',
-    backgroundColor: '#18181b',
   },
-  heroOverlay: {
+  heroBackdrop: {
+    position: 'absolute',
+    top: -40,
+    left: -40,
+    right: -40,
+    bottom: -40,
+    opacity: 0.85,
+  },
+  heroScrim: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(18,18,18,0.62)',
+    backgroundColor: 'rgba(0,0,0,0.55)',
   },
-  heroContent: {
+  heroScrimBottom: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 160,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  heroBody: {
     alignItems: 'center',
     paddingHorizontal: 24,
+    paddingTop: 28,
     paddingBottom: 20,
   },
-  heroAvatar: {
-    width: 132,
-    height: 132,
-    borderRadius: 66,
-    backgroundColor: '#27272a',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.18)',
+  heroPhoto: {
+    width: 186,
+    height: 186,
+    borderRadius: 93,
+    backgroundColor: '#1c1c1e',
   },
-  heroAvatarFallback: {
+  heroPhotoFallback: {
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.18)',
   },
-  heroAvatarText: {
-    fontSize: 48,
+  heroPhotoText: {
+    fontSize: 64,
     fontWeight: '800',
+    color: '#ffffff',
   },
   heroName: {
-    marginTop: 12,
-    fontSize: 26,
+    marginTop: 18,
+    fontSize: 34,
+    lineHeight: 39,
     fontWeight: '800',
+    letterSpacing: -0.8,
     color: '#ffffff',
     textAlign: 'center',
   },
   heroMeta: {
-    marginTop: 4,
-    fontSize: 13,
-    color: '#d4d4d8',
+    marginTop: 6,
+    fontSize: 14,
+    color: SECONDARY_TEXT,
     textAlign: 'center',
   },
-  backBtn: {
+  topBar: {
     position: 'absolute',
     left: 12,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    right: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  circleButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
-  body: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
+
+  // ── Eylemler ────────────────────────────────────────────────────────────
   actionRow: {
     flexDirection: 'row',
     gap: 10,
-    marginBottom: 18,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 18,
   },
-  playButton: {
+  primaryButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 12,
-    borderRadius: 999,
+    gap: 7,
+    paddingVertical: 13,
+    borderRadius: 12,
   },
-  playButtonText: {
+  primaryButtonText: {
     color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  shuffleButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    backgroundColor: '#18181b',
-  },
-  shuffleButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  periodRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
-  },
-  periodChip: {
-    flex: 1,
-    paddingVertical: 9,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#27272a',
-    backgroundColor: '#18181b',
-    alignItems: 'center',
-  },
-  periodChipText: {
-    fontSize: 12,
-    color: '#a1a1aa',
+    fontSize: 16,
     fontWeight: '600',
   },
-  loadingBox: {
-    paddingVertical: 30,
+  secondaryButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: '#1c1c1e',
+  },
+  secondaryButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+
+  // ── Segmentli dönem seçici ──────────────────────────────────────────────
+  segmented: {
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    marginBottom: 20,
+    padding: 2,
+    borderRadius: 9,
+    backgroundColor: '#1c1c1e',
+  },
+  segment: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: 7,
     alignItems: 'center',
   },
-  summaryGrid: {
+  segmentActive: {
+    backgroundColor: '#48484a',
+  },
+  segmentText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: SECONDARY_TEXT,
+  },
+  segmentTextActive: {
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+
+  // ── Metrikler (çerçevesiz) ──────────────────────────────────────────────
+  metricGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 16,
-  },
-  summaryTile: {
-    flexGrow: 1,
-    flexBasis: '30%',
-    minWidth: 96,
-    backgroundColor: '#18181b',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#27272a',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    gap: 3,
-  },
-  summaryValue: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  summaryLabel: {
-    fontSize: 11,
-    color: '#a1a1aa',
-  },
-  habitCard: {
-    backgroundColor: '#18181b',
-    borderRadius: 16,
-    borderWidth: 1,
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    marginBottom: 18,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: HAIRLINE,
   },
-  habitRow: {
+  metricCell: {
+    flexBasis: '50%',
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+  },
+  metricValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#ffffff',
+    letterSpacing: -0.3,
+  },
+  metricLabel: {
+    marginTop: 2,
+    fontSize: 12,
+    color: SECONDARY_TEXT,
+  },
+  detailBlock: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 6,
-    gap: 10,
+    paddingVertical: 7,
+    gap: 12,
   },
-  habitLabel: {
-    fontSize: 12,
-    color: '#71717a',
+  detailLabel: {
+    fontSize: 14,
+    color: SECONDARY_TEXT,
   },
-  habitValue: {
-    fontSize: 13,
-    fontWeight: '700',
+  detailValue: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#ffffff',
     flexShrink: 1,
     textAlign: 'right',
   },
+
+  // ── Bölümler ────────────────────────────────────────────────────────────
   section: {
-    marginBottom: 20,
+    marginTop: 18,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: 20,
+    paddingBottom: 10,
   },
   sectionTitle: {
-    fontSize: 17,
+    fontSize: 22,
     fontWeight: '700',
+    letterSpacing: -0.4,
     color: '#ffffff',
-    marginBottom: 10,
   },
-  topRow: {
+  sectionSubtitle: {
+    marginTop: 2,
+    fontSize: 13,
+    color: SECONDARY_TEXT,
+  },
+  loadingBox: {
+    paddingVertical: 26,
+    alignItems: 'center',
+  },
+  emptyNote: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    fontSize: 14,
+    color: '#6e6e73',
+  },
+
+  // ── Düz liste satırları ─────────────────────────────────────────────────
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    gap: 10,
-  },
-  rankIndex: {
-    width: 16,
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#52525b',
-    textAlign: 'center',
-  },
-  rankArtwork: {
-    width: 40,
-    height: 40,
-    borderRadius: 7,
-    backgroundColor: '#27272a',
-  },
-  rankArtworkFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rightText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  trackRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingVertical: 8,
     gap: 12,
   },
-  trackInfo: {
+  rowArtwork: {
+    width: 52,
+    height: 52,
+    borderRadius: 4,
+    backgroundColor: '#1c1c1e',
+  },
+  rowArtworkFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowText: {
     flex: 1,
   },
-  trackTitle: {
-    fontSize: 15,
+  rowTitle: {
+    fontSize: 16,
     fontWeight: '600',
     color: '#ffffff',
-    marginBottom: 3,
+    letterSpacing: -0.2,
+    marginBottom: 2,
   },
-  trackSubtitle: {
-    fontSize: 12,
-    color: '#a1a1aa',
+  rowSubtitle: {
+    fontSize: 13,
+    color: SECONDARY_TEXT,
   },
-  emptyText: {
-    color: '#71717a',
-    fontSize: 14,
-    fontStyle: 'italic',
-    paddingVertical: 16,
+  rowDuration: {
+    fontSize: 13,
+    color: SECONDARY_TEXT,
+    fontVariant: ['tabular-nums'],
+  },
+  rowDivider: {
+    position: 'absolute',
+    left: 20,
+    right: 0,
+    bottom: 0,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: HAIRLINE,
+  },
+  rankSlot: {
+    width: 18,
+    alignItems: 'center',
+  },
+  rankText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6e6e73',
+    fontVariant: ['tabular-nums'],
   },
 });
