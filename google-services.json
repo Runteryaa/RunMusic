@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "404641997949",
+    "project_id": "runterya-music",
+    "storage_bucket": "runterya-music.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:404641997949:android:230adc8e2db376d5c2fd14",
+        "android_client_info": {
+          "package_name": "com.runterya.music"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA2Uzz-n89yGQPvGeMKuhaVrbGwmBFbJ7c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

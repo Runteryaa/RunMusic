@@ -8,25 +8,8 @@
     "scheme": "runmusic",
     "userInterfaceStyle": "dark",
     "platforms": [
-      "android",
-      "ios"
+      "android"
     ],
-    "ios": {
-      "supportsTablet": false,
-      "bundleIdentifier": "com.runterya.music",
-      "infoPlist": {
-        "UIBackgroundModes": [
-          "audio"
-        ],
-        "NSLocalNetworkUsageDescription": "RunMusic, aynı Wi-Fi ağındaki diğer cihazlara bağlanarak müzik kontrolü sağlamak için yerel ağ izni ister.",
-        "NSBluetoothAlwaysUsageDescription": "RunMusic, diğer cihazları uzaktan kumanda etmek için Bluetooth bağlantısı kullanır.",
-        "NSBluetoothPeripheralUsageDescription": "RunMusic, diğer cihazları uzaktan kumanda etmek için Bluetooth bağlantısı kullanır.",
-        "NSUserTrackingUsageDescription": "Size özel ve uygun reklam deneyimi sunabilmek için izniniz istenmektedir.",
-        "UIFileSharingEnabled": true,
-        "LSSupportsOpeningDocumentsInPlace": true
-      },
-      "buildNumber": "274"
-    },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#F3163A",
@@ -46,7 +29,6 @@
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_AUDIO",
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.BLUETOOTH",
@@ -58,7 +40,8 @@
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
-      "package": "com.runterya.music"
+      "package": "com.runterya.music",
+      "googleServicesFile": "./google-services.json"
     },
     "plugins": [
       "expo-router",
@@ -86,9 +69,7 @@
       [
         "react-native-google-mobile-ads",
         {
-          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
-          "iosAppId": "ca-app-pub-3940256099942544~1458737195",
-          "userTrackingUsageDescription": "Size özel ve uygun reklam deneyimi sunabilmek için izniniz istenmektedir."
+          "androidAppId": "ca-app-pub-3940256099942544~3347511713"
         }
       ],
       [
@@ -101,13 +82,32 @@
           "bluetoothAlwaysPermission": "RunMusic diğer cihazları kontrol etmek ve bağlanmak için Bluetooth kullanır."
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 31,
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36
+          }
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ],
+      "expo-background-task",
+      "@react-native-firebase/app",
+      "@react-native-firebase/crashlytics"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "runtimeVersion": "1.2",
+    "runtimeVersion": "1.3",
     "extra": {
       "router": {},
       "eas": {
@@ -123,9 +123,5 @@
         "expo-channel-name": "production"
       }
     }
-  },
-  "react-native-google-mobile-ads": {
-    "android_app_id": "ca-app-pub-3940256099942544~3347511713",
-    "ios_app_id": "ca-app-pub-3940256099942544~1458737195"
   }
 }

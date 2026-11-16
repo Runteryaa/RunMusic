@@ -9,7 +9,6 @@ on:
       - 'docs/**'
       - '**/*.md'
       - '.github/workflows/release-windows.yml'
-      - '.github/workflows/build-ios.yml'
   workflow_dispatch:
 
 concurrency:
