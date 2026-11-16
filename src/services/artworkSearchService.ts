@@ -1,14 +1,15 @@
 /**
  * Şarkı ve albüm kapağı arama servisi.
  *
- * Üç kaynak birlikte taranır:
+ * İki kaynak birlikte taranır:
  * - iTunes Search API: ücretsiz, API anahtarı gerektirmez, yüksek çözünürlüklü
  *   kapaklar sunar ama özellikle yerel/az bilinen parçalarda sık sık boş döner.
- * - Deezer: anahtarsız ve katalog kapsamı (özellikle Türkçe müzik) çok daha
- *   geniş; albüm kapağını `album.cover_xl` alanında verir.
- * - Genius: anahtarsız arama, ama Cloudflare koruması yüzünden birçok ağdan
- *   403 döner. Bu yüzden yalnızca ek kaynak olarak denenir; hata sessizce
- *   yutulur ve diğer kaynaklar sonucu doldurur.
+ * - Genius: anahtarsız arama; şarkı kaydında kapağı `song_art_image_url`
+ *   alanında verir. Cloudflare koruması yüzünden birçok ağdan 403 dönebilir,
+ *   bu yüzden yalnızca ek kaynak olarak denenir; hata sessizce yutulur.
+ *
+ * Deezer bilinçli olarak kullanılmıyor: Türkiye'de hizmet vermediği için
+ * cihazdan API'sine ve görsel CDN'ine erişilemiyor, istekler boşa gidiyordu.
  *
  * Sonuçlar aranan sanatçı/parça adına benzerliğe göre sıralanır; böylece aynı
  * adı taşıyan alakasız şarkıların kapağı listenin başına geçmez.
@@ -24,7 +25,7 @@ export interface OnlineArtworkResult {
   artworkUrl: string;
   thumbnailUrl: string;
   /** Sonucun hangi kaynaktan geldiği (sıralama ve hata ayıklama için). */
-  source: 'itunes' | 'genius' | 'deezer';
+  source: 'itunes' | 'genius';
 }
 
 function normalizeForMatch(value?: string | null): string {
@@ -182,71 +183,6 @@ async function searchItunesArtwork(
 }
 
 /**
- * Deezer üzerinden kapak arar (anahtarsız).
- *
- * Türkçe ve yerel katalogda iTunes'tan belirgin şekilde daha iyi sonuç verir;
- * albüm kapağı `album.cover_xl` (1000×1000) alanında hazır gelir.
- */
-async function fetchDeezerQuery(query: string): Promise<OnlineArtworkResult[]> {
-  if (!query) return [];
-
-  const url = `https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=12`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'RunMusic/1.0' } });
-  if (!res.ok) return [];
-
-  const data = await res.json();
-  const items = Array.isArray(data?.data) ? data.data : [];
-
-  const seenUrls = new Set<string>();
-  const results: OnlineArtworkResult[] = [];
-
-  for (const item of items) {
-    const album = item?.album;
-    const artworkUrl: string | undefined = album?.cover_xl || album?.cover_big;
-    if (!artworkUrl) continue;
-    if (seenUrls.has(artworkUrl)) continue;
-    seenUrls.add(artworkUrl);
-
-    results.push({
-      id: `deezer-${item.id ?? artworkUrl}`,
-      trackName: item.title || '',
-      artistName: item.artist?.name || '',
-      albumName: album?.title || undefined,
-      artworkUrl,
-      thumbnailUrl: album?.cover_medium || album?.cover_big || artworkUrl,
-      source: 'deezer',
-    });
-  }
-
-  return results;
-}
-
-async function searchDeezerArtwork(
-  title: string,
-  artist = ''
-): Promise<OnlineArtworkResult[]> {
-  const collected: OnlineArtworkResult[] = [];
-  const seen = new Set<string>();
-
-  for (const query of buildArtworkQueries(title, artist).slice(0, 2)) {
-    let batch: OnlineArtworkResult[] = [];
-    try {
-      batch = await fetchDeezerQuery(query);
-    } catch {
-      batch = [];
-    }
-    for (const item of batch) {
-      if (seen.has(item.artworkUrl)) continue;
-      seen.add(item.artworkUrl);
-      collected.push(item);
-    }
-    if (collected.length >= 8) break;
-  }
-
-  return collected;
-}
-
-/**
  * Genius araması üzerinden kapak arar.
  *
  * Genius, şarkıların kapaklarını `song_art_image_url` alanında verir; bu yüzden
@@ -343,7 +279,7 @@ export function rankArtworkResults(
     });
   });
 
-  // Skor eşitse kaynak sırası korunur (iTunes → Deezer → Genius).
+  // Skor eşitse kaynak sırası korunur (iTunes → Genius).
   scored.sort((a, b) => b.score - a.score || a.index - b.index);
 
   const relevant = scored.filter((entry) => entry.score >= MIN_ARTWORK_SCORE);
@@ -354,22 +290,21 @@ export function rankArtworkResults(
 /**
  * Başlık ve sanatçıya göre internetten albüm kapaklarını arar.
  *
- * Üç kaynak paralel taranır, sonuçlar tekrarsız birleştirilir ve aranan
+ * İki kaynak paralel taranır, sonuçlar tekrarsız birleştirilir ve aranan
  * sanatçı/parçaya uyum puanına göre sıralanır. Kaynaklardan biri (ör. Genius'un
- * Cloudflare koruması) hata verse bile diğerleri sonucu doldurur.
+ * Cloudflare koruması) hata verse bile diğeri sonucu doldurur.
  */
 export async function searchOnlineArtwork(
   title: string,
   artist = ''
 ): Promise<OnlineArtworkResult[]> {
   try {
-    const [itunesResults, deezerResults, geniusResults] = await Promise.all([
+    const [itunesResults, geniusResults] = await Promise.all([
       searchItunesArtwork(title, artist).catch(() => [] as OnlineArtworkResult[]),
-      searchDeezerArtwork(title, artist).catch(() => [] as OnlineArtworkResult[]),
       searchGeniusArtwork(title, artist).catch(() => [] as OnlineArtworkResult[]),
     ]);
 
-    const merged = [...itunesResults, ...deezerResults, ...geniusResults];
+    const merged = [...itunesResults, ...geniusResults];
     if (merged.length === 0) return [];
 
     const { expectedArtist, expectedTrack } = getSearchKeywords(title, artist);

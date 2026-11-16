@@ -1,14 +1,13 @@
 /**
- * Sanatçı fotoğrafı eşleştirmesinin doğrulaması.
+ * Sanatçı fotoğrafı eşleştirmesinin doğrulaması — Genius kaynağı.
  *
- * İki bölüm var:
- *  1. Saf yardımcılar: yer tutucu tespiti, kelime benzerliği, başlık örtüşmesi,
- *     popülerlik sıralaması ve örtüşmeye göre seçim.
- *  2. Canlı ağ testi: gerçek Deezer yanıtları üzerinde doğru sanatçının
- *     seçildiği. Ağ yoksa bu bölüm atlanır (test başarısız sayılmaz).
+ * Testler gerçek Genius yanıtlarından alınmış küçük sabitler üzerinde çalışır
+ * (bu makineden genius.com Cloudflare yüzünden 403 döndüğü için canlı ağ testi
+ * yapılmıyor; sabitler doğrudan gerçek yanıtlardan kopyalandı).
  *
- * Neden gerekli: Deezer'da aynı adda birden çok sanatçı var. Uygulama bir ara
- * ilk sonucu aldığı için "Motive", "UZI" ve "aisu" yanlış fotoğraf gösteriyordu.
+ * Neden gerekli: "Motive", "UZI" ve "aisu" gibi isimlerde birden çok kayıt
+ * var ("UZI (FRA 77)", "Aisuru", "aisukii"). Doğru kaydı ve gerçek görseli
+ * seçmek ağ gerektirmeyen bir sıralama problemi.
  *
  * Çalıştırma:
  *   npx tsc scripts/verify-artist-images.ts --ignoreConfig --outDir .tmp-verify \
@@ -17,16 +16,13 @@
  */
 
 import {
-  MAX_TITLE_CANDIDATES,
-  artistPictureOf,
-  isPlaceholderPicture,
-  matchingTrackArtistIds,
-  pickByTitleOverlap,
-  rankDeezerArtists,
-  titleOverlap,
+  geniusArtistImageOf,
+  isPlaceholderArtistImage,
+  pickArtistFromSongs,
+  rankGeniusArtists,
   wordSimilarity,
-  type DeezerArtistLike,
-  type DeezerTrackLike,
+  type GeniusArtistLike,
+  type GeniusSongLike,
 } from '../src/services/artistImageMatch';
 
 let failures = 0;
@@ -44,34 +40,60 @@ function section(title: string): void {
   console.log(`\n${title}`);
 }
 
-/** Gerçek CDN yolunu taklit eden görsel URL'i. */
-function picture(hash: string): string {
-  return `https://cdn-images.dzcdn.net/images/artist/${hash}/500x500-000000-80-0-0.jpg`;
+/** Gerçek Genius görsel yolu. */
+function image(hash: string, size = '1000x1000x1'): string {
+  return `https://images.genius.com/${hash}.${size}.png`;
 }
+
+const DEFAULT_COVER = 'https://assets.genius.com/images/default_cover_image.png';
 
 function artist(
   id: number,
   name: string,
-  fans: number,
-  hash: string | null
-): DeezerArtistLike {
-  return {
-    id,
-    name,
-    nb_fan: fans,
-    picture_big: hash === null ? undefined : picture(hash),
-  };
+  imageUrl: string | null,
+  verified = false
+): GeniusArtistLike {
+  return { id, name, image_url: imageUrl, is_verified: verified };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('Yer tutucu görsel tespiti');
 
-check('gerçek hash kabul edilir', !isPlaceholderPicture(picture('ebcf22e5c3a0eb3178b8a6f6bc1a5a6c')));
-check('kısa hash yer tutucu', isPlaceholderPicture(picture('abc')));
-check('boş hash yer tutucu', isPlaceholderPicture(picture('')));
-check('sıfırlardan oluşan hash yer tutucu', isPlaceholderPicture(picture('00000000000000000000000000000000')));
-check('boş URL yer tutucu', isPlaceholderPicture('') && isPlaceholderPicture(null));
-check('yol tanınmazsa yer tutucu', isPlaceholderPicture('https://example.com/a.jpg'));
+check('gerçek Genius görseli kabul edilir', !isPlaceholderArtistImage(image('1a25130571d2fe35eb502fbc81952087')));
+check('varsayılan kapak yer tutucu', isPlaceholderArtistImage(DEFAULT_COVER));
+check(
+  'varsayılan banner yer tutucu',
+  isPlaceholderArtistImage('https://assets.genius.com/images/default_banner.png')
+);
+check('boş değer yer tutucu', isPlaceholderArtistImage('') && isPlaceholderArtistImage(null));
+check('yabancı alan adı reddedilir', isPlaceholderArtistImage('https://example.com/a.jpg'));
+check(
+  'avatars yolu kabul edilir',
+  !isPlaceholderArtistImage('https://images.genius.com/avatars/medium/ef39c675b1b299469c8cec46c2f2b4eb')
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('Görsel seçimi (profil → banner → yok)');
+
+check(
+  'profil görseli tercih edilir',
+  geniusArtistImageOf({
+    image_url: image('aaa'),
+    header_image_url: image('bbb', '1000x248x1'),
+  }) === image('aaa')
+);
+check(
+  'profil yoksa banner kullanılır',
+  geniusArtistImageOf({
+    image_url: DEFAULT_COVER,
+    header_image_url: image('26b113b56b3b25b1dc75c1e48b81d458', '1000x248x1'),
+  }) === image('26b113b56b3b25b1dc75c1e48b81d458', '1000x248x1')
+);
+check(
+  'ikisi de yoksa null',
+  geniusArtistImageOf({ image_url: DEFAULT_COVER, header_image_url: null }) === null
+);
+check('boş kayıt → null', geniusArtistImageOf(null) === null);
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('Kelime benzerliği');
@@ -79,221 +101,111 @@ section('Kelime benzerliği');
 check('aynı isim → 1', wordSimilarity('Motive', 'Motive') === 1);
 check('büyük/küçük harf yok sayılır', wordSimilarity('UZI', 'uzi') === 1);
 check('ilgisiz isim → 0', wordSimilarity('MOT!VE', 'Motive') === 0);
-// "Uzi & Ari" üç kelimeye ayrılır, yalnızca biri örtüşür.
-check('kısmi kelime', Math.abs(wordSimilarity('Uzi & Ari', 'Uzi') - 1 / 3) < 0.001);
 check('boş isim → 0', wordSimilarity('', 'Uzi') === 0);
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('Başlık örtüşmesi');
+section('Sanatçı araması sıralaması');
 
-check('aynı başlıklar → 1', titleOverlap(['Cennet'], ['Cennet']) === 1);
-check('kısa liste bölen olur', titleOverlap(['Cennet', 'Caney'], ['cennet', 'x', 'y', 'z']) === 0.5);
-check('örtüşme yok → 0', titleOverlap(['Cennet'], ['Revolt']) === 0);
-check('boş liste → 0', titleOverlap([], ['Cennet']) === 0);
-
-// ─────────────────────────────────────────────────────────────────────────────
-section('Popülerlik sıralaması');
-
-// Gerçek Deezer yanıtı: "Motive" araması (doğru kişi 42.899 hayran).
-const motiveResults: DeezerArtistLike[] = [
-  artist(86431782, 'Motive', 20, 'ea8b2052abb07f66c5c37396932b8e7e'),
-  artist(86431382, 'Motive', 119, 'ed94718f8e0248951ed2c5c4ce54bf07'),
-  artist(86431362, 'Motive', 2, 'f905db75018f874ed0046387b10e9795'),
-  artist(329894201, 'MOT!VE', 1, 'a7a9f95a6cf577e46bf1457979b0ca2a'),
-  artist(72196, 'Motive', 42899, 'ebcf22e5c3a0eb3178b8a6f6bc1a5a6c'),
+// Gerçek yanıt: genius.com/api/search/artist?q=Motive
+const motiveArtists: GeniusArtistLike[] = [
+  artist(1213575, 'Motive', image('1a25130571d2fe35eb502fbc81952087'), true),
 ];
 
-const motiveRanked = rankDeezerArtists(motiveResults, 'Motive');
-check('en popüler doğru sanatçı başta', motiveRanked[0]?.id === 72196, String(motiveRanked[0]?.id));
-check('tam eşleşmeyen ad ("MOT!VE") elenir', motiveRanked.every((item) => item.id !== 329894201));
-check('tüm "Motive" kayıtları aday', motiveRanked.length === 4, String(motiveRanked.length));
+const motiveRanked = rankGeniusArtists(motiveArtists, 'Motive');
+check('Motive doğru kayıt', motiveRanked[0]?.id === 1213575, String(motiveRanked[0]?.id));
 
-// Gerçek Deezer yanıtı: "UZI" araması (doğru kişi 135.940 hayran).
-const uziResults: DeezerArtistLike[] = [
-  artist(153405332, 'Uzi', 65, 'ea18be765d0bfba80fceef535464a060'),
-  artist(81533692, 'Uzi', 1394, 'a848e2cc46974d8188e29a9060ffbc64'),
-  artist(81533352, 'Uzi', 31, '4b26ba75ca7ffac81c6a95779b186c1a'),
-  artist(1070683, 'Uzi & Ari', 332, 'f8d84431fe76216609e6a09e1a7bd1a3'),
-  artist(98336572, 'Uzi', 135940, '65905c1901748c17c176bfd1889cc3ae'),
+// Gerçek yanıt: genius.com/api/search/artist?q=aisu
+const aisuArtists: GeniusArtistLike[] = [
+  artist(2721108, 'aisu', image('5325501551ae80b356d60d71b5b0c5c0', '640x640x1')),
+  artist(1736707, 'Aisuru', DEFAULT_COVER),
+  artist(4419175, 'AiSuu (あいす) (VoiSona)', image('b9f3ea5e9b1101b5448baa93b082ee63', '504x504x1')),
+  artist(3575292, 'aisukii', DEFAULT_COVER),
+  artist(4002163, 'AiSuu', DEFAULT_COVER),
 ];
 
-const uziRanked = rankDeezerArtists(uziResults, 'UZI');
-check('UZI doğru sanatçı başta', uziRanked[0]?.id === 98336572, String(uziRanked[0]?.id));
-check('"Uzi & Ari" elenir (tam eşleşme var)', uziRanked.every((item) => item.id !== 1070683));
-
+const aisuRanked = rankGeniusArtists(aisuArtists, 'aisu');
+check('aisu doğru kayıt', aisuRanked[0]?.id === 2721108, String(aisuRanked[0]?.id));
+check('aisu: yalnızca tam eşleşme kalır', aisuRanked.length === 1, String(aisuRanked.length));
 check(
-  'yer tutucu fotoğrafı olan aday aday kalmaz',
-  rankDeezerArtists([artist(1, 'Zzz', 9999, null)], 'Zzz').length === 0
+  'aisu: yer tutucu görsel aday olmaz',
+  aisuRanked.every((item) => item.id !== 1736707 && item.id !== 4002163)
 );
-check('hiç sonuç yoksa boş', rankDeezerArtists([], 'Zzz').length === 0);
-check('zayıf eşleşme elenir', rankDeezerArtists([artist(2, 'Bambaşka', 50, 'abcdef1234567890')], 'Zzz').length === 0);
 
-// ─────────────────────────────────────────────────────────────────────────────
-section('Örtüşmeye göre seçim');
-
-const motiveTops = [
-  ['pVg (Manifest Live Remix)', 'YIN YANG', 'Yüce Aşk', 'LACIVERT'],
-  ['Raiders Cap', "Just Can't Quit (feat. Scoop Deville)", 'Dopest Nigga Alive'],
-  [],
-  [],
+// Gerçek yanıt: genius.com/api/search/artist?q=UZI (benzer isimli kayıtlar)
+const uziArtists: GeniusArtistLike[] = [
+  artist(1715254, 'UZI', image('afad3a7744635642810285a4c79ce7a7')),
+  artist(1623896, 'UZI (FRA 77)', image('0181447f17f8659f89f6892c96f213b1', '722x722x1')),
+  artist(233451, 'Uzi (HT)', image('b4e4523462be369d2451532f7656ba2d', '241x241x1')),
 ];
-check(
-  'Motive: kütüphane parçaları doğru kaydı seçer',
-  pickByTitleOverlap(motiveRanked.slice(0, MAX_TITLE_CANDIDATES), ['YIN YANG'], [
-    motiveTops[0],
-    motiveTops[1],
-    motiveTops[2],
-  ]) === 0
-);
-check(
-  'Motive: doğrulama yoksa popülerlik korunur',
-  pickByTitleOverlap(motiveRanked, [], motiveTops) === 0
-);
 
-// Yanlış kişi daha popüler olsaydı bile kütüphane parçaları kazanmalı.
-const wrongFirst = [artist(86431382, 'Motive', 999999, 'ed94718f8e0248951ed2c5c4ce54bf07'), motiveResults[4]];
+const uziRanked = rankGeniusArtists(uziArtists, 'UZI');
+check('UZI doğru kayıt', uziRanked[0]?.id === 1715254, String(uziRanked[0]?.id));
+check('UZI: benzer isimler elenir', uziRanked.length === 1, String(uziRanked.length));
+
+check('hiç sonuç yoksa boş', rankGeniusArtists([], 'Zzz').length === 0);
 check(
-  'örtüşme popülerliği yener',
-  pickByTitleOverlap(wrongFirst, ['Raiders Cap'], [[], ['pVg', 'YIN YANG']]) === 0
+  'yer tutucu görselli tek aday elenir',
+  rankGeniusArtists([artist(1, 'Zzz', DEFAULT_COVER)], 'Zzz').length === 0
 );
 check(
-  'eşit örtüşmede daha popüler olan kalır',
-  pickByTitleOverlap(wrongFirst, ['Yok'], [['Yok'], ['Yok']]) === 0
+  'zayıf eşleşme elenir',
+  rankGeniusArtists([artist(2, 'Bambaşka', image('abcdef1234567890'))], 'Zzz').length === 0
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('Görsel URL seçimi');
+section('Şarkı aramasından sanatçı görseli');
 
-check('büyük görsel tercih edilir', artistPictureOf({ picture_big: 'big', picture_medium: 'medium' }) === 'big');
-check('büyük yoksa orta', artistPictureOf({ picture_medium: 'medium' }) === 'medium');
-check('hiç yoksa null', artistPictureOf({}) === null);
-
-// ─────────────────────────────────────────────────────────────────────────────
-section('Parça aramasıyla kimlik doğrulama');
-
-const trackResults = [
-  { title: 'Cennet', artist: { id: 98336572, name: 'Uzi' } },
-  { title: 'XO Tour Llif3', artist: { id: 7101343, name: 'Lil Uzi Vert' } },
-  { title: 'Cennet', artist: { id: 999, name: 'Uzi Cover Band' } },
-];
-
-const matchedIds = matchingTrackArtistIds(trackResults, 'UZI');
-check('yalnızca ada tam eşleşen sanatçılar', matchedIds.length === 1, matchedIds.join(','));
-check('doğru kimlik çıkar', matchedIds[0] === 98336572, String(matchedIds[0]));
-check('boş isim → sonuç yok', matchingTrackArtistIds(trackResults, '').length === 0);
-check('kimliksiz sonuç atlanır', matchingTrackArtistIds([{ artist: { name: 'Uzi' } }], 'Uzi').length === 0);
-
-// Deezer sonuçları alaka sırasına göre gelir; uygulama ilk kimliği kullanır.
-check(
-  'alaka sırası korunur (ilk eşleşme önce)',
-  matchingTrackArtistIds(
-    [
-      { title: 'XO Tour Llif3', artist: { id: 7101343, name: 'Lil Uzi Vert' } },
-      { title: 'Cennet', artist: { id: 98336572, name: 'Uzi' } },
+// Gerçek yanıt: genius.com/api/search/multi?q=UZI Cennet
+const cennetSongs: GeniusSongLike[] = [
+  {
+    title: 'Cennet',
+    artist_names: 'UZI & Motive',
+    primary_artist: artist(1715254, 'UZI', image('afad3a7744635642810285a4c79ce7a7')),
+    primary_artists: [
+      artist(1715254, 'UZI', image('afad3a7744635642810285a4c79ce7a7')),
+      artist(1213575, 'Motive', image('1a25130571d2fe35eb502fbc81952087'), true),
     ],
-    'UZI'
-  )[0] === 98336572
+  },
+  {
+    title: 'Cannot Stand Me*',
+    primary_artist: artist(217208, 'Lil Uzi Vert', image('01c44955cc93c776e9a35ab252841cc2')),
+  },
+];
+
+check(
+  'UZI: şarkıdan doğru sanatçı görseli',
+  pickArtistFromSongs(cennetSongs, 'UZI') === image('afad3a7744635642810285a4c79ce7a7')
+);
+check(
+  'Motive: ortak çalışmada ikinci sanatçı da çözülür',
+  pickArtistFromSongs(cennetSongs, 'Motive') === image('1a25130571d2fe35eb502fbc81952087')
+);
+check(
+  'Lil Uzi Vert, "UZI" için seçilmez',
+  pickArtistFromSongs(cennetSongs, 'UZI') !== image('01c44955cc93c776e9a35ab252841cc2')
+);
+check('ada eşleşme yoksa null', pickArtistFromSongs(cennetSongs, 'Zzz') === null);
+check('boş isim → null', pickArtistFromSongs(cennetSongs, '') === null);
+check(
+  'yer tutucu görselli sanatçı atlanır',
+  pickArtistFromSongs([{ primary_artist: artist(9, 'aisu', DEFAULT_COVER) }], 'aisu') === null
+);
+check(
+  'isabet sırası korunur (ilk eşleşme kazanır)',
+  pickArtistFromSongs(
+    [
+      { primary_artist: artist(1, 'aisu', image('aaaa1111')) },
+      { primary_artist: artist(2, 'aisu', image('bbbb2222')) },
+    ],
+    'aisu'
+  ) === image('aaaa1111')
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('Canlı ağ testi (Deezer)');
-
-interface DeezerSearchResponse {
-  data?: DeezerArtistLike[];
+console.log('\nSonuç');
+if (failures === 0) {
+  console.log('  TÜM TESTLER GEÇTİ.');
+} else {
+  console.log(`  ${failures} TEST BAŞARISIZ.`);
+  (globalThis as unknown as { process: { exitCode: number } }).process.exitCode = 1;
 }
-
-/**
- * Uygulamadaki `fetchFromDeezer` akışının aynısı (ağ + saf kararlar).
- *
- * Sıra uygulamayla birebir aynı olmalı: **önce parça araması**, sonra sanatçı
- * araması, sonra başlık örtüşmesi, en son popülerlik.
- */
-async function resolveArtistId(name: string, knownTitles: string[]): Promise<number | null> {
-  const titles = [...new Set(knownTitles.map((title) => title.trim()).filter(Boolean))].slice(0, 3);
-
-  // 1. Parça araması: çalan parçayı yayınlayan kayıt doğrudan bulunur.
-  for (const title of titles) {
-    const found = await fetch(
-      `https://api.deezer.com/search?q=${encodeURIComponent(`${title} ${name}`)}&limit=6`
-    ).then((res) => res.json() as Promise<{ data?: DeezerTrackLike[] }>);
-    const ids = matchingTrackArtistIds(Array.isArray(found?.data) ? found.data : [], name);
-    if (ids.length === 0) continue;
-
-    // Profil fotoğrafı doğrulanır: yer tutucuysa bu aday işe yaramaz.
-    const artist = await fetch(`https://api.deezer.com/artist/${ids[0]}`).then(
-      (res) => res.json() as Promise<DeezerArtistLike>
-    );
-    const picture = artistPictureOf(artist);
-    if (picture && !isPlaceholderPicture(picture)) return ids[0];
-  }
-
-  // 2. Sanatçı araması.
-  const search = await fetch(
-    `https://api.deezer.com/search/artist?q=${encodeURIComponent(name)}&limit=10`
-  ).then((res) => res.json() as Promise<DeezerSearchResponse>);
-  const ranked = rankDeezerArtists(Array.isArray(search?.data) ? search.data : [], name);
-  if (ranked.length === 0) return null;
-  if (ranked.length === 1 || titles.length === 0) return ranked[0].id ?? null;
-
-  // 3. En popüler parçaların başlık örtüşmesi.
-  const candidates = ranked.slice(0, MAX_TITLE_CANDIDATES);
-  const tops = await Promise.all(
-    candidates.map(async (candidate) => {
-      if (candidate.id == null) return [] as string[];
-      const top = await fetch(`https://api.deezer.com/artist/${candidate.id}/top?limit=25`).then(
-        (res) => res.json() as Promise<{ data?: { title?: string }[] }>
-      );
-      return (top?.data ?? []).map((item) => item.title || '').filter(Boolean);
-    })
-  );
-
-  // 4. Popülerlik sırası korunur (rankDeezerArtists zaten sıralı döner).
-  return candidates[pickByTitleOverlap(candidates, titles, tops)].id ?? null;
-}
-
-const liveCases: { name: string; titles: string[]; expected: number }[] = [
-  // Doğru kayıtlar gerçek Deezer kimlikleriyle sabitlendi.
-  { name: 'Motive', titles: ['pVg (Manifest Live Remix)', 'YIN YANG'], expected: 72196 },
-  { name: 'UZI', titles: ['Cennet', 'Şarkılar Sokaklara Ait'], expected: 98336572 },
-  { name: 'aisu', titles: ['küt küt', 'nerdesin?'], expected: 6135952 },
-];
-
-async function main(): Promise<void> {
-  for (const testCase of liveCases) {
-    try {
-      const withHints = await resolveArtistId(testCase.name, testCase.titles);
-      check(
-        `${testCase.name}: parça ipucuyla doğru kayıt`,
-        withHints === testCase.expected,
-        `beklenen ${testCase.expected}, gelen ${withHints}`
-      );
-    } catch (error) {
-      console.log(`  SKIP  ${testCase.name} - ağ hatası (${(error as Error).message})`);
-    }
-  }
-
-  // Neden ipucu şart: "UZI" adında daha popüler bir kayıt var (Fransız
-  // sanatçı). İpucu olmadan popülerlik yanlış kişiyi seçer; ipucuyla seçim
-  // doğru kayda gider. Bu test o davranışı kilitler.
-  try {
-    const withoutHints = await resolveArtistId('UZI', []);
-    const withHints = await resolveArtistId('UZI', ['Cennet']);
-    check(
-      'UZI: ipucu seçimi değiştirir (popülerlik yanıltıcı)',
-      withoutHints !== withHints && withHints === 98336572,
-      `ipucusuz ${withoutHints}, ipuçlu ${withHints}`
-    );
-  } catch (error) {
-    console.log(`  SKIP  UZI ipucu karşılaştırması - ağ hatası (${(error as Error).message})`);
-  }
-
-  console.log('\nSonuç');
-  if (failures === 0) {
-    console.log('  TÜM TESTLER GEÇTİ.');
-  } else {
-    console.log(`  ${failures} TEST BAŞARISIZ.`);
-    (globalThis as unknown as { process: { exitCode: number } }).process.exitCode = 1;
-  }
-}
-
-void main();

@@ -1,51 +1,48 @@
 /**
- * Sanatçı profil fotoğrafı arama servisi.
+ * Sanatçı profil fotoğrafı arama servisi — **Genius** kaynaklı.
  *
- * Wrapped ve istatistik ekranlarında sanatçı satırları albüm kapağı yerine
- * sanatçının kendi fotoğrafını gösterebilsin diye Deezer'in herkese açık
- * sanatçı aramasını kullanır. API anahtarı gerekmez.
+ * Wrapped, istatistik ve sanatçı sayfalarında albüm kapağı yerine sanatçının
+ * kendi fotoğrafı gösterilsin diye kullanılır. API anahtarı gerekmez: Genius'ın
+ * siteyi besleyen herkese açık arama uç noktaları kullanılıyor. Aynı kaynak
+ * şarkı sözlerini de sağladığı için kimin hangi şarkıyı yayınladığı bilgisi
+ * zaten elimizde.
  *
- * Sonuçlar AsyncStorage'da önbelleğe alınır: aynı isim için her açılışta ağ
- * isteği yapılmaz. Bulunamayan isimler de (boş sonuç) kısa süreliğine
- * önbelleğe yazılır, böylece olmayan bir sanatçı her seferinde yeniden
- * aranmaz. Tüm hatalar yutulur; görsel bulunamazsa arayüz harf rozetine düşer.
+ * NEDEN DEEZER DEĞİL: Deezer Türkiye'de hizmet vermiyor; API'si ve görsel
+ * CDN'i cihazdan erişilemiyordu (fotoğrafların hiç görünmemesinin nedeni) ve
+ * aynı adda onlarca kayıt döndürüp yanlış kişiyi seçiyordu.
+ *
+ * Sonuçlar AsyncStorage'da önbelleğe alınır. **Başarısız istek önbelleğe
+ * yazılmaz**: aksi halde ağ bir kez aksadığında sanatçının fotoğrafı günlerce
+ * gizli kalıyordu.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { normalizeArtistKey } from './artistMatch';
 import { cleanTrackTitle } from './displayNames';
 import { splitArtistNames } from './wrappedStats';
 import {
-  rankDeezerArtists,
-  artistPictureOf,
-  pickByTitleOverlap,
-  matchingTrackArtistIds,
-  isPlaceholderPicture,
-  MAX_TITLE_CANDIDATES,
-  MAX_TRACK_SEARCHES,
-  type DeezerArtistLike,
-  type DeezerTrackLike,
+  GENIUS_SUGGEST_LIMIT,
+  geniusArtistImageOf,
+  pickArtistFromSongs,
+  rankGeniusArtists,
+  type GeniusArtistHit,
+  type GeniusArtistLike,
+  type GeniusSongLike,
 } from './artistImageMatch';
 
 // Eşleştirme anahtarı saf modülde tutulur (Node doğrulama betikleri için);
 // mevcut importlar bozulmasın diye buradan yeniden dışa aktarılır.
 export { normalizeArtistKey } from './artistMatch';
 
-// v3: sanatçı seçimi parça adıyla (çalan şarkı) doğrulanıyor ve Genius kaynağı
-// eklendi; eski yanlış/boş kayıtların önbellekte kalmasını önlemek için sürüm.
-const CACHE_KEY = 'runmusic-artist-images-v3';
+// v4: kaynak Deezer'dan Genius'a taşındı. Anahtar sürümlendi ki cihazdaki
+// eski (yanlış veya boş) Deezer kayıtları hiç kullanılmasın.
+const CACHE_KEY = 'runmusic-artist-images-v4';
 const FOUND_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * Doğrulanmamış (parça ipucu olmadan bulunmuş) görseller daha kısa tutulur:
- * aynı adda birden çok sanatçı varken popülerlik yanlış kişiyi seçebilir, bu
- * yüzden ipucu geldiğinde yeniden aranmalı.
+ * sonraki açılışta çalan parçayla daha doğru sonuç alınabilsin.
  */
 const UNVERIFIED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-/**
- * "Bulunamadı" kaydı kısa tutulur.
- *
- * Uzun tutulduğunda tek bir başarısız çözümleme sanatçının fotoğrafını
- * günlerce gizliyordu; kısa tutulduğunda uygulama kendini çabucak toparlar.
- */
+/** "Bulunamadı" kaydı kısa tutulur; uygulama kendini çabucak toparlar. */
 const MISS_TTL_MS = 60 * 60 * 1000;
 const MAX_ENTRIES = 400;
 
@@ -57,8 +54,7 @@ interface ArtistImageEntry {
   verified?: boolean;
   /** Doğrulandığı an (bilinen kaynaktan yazıldıysa). */
   verifiedAt?: number;
-  /** Görselin geldiği kaynak. */
-  source?: 'deezer' | 'genius';
+  source?: 'genius';
 }
 
 type ArtistImageCache = Record<string, ArtistImageEntry>;
@@ -117,30 +113,18 @@ function persist(cache: ArtistImageCache): void {
   });
 }
 
-/** Bir sanatçının Deezer'daki en popüler parçalarının adları. */
-async function fetchTopTrackTitles(artistId: number): Promise<string[]> {
-  try {
-    const res = await fetch(`https://api.deezer.com/artist/${artistId}/top?limit=25`, {
-      headers: { 'User-Agent': 'RunMusic/1.0' },
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    const items = Array.isArray(data?.data) ? data.data : [];
-    return items.map((item: { title?: string }) => item.title || '').filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-/** Deezer isteği başarısız olduğunda fırlatılır (ağ / HTTP hatası). */
-class DeezerRequestError extends Error {}
+/**
+ * Genius isteği başarısız olduğunda fırlatılır (ağ / HTTP hatası).
+ *
+ * "Sonuç bulunamadı" ile "istek düştü" ayrımını korumak için hatalar yutulmaz.
+ */
+class GeniusRequestError extends Error {}
 
 /**
- * Tüm Deezer istekleri için ortak eşzamanlılık sınırı.
+ * Tüm Genius istekleri için ortak eşzamanlılık sınırı.
  *
- * İstatistikler 25 sanatçıyı, player ise her parça değişiminde 1-3 sanatçıyı
- * çözer. Bu istekler aynı anda birleştiğinde Deezer 429 dönebiliyor ve o
- * durumda fotoğraflar hiç yüklenmiyordu. Tek bir kuyruk bunu önler.
+ * İstatistikler 25 sanatçıyı, player ise her parça değişiminde birkaç sanatçıyı
+ * çözer. Tek bir kuyruk, aynı anda onlarca istek atıp engellenmeyi önler.
  */
 const MAX_CONCURRENT_REQUESTS = 4;
 let activeRequests = 0;
@@ -160,132 +144,141 @@ async function withRequestSlot<T>(task: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Deezer JSON uç noktası.
+ * Genius'ın siteyi besleyen JSON uç noktası.
  *
- * "Sonuç bulunamadı" ile "istek başarısız" arasındaki farkı korumak için
- * hatalar yutulmaz. Bu ayrım önemli: başarısız istek önbelleğe yazılırsa
- * sanatçının fotoğrafı günlerce hiç görünmez.
+ * Geniş kapsamlı arama düz uç noktalar (`genius.com/api/...`) tarayıcı
+ * `User-Agent`'ı olmadan Cloudflare tarafından 403 ile engellenebiliyor.
  */
-async function deezerJson<T>(url: string): Promise<T> {
+async function geniusJson<T>(url: string): Promise<T> {
   return withRequestSlot(async () => {
-    const res = await fetch(url, { headers: { 'User-Agent': 'RunMusic/1.0' } });
-    if (!res.ok) throw new DeezerRequestError(`HTTP ${res.status}`);
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) throw new GeniusRequestError(`HTTP ${res.status}`);
     return (await res.json()) as T;
   });
 }
 
-/** Tek bir parça için Deezer parça araması (sanatçı kimliği çıkarımı). */
-async function fetchTrackArtistIds(title: string, name: string): Promise<number[]> {
+interface GeniusSection<T> {
+  type?: string;
+  hits?: T[];
+}
+
+interface GeniusSearchResponse<T> {
+  response?: { sections?: GeniusSection<T>[] };
+}
+
+/** Şarkı araması: parça adı + sanatçı adı. */
+async function searchSongs(query: string): Promise<GeniusSongLike[]> {
+  const data = await geniusJson<GeniusSearchResponse<{ result?: GeniusSongLike }>>(
+    `https://genius.com/api/search/multi?per_page=${GENIUS_SUGGEST_LIMIT}&q=${encodeURIComponent(query)}`
+  );
+  const sections = data?.response?.sections ?? [];
+  const songSection = sections.find((section) => section.type === 'song');
+  return (songSection?.hits ?? [])
+    .map((hit) => hit?.result)
+    .filter((song): song is GeniusSongLike => Boolean(song));
+}
+
+/**
+ * Sanatçı araması.
+ *
+ * Önce sanatçıya özel arama denenir (küçük ve isabetli); o uç nokta
+ * yanıt vermezse genel aramadaki sanatçı bölümüne düşülür.
+ */
+async function searchArtists(name: string): Promise<GeniusArtistLike[]> {
   try {
-    const data = await deezerJson<{ data?: DeezerTrackLike[] }>(
-      `https://api.deezer.com/search?q=${encodeURIComponent(`${title} ${name}`)}&limit=6`
+    const data = await geniusJson<GeniusSearchResponse<GeniusArtistHit>>(
+      `https://genius.com/api/search/artist?per_page=${GENIUS_SUGGEST_LIMIT}&q=${encodeURIComponent(name)}`
     );
-    const items = Array.isArray(data?.data) ? data.data : [];
-    return matchingTrackArtistIds(items, name);
+    const sections = data?.response?.sections ?? [];
+    const hits = sections.flatMap((section) => section.hits ?? []);
+    if (hits.length > 0) {
+      return hits
+        .map((hit) => hit?.result)
+        .filter((artist): artist is GeniusArtistLike => Boolean(artist));
+    }
   } catch {
-    return [];
+    // Aşağıdaki genel aramaya düşülür.
   }
+
+  const data = await geniusJson<GeniusSearchResponse<GeniusArtistHit>>(
+    `https://genius.com/api/search/multi?per_page=${GENIUS_SUGGEST_LIMIT}&q=${encodeURIComponent(name)}`
+  );
+  const sections = data?.response?.sections ?? [];
+  const artistSection = sections.find((section) => section.type === 'artist');
+  return (artistSection?.hits ?? [])
+    .map((hit) => hit?.result)
+    .filter((artist): artist is GeniusArtistLike => Boolean(artist));
 }
 
-/** Bir sanatçının Deezer kaydındaki profil fotoğrafı. */
-async function fetchArtistPictureById(id: number): Promise<string | null> {
-  try {
-    const artist = await deezerJson<DeezerArtistLike>(`https://api.deezer.com/artist/${id}`);
-    const picture = artistPictureOf(artist);
-    return picture && !isPlaceholderPicture(picture) ? picture : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Deezer aramasının sonucu: görsel, "bulunamadı" ve "istek başarısız" ayrı. */
+/** Aramanın sonucu: görsel, "bulunamadı" ve "istek başarısız" ayrı. */
 interface ArtistLookup {
   url: string | null;
   /** İstek ağ/HTTP hatasıyla düştü mü? (Bu durumda önbelleğe yazılmaz.) */
   failed: boolean;
 }
 
+/** Parça ipucu için en fazla kaç arama yapılır. */
+const MAX_TRACK_SEARCHES = 2;
+
 /**
- * Deezer'dan sanatçı fotoğrafı bulur.
- *
- * NEDEN SIRALAMA GEREKİYOR: Deezer'da aynı adda çok sayıda sanatçı var
- * ("Motive" için dört ayrı kayıt, "UZI" için ondan fazla). İlk sonucu almak
- * neredeyse her zaman yanlış kişinin fotoğrafını getiriyordu.
+ * Genius'tan sanatçı fotoğrafı bulur.
  *
  * Sıra:
- *  1. **Parça araması** (`knownTitles`): çalan/çalınan parçanın adıyla
- *     "parça + sanatçı" aranır ve o parçayı yayınlayan kayıt seçilir. Bu en
- *     güçlü sinyaldir — aynı adlı sanatçılar arasındaki belirsizliği parça
- *     adı kesin olarak çözer. Genelde tek istekte biter.
- *  2. Ada tam eşleşen adaylar (yoksa kelime benzerliği ≥ 0.6 olanlar);
- *     beyaz yer tutucu fotoğraflar elenir.
- *  3. Parça araması sonuç vermezse adayların en popüler parçalarıyla başlık
- *     örtüşmesine bakılır.
- *  4. O da yoksa hayran sayısı (`nb_fan`) en yüksek aday seçilir.
- *
- * Kararların tamamı `artistImageMatch` içinde (saf, test edilebilir).
+ *  1. **Parça araması** (`knownTitles`): çalan parçanın adı + sanatçı adı
+ *     aranır ve o parçayı yayınlayan kaydın görseli alınır. En güçlü sinyal —
+ *     aynı adlı sanatçılar arasındaki belirsizliği parça adı kesin çözer.
+ *  2. **Sanatçı araması**: ada tam eşleşen kayıt (yer tutucu görseller elenir).
+ *  3. Sanatçı adıyla şarkı araması: sanatçının ana kaydında profil görseli
+ *     yoksa ama şarkılarından birinde varsa o kullanılır.
  */
-async function fetchFromDeezer(name: string, knownTitles: string[] = []): Promise<ArtistLookup> {
+async function fetchFromGenius(
+  name: string,
+  knownTitles: string[] = []
+): Promise<ArtistLookup> {
   const titles = [
     ...new Set(knownTitles.map((title) => (title || '').trim()).filter(Boolean)),
   ].slice(0, MAX_TRACK_SEARCHES);
 
-  // ── 1. Parça araması: en güçlü ve en ucuz yol ─────────────────────────
-  // Sanatçı aramasından ÖNCE denenir. Böylece çalan parça için tek istekle
-  // doğru kayda ulaşılır ve aynı adlı sanatçı karışıklığı hiç oluşmaz.
-  for (const title of titles) {
-    const ids = await fetchTrackArtistIds(title, name);
-    if (ids.length === 0) continue;
-    // Deezer alaka sırası: ilk eşleşme en doğru kayıt.
-    const picture = await fetchArtistPictureById(ids[0]);
-    if (picture) return { url: picture, failed: false };
-  }
-
-  // ── 2. Sanatçı araması ────────────────────────────────────────────────
-  let results: DeezerArtistLike[];
   try {
-    const data = await deezerJson<{ data?: DeezerArtistLike[] }>(
-      `https://api.deezer.com/search/artist?q=${encodeURIComponent(name)}&limit=10`
-    );
-    results = Array.isArray(data?.data) ? data.data : [];
+    // ── 1. Çalan parçayla arama ─────────────────────────────────────────
+    for (const title of titles) {
+      const songs = await searchSongs(`${title} ${name}`);
+      const image = pickArtistFromSongs(songs, name);
+      if (image) return { url: image, failed: false };
+    }
+
+    // ── 2. Sanatçı araması ──────────────────────────────────────────────
+    const artists = await searchArtists(name);
+    const [bestArtist] = rankGeniusArtists(artists, name);
+    const artistImage = geniusArtistImageOf(bestArtist);
+    if (artistImage) return { url: artistImage, failed: false };
+
+    // ── 3. Sanatçı adıyla şarkı araması ─────────────────────────────────
+    const songs = await searchSongs(name);
+    const image = pickArtistFromSongs(songs, name);
+    return { url: image ?? null, failed: false };
   } catch {
     // İstek düştü: "bu sanatçının fotoğrafı yok" DEĞİL. Önbelleğe yazılmaz.
     return { url: null, failed: true };
   }
-
-  const byPopularity = rankDeezerArtists(results, name);
-  // Zayıf eşleşmelerde yanlış sanatçının fotoğrafını göstermektense hiç
-  // göstermemek daha iyidir.
-  if (byPopularity.length === 0) return { url: null, failed: false };
-  if (byPopularity.length === 1) {
-    return { url: artistPictureOf(byPopularity[0]), failed: false };
-  }
-
-  // ── 3. En popüler parçaların başlık örtüşmesi ─────────────────────────
-  if (titles.length > 0) {
-    const candidates = byPopularity.slice(0, MAX_TITLE_CANDIDATES);
-    const tops = await Promise.all(
-      candidates.map((artist) =>
-        artist.id != null ? fetchTopTrackTitles(artist.id) : Promise.resolve([] as string[])
-      )
-    );
-
-    const chosen = candidates[pickByTitleOverlap(candidates, titles, tops)];
-    const picture = artistPictureOf(chosen);
-    if (picture && !isPlaceholderPicture(picture)) return { url: picture, failed: false };
-  }
-
-  // ── 4. Popülerlik ─────────────────────────────────────────────────────
-  return { url: artistPictureOf(byPopularity[0]), failed: false };
 }
 
 /**
  * Tek bir sanatçı için profil fotoğrafı URL'i (yoksa null).
  *
  * `knownTitles`: elde olan parça adları (çalan parça, kütüphane, geçmiş...).
- * Verilirse Deezer'da aynı adda kaç sanatçı olursa olsun doğru kayıt bulunur.
+ * Verilirse doğru kayıt parça adıyla kesinleştirilir.
  */
-export async function findArtistImage(name: string, knownTitles: string[] = []): Promise<string | null> {
+export async function findArtistImage(
+  name: string,
+  knownTitles: string[] = []
+): Promise<string | null> {
   const key = normalizeArtistKey(name);
   if (!key) return null;
 
@@ -305,19 +298,18 @@ export async function findArtistImage(name: string, knownTitles: string[] = []):
   const task = (async () => {
     let result: ArtistLookup;
     try {
-      result = await fetchFromDeezer(name, knownTitles);
+      result = await fetchFromGenius(name, knownTitles);
     } catch {
       result = { url: null, failed: true };
     }
 
-    // Başarısız istek önbelleğe YAZILMAZ. Aksi halde ağ bir kez aksadığında
-    // sanatçının fotoğrafı günlerce hiç görünmüyordu.
+    // Başarısız istek önbelleğe YAZILMAZ.
     if (!result.failed) {
       cache[key] = {
         url: result.url,
         fetchedAt: Date.now(),
         verified: hinted && Boolean(result.url),
-        source: 'deezer',
+        source: 'genius',
       };
       persist(cache);
     }
@@ -330,20 +322,17 @@ export async function findArtistImage(name: string, knownTitles: string[] = []):
 }
 
 /**
- * Bilinen bir kaynaktan (ör. Genius) gelen sanatçı görselini önbelleğe yazar.
+ * Bilinen bir kaynaktan (ör. söz çekilirken Genius yanıtından) gelen sanatçı
+ * görselini önbelleğe yazar.
  *
- * Lyrics servisi Genius'tan şarkı sözü çekerken o şarkının sanatçı görselini
- * de alır; bu, Deezer'da bulunamayan (veya yanlış bulunan) sanatçılar için
- * doğrudan doğru kaynaktır.
- *
- * Var olan kayıt **doğrulanmışsa** üzerine yazılmaz: Deezer'ın parça aramasıyla
- * doğrulanmış görseli daha günceldir. Aksi halde (yok / doğrulanmamış /
+ * Var olan kayıt **doğrulanmışsa** üzerine yazılmaz: parça aramasıyla
+ * doğrulanmış görsel daha günceldir. Aksi halde (yok / doğrulanmamış /
  * süresi geçmiş) yeni görsel yazılır.
  */
 export async function rememberArtistImage(
   name: string,
   url: string | null,
-  source: 'genius' | 'deezer' = 'genius'
+  source: 'genius' = 'genius'
 ): Promise<void> {
   const key = normalizeArtistKey(name);
   if (!key || !url) return;
@@ -352,7 +341,11 @@ export async function rememberArtistImage(
   const cached = cache[key];
   const now = Date.now();
   const keepExisting = Boolean(
-    cached && cached.url && cached.verified && cached.verifiedAt && now - cached.verifiedAt < FOUND_TTL_MS
+    cached &&
+      cached.url &&
+      cached.verified &&
+      cached.verifiedAt &&
+      now - cached.verifiedAt < FOUND_TTL_MS
   );
   if (keepExisting) return;
 
@@ -363,13 +356,12 @@ export async function rememberArtistImage(
 /**
  * Çalan parçadan sanatçı fotoğrafı çözer (player tarafından tetiklenir).
  *
- * Kullanıcı bir şarkı çaldığında o şarkının adı + sanatçı adı Deezer'da
+ * Kullanıcı bir şarkı çaldığında o şarkının adı + sanatçı adı Genius'ta
  * aranır; bulunan kayıt o sanatçı için önbelleğe yazılır. Böylece istatistik
- * ve Wrapped ekranları açıldığında fotoğraflar hazır olur — üstelik aynı adlı
- * sanatçılar arasındaki karışıklık parça adıyla kesin olarak çözülür.
+ * ve Wrapped ekranları açıldığında fotoğraflar hazır olur.
  *
  * `artistField` virgülle ayrılmış olabilir ("UZI, MODD"); her sanatçı ayrı
- * ayrı çözülür. Dönen sözlük initialize görselleri içerir.
+ * ayrı çözülür. Dönen sözlük normalize edilmiş sanatçı anahtarı → görsel.
  */
 export async function resolveArtistImagesForTrack(
   title: string,
@@ -381,19 +373,17 @@ export async function resolveArtistImagesForTrack(
   const cleanTitle = cleanTrackTitle(title);
   const titlesByArtist: Record<string, string[]> = {};
   for (const name of names) {
-    // Parça adı olmadan arama yapılmaz: zayıf sinyalle yanlış sanatçıyı
-    // önbelleğe yazmak, hiç yazmamaktan kötüdür.
     titlesByArtist[normalizeArtistKey(name)] = cleanTitle ? [cleanTitle] : [];
   }
   return loadArtistImages(names, titlesByArtist);
 }
 
 /**
- * Aynı anda yapılacak en fazla Deezer isteği.
+ * Aynı anda yapılacak en fazla sanatçı çözümlemesi.
  *
- * Deezer'ın ücretsiz kotası kısa sürede çok istek atıldığında 429 dönebiliyor.
  * İstatistikler 25 sanatçıya kadar listeleyebildiği için hepsini aynı anda
- * göndermek riskliydi.
+ * başlatmak yerine sınırlı sayıda çalıştırılır (ağ istekleri ayrıca
+ * `withRequestSlot` kuyruğundan geçer).
  */
 const MAX_CONCURRENT_FETCHES = 4;
 
@@ -401,11 +391,10 @@ const MAX_CONCURRENT_FETCHES = 4;
  * Birden çok sanatçı için görsel haritası üretir.
  *
  * Dönen sözlük normalize edilmiş sanatçı anahtarı → görsel URL'i biçimindedir;
- * yalnızca görsel bulunanlar yer alır. İstekler eşzamanlılık sınırıyla yapılır.
+ * yalnızca görsel bulunanlar yer alır.
  *
- * `titlesByArtist` verilirse, aynı ada sahip birden çok sanatçı arasında
- * doğru olanı seçmek için sanatçının bilinen parça adları kullanılır
- * (`findArtistImage` açıklamasına bakın).
+ * `titlesByArtist` verilirse, doğru kaydı seçmek için sanatçının bilinen parça
+ * adları kullanılır (`findArtistImage` açıklamasına bakın).
  */
 export async function loadArtistImages(
   names: string[],

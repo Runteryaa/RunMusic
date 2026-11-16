@@ -73,7 +73,7 @@ section('Sıralama ve filtreleme');
 
 const mixed = [
   makeResult('Take Your Time', 'Sam Hunt', 'url-a'),
-  makeResult('Kırmış Kalbini', 'Duman', 'url-b', 'deezer'),
+  makeResult('Kırmış Kalbini', 'Duman', 'url-b', 'genius'),
   makeResult('Senden Daha Güzel', 'Duman', 'url-c'),
 ];
 
@@ -91,7 +91,7 @@ check(
 
 const duplicates = [
   makeResult('Aynı', 'Sanatçı', 'dup'),
-  makeResult('Aynı', 'Sanatçı', 'dup', 'deezer'),
+  makeResult('Aynı', 'Sanatçı', 'dup', 'genius'),
 ];
 check('aynı kapak URL tekrarlanmaz', rankArtworkResults(duplicates, 'Sanatçı', 'Aynı').length === 1);
 
@@ -111,7 +111,7 @@ check(
 check('eşik pozitif', MIN_ARTWORK_SCORE > 0);
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('Canlı ağ testi (iTunes + Deezer)');
+section('Canlı ağ testi (iTunes + Genius)');
 
 async function liveCheck(title: string, artist: string): Promise<void> {
   try {
