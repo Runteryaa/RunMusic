@@ -19,6 +19,7 @@ import {
   normalizeLyricsOffsets,
   findLyricsInCache,
   reducePersistedState,
+  resolveDynamicColorPreference,
   resetLegacyUnplayableMarks,
   byteLength,
   MAX_SAFE_BYTES,
@@ -498,12 +499,37 @@ const incomingPrefsV7 = (v6State.preferences && typeof v6State.preferences === '
   : {};
 
 const isDynamicUnlockedV7 = Boolean(incomingPrefsV7.isDynamicColorUnlocked);
-const dynamicColorFromArtworkV7 = isDynamicUnlockedV7 ? Boolean(incomingPrefsV7.dynamicColorFromArtwork ?? true) : false;
+const dynamicColorFromArtworkV7 = resolveDynamicColorPreference(
+  incomingPrefsV7.dynamicColorFromArtwork,
+  isDynamicUnlockedV7
+);
 const hasDismissedBannerV7 = Boolean(incomingPrefsV7.hasDismissedDynamicColorBanner);
 
 check('eski kayıtlarda dinamik renk kilitli başlar (isDynamicColorUnlocked = false)', isDynamicUnlockedV7 === false);
 check('kilitli olduğunda dynamicColorFromArtwork false olur', dynamicColorFromArtworkV7 === false);
 check('tanıtım kartı kapalı değil olarak başlar (hasDismissedDynamicColorBanner = false)', hasDismissedBannerV7 === false);
+
+section('12b) "Kapaktan renk üret" tercihi migrasyonda korunur');
+check(
+  'kilit açık + toggle kapalı → kapalı kalır',
+  resolveDynamicColorPreference(false, true) === false
+);
+check(
+  'kilit açık + toggle açık → açık kalır',
+  resolveDynamicColorPreference(true, true) === true
+);
+check(
+  'kilit kapalı (dev mode) + toggle açık → açık kalır',
+  resolveDynamicColorPreference(true, false) === true
+);
+check(
+  'anahtar hiç yok + kilit açık → eski davranış: açık',
+  resolveDynamicColorPreference(undefined, true) === true
+);
+check(
+  'anahtar hiç yok + kilit kapalı → kapalı',
+  resolveDynamicColorPreference(undefined, false) === false
+);
 
 section('13) v7 -> v8 migrasyonu ve isDevModeActive güvencesi');
 

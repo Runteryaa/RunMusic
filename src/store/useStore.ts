@@ -26,6 +26,7 @@ import {
   normalizeLyricsOffsetValue,
   normalizeLyricsOffsets,
   resetLegacyUnplayableMarks,
+  resolveDynamicColorPreference,
   type LyricsCacheEntry,
 } from '../services/persistSanitize';
 
@@ -487,7 +488,9 @@ export const useStore = create<AppState>()(
             ...DEFAULT_PREFERENCES,
             unlockedThemes: state.preferences.unlockedThemes ?? DEFAULT_PREFERENCES.unlockedThemes,
             isDynamicColorUnlocked: state.preferences.isDynamicColorUnlocked ?? false,
-            dynamicColorFromArtwork: state.preferences.isDynamicColorUnlocked ?? false,
+            // Sıfırlama, toggle'ı varsayılana (kapalı) döndürür. Kilit açıklığı
+            // korunur ama dinamik renk kullanıcı tekrar açana kadar kapalıdır.
+            dynamicColorFromArtwork: DEFAULT_PREFERENCES.dynamicColorFromArtwork,
             isDevModeActive: state.preferences.isDevModeActive ?? false,
             audioEffects: normalizeAudioEffects(DEFAULT_AUDIO_EFFECTS),
           },
@@ -671,7 +674,10 @@ export const useStore = create<AppState>()(
             ...incomingPrefs,
             unlockedThemes: mergedUnlocked,
             isDynamicColorUnlocked: isDynamicUnlocked,
-            dynamicColorFromArtwork: isDynamicUnlocked ? Boolean(incomingPrefs.dynamicColorFromArtwork ?? true) : false,
+            dynamicColorFromArtwork: resolveDynamicColorPreference(
+              incomingPrefs.dynamicColorFromArtwork,
+              isDynamicUnlocked
+            ),
             hasDismissedDynamicColorBanner: Boolean(incomingPrefs.hasDismissedDynamicColorBanner),
             isDevModeActive: isDevMode,
             clearQueueOnTrackSelect: Boolean(incomingPrefs.clearQueueOnTrackSelect ?? false),

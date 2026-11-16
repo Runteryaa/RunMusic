@@ -230,6 +230,23 @@ function jsonBytes(value: unknown): number {
 }
 
 /**
+ * "Kapaktan renk üret" tercihini onarır.
+ *
+ * Kural: kullanıcının kaydettiği AÇIK/KAPALI değeri her zaman korunur. Yalnızca
+ * anahtar hiç yoksa (özellik ilk kez eklendiğinde) kilit durumundan türetilir.
+ * Önceden kilit durumuna göre değer zorla değiştiriliyordu; bu yüzden kilit
+ * açıkken kapatılan ayar (veya dev mode ile açılan ayar) her şema
+ * migrasyonunda sıfırlanıyordu.
+ */
+export function resolveDynamicColorPreference(
+  value: unknown,
+  isUnlocked: boolean
+): boolean {
+  if (typeof value === 'boolean') return value;
+  return Boolean(isUnlocked);
+}
+
+/**
  * Store'un kalıcı hale getirilmiş kısmını güvenli boyuta indirir.
  *
  * Sıra, en kolay yeniden üretilebilir veriden en değerliye doğrudur:

@@ -453,7 +453,7 @@ export default function WrappedScreen() {
         theme={theme}
         durationLabels={durationLabels}
         shareItems={normalizeWrappedPreferences(wrappedPrefs).shareItems}
-        palette={slidePalette(slides[pageIndex])}
+        artistImages={artistImages}
       />
     </View>
   );
@@ -984,6 +984,33 @@ async function loadCaptureModules(): Promise<CaptureModules | null> {
   return modules;
 }
 
+/**
+ * Paylaşım için hazır kart şablonları. Tek "her şey" kartı yerine Spotify'da
+ * olduğu gibi yatay kaydırılan birden fazla kart sunulur: genel özet, yalnızca
+ * sanatçılar, yalnızca parçalar ve dinleme alışkanlıkları. Kullanıcı hangi
+ * kartı paylaşacağını seçer.
+ */
+const SHARE_CARD_IDS = ['overview', 'artists', 'tracks', 'habits'] as const;
+
+type ShareCardId = (typeof SHARE_CARD_IDS)[number];
+
+const SHARE_CARD_TITLE_KEYS: Record<ShareCardId, string> = {
+  overview: 'wrapped.share_card_overview',
+  artists: 'wrapped.share_card_artists',
+  tracks: 'wrapped.share_card_tracks',
+  habits: 'wrapped.share_card_habits',
+};
+
+const SHARE_CARD_PALETTES: Record<ShareCardId, { a: string; b: string }> = {
+  overview: { a: '#a855f7', b: '#ec4899' },
+  artists: { a: '#fbbf24', b: '#f97316' },
+  tracks: { a: '#f472b6', b: '#a855f7' },
+  habits: { a: '#22d3ee', b: '#3b82f6' },
+};
+
+const SHARE_CARD_WIDTH = 300;
+const SHARE_CARD_GAP = 14;
+
 function SharePreviewModal({
   visible,
   onClose,
@@ -992,7 +1019,7 @@ function SharePreviewModal({
   theme,
   durationLabels,
   shareItems,
-  palette,
+  artistImages,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -1001,11 +1028,21 @@ function SharePreviewModal({
   theme: ThemeColors;
   durationLabels: { hour: string; minute: string; second: string };
   shareItems: WrappedShareItem[];
-  palette: { a: string; b: string };
+  artistImages: Record<string, string>;
 }) {
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
-  const cardRef = useRef<View>(null);
+  const cardRefs = useRef<Partial<Record<ShareCardId, View | null>>>({});
+  const [cardIndex, setCardIndex] = useState(0);
+  const pageWidth = SHARE_CARD_WIDTH + SHARE_CARD_GAP;
+
+  const handleCardScroll = useCallback(
+    (offsetX: number) => {
+      const next = Math.round(offsetX / pageWidth);
+      setCardIndex(Math.max(0, Math.min(SHARE_CARD_IDS.length - 1, next)));
+    },
+    [pageWidth]
+  );
   const mountedRef = useRef(true);
   const [busy, setBusy] = useState<'share' | 'download' | null>(null);
   const [status, setStatus] = useState<'saved' | 'error' | null>(null);
@@ -1023,24 +1060,30 @@ function SharePreviewModal({
     setStatus(null);
   }, [visible]);
 
-  const capture = useCallback(async () => {
+  const capture = useCallback(async (cardId: ShareCardId) => {
+    const node = cardRefs.current[cardId];
+    if (!node) return null;
     const modules = await loadCaptureModules();
-    if (!modules || !cardRef.current) return null;
-    const uri = await modules.captureRef(cardRef, {
-      format: 'png',
-      quality: 1,
-      result: 'tmpfile',
-    });
+    if (!modules) return null;
+    const uri = await modules.captureRef(
+      { current: node } as React.RefObject<View | null>,
+      {
+        format: 'png',
+        quality: 1,
+        result: 'tmpfile',
+      }
+    );
     const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
     return { modules, fileUri };
   }, []);
 
   const handleShare = useCallback(async () => {
     if (busy) return;
+    const cardId = SHARE_CARD_IDS[cardIndex] ?? SHARE_CARD_IDS[0];
     setBusy('share');
     setStatus(null);
     try {
-      const captured = await capture();
+      const captured = await capture(cardId);
       if (!captured || !captured.modules.shareAsync || !captured.modules.isAvailableAsync) {
         if (mountedRef.current) setStatus('error');
         return;
@@ -1059,14 +1102,15 @@ function SharePreviewModal({
     } finally {
       if (mountedRef.current) setBusy(null);
     }
-  }, [busy, capture, t]);
+  }, [busy, capture, cardIndex, t]);
 
   const handleDownload = useCallback(async () => {
     if (busy) return;
+    const cardId = SHARE_CARD_IDS[cardIndex] ?? SHARE_CARD_IDS[0];
     setBusy('download');
     setStatus(null);
     try {
-      const captured = await capture();
+      const captured = await capture(cardId);
       if (
         !captured ||
         !captured.modules.saveToLibraryAsync ||
@@ -1087,7 +1131,7 @@ function SharePreviewModal({
     } finally {
       if (mountedRef.current) setBusy(null);
     }
-  }, [busy, capture]);
+  }, [busy, capture, cardIndex]);
 
   const included = new Set(shareItems);
   const persona = resolveWrappedPersona(stats);
@@ -1142,6 +1186,52 @@ function SharePreviewModal({
     });
   }
 
+  const habitLines: { label: string; value: string }[] = [
+    {
+      label: t('wrapped.total_time'),
+      value: formatWrappedDuration(stats.totalSeconds, durationLabels),
+    },
+    {
+      label: t('wrapped.streak_active'),
+      value: t('wrapped.streak_days', { count: stats.activeDays }),
+    },
+    {
+      label: t('wrapped.streak_longest'),
+      value: t('wrapped.streak_days', { count: stats.longestStreak }),
+    },
+  ];
+  if (stats.busiestHour !== null) {
+    habitLines.push({
+      label: t('wrapped.time_busiest_hour'),
+      value: t('wrapped.time_hour_format', { hour: stats.busiestHour }),
+    });
+  }
+  habitLines.push({
+    label: t('wrapped.streak_discovery'),
+    value: String(stats.onePlayArtists),
+  });
+
+  const renderCardShell = (cardId: ShareCardId, children: React.ReactNode) => {
+    const palette = SHARE_CARD_PALETTES[cardId];
+    return (
+      <View
+        ref={(node) => {
+          cardRefs.current[cardId] = node;
+        }}
+        collapsable={false}
+        style={[styles.shareCard, { borderColor: `${palette.a}66` }]}>
+        <View style={[styles.shareCardGlow, { backgroundColor: palette.a }]} />
+        <View style={[styles.shareCardGlowBottom, { backgroundColor: palette.b }]} />
+        <Text style={[styles.shareKicker, { color: palette.a }]}>
+          {t('wrapped.share_card_kicker')}
+        </Text>
+        <Text style={styles.sharePeriod}>{periodLabel}</Text>
+        {children}
+        <Text style={styles.shareBrand}>RunMusic</Text>
+      </View>
+    );
+  };
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.shareOverlay}>
@@ -1153,39 +1243,164 @@ function SharePreviewModal({
             </TouchableOpacity>
           </View>
 
-          <ScrollView contentContainerStyle={styles.shareCardArea} showsVerticalScrollIndicator={false}>
-            <View
-              ref={cardRef}
-              collapsable={false}
-              style={[styles.shareCard, { borderColor: `${palette.a}66` }]}>
-              <View style={[styles.shareCardGlow, { backgroundColor: palette.a }]} />
-              <View
-                style={[styles.shareCardGlowBottom, { backgroundColor: palette.b }]}
-              />
-              <Text style={[styles.shareKicker, { color: palette.a }]}>
-                {t('wrapped.share_card_kicker')}
-              </Text>
-              <Text style={styles.sharePeriod}>{periodLabel}</Text>
-              <Text style={styles.sharePlays}>{heroValue}</Text>
-              <Text style={styles.sharePlaysLabel}>{heroLabel}</Text>
+          <Text style={styles.shareCardHint}>{t('wrapped.share_card_hint')}</Text>
 
-              {shareLines.length > 0 ? (
-                <>
-                  <View style={styles.shareDivider} />
-                  {shareLines.map((line) => (
-                    <View key={line.label} style={styles.shareLine}>
-                      <Text style={styles.shareLineLabel}>{line.label}</Text>
-                      <Text style={styles.shareLineValue} numberOfLines={1}>
-                        {line.value}
-                      </Text>
+          <View style={styles.shareCardNameRow}>
+            <Text style={[styles.shareCardName, { color: SHARE_CARD_PALETTES[SHARE_CARD_IDS[cardIndex]].a }]}>
+              {t(SHARE_CARD_TITLE_KEYS[SHARE_CARD_IDS[cardIndex]])}
+            </Text>
+            <Text style={styles.shareCardCounter}>
+              {cardIndex + 1}/{SHARE_CARD_IDS.length}
+            </Text>
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            snapToInterval={pageWidth}
+            decelerationRate="fast"
+            disableIntervalMomentum
+            removeClippedSubviews={false}
+            contentContainerStyle={styles.shareCardTrack}
+            onScroll={(event) => handleCardScroll(event.nativeEvent.contentOffset.x)}
+            scrollEventThrottle={32}>
+            {renderCardShell(
+              'overview',
+              <>
+                <Text style={styles.sharePlays}>{heroValue}</Text>
+                <Text style={styles.sharePlaysLabel}>{heroLabel}</Text>
+
+                {shareLines.length > 0 ? (
+                  <>
+                    <View style={styles.shareDivider} />
+                    {shareLines.map((line) => (
+                      <View key={line.label} style={styles.shareLine}>
+                        <Text style={styles.shareLineLabel}>{line.label}</Text>
+                        <Text style={styles.shareLineValue} numberOfLines={1}>
+                          {line.value}
+                        </Text>
+                      </View>
+                    ))}
+                  </>
+                ) : null}
+              </>
+            )}
+
+            {renderCardShell(
+              'artists',
+              <>
+                <Text style={styles.shareCardHeading}>{t('wrapped.artists_title')}</Text>
+                {stats.topArtists.length > 0 ? (
+                  stats.topArtists.slice(0, 5).map((artist, index) => {
+                    const image = artistImages[normalizeArtistKey(artist.label)];
+                    const initial = (artist.label || '?').trim().charAt(0).toUpperCase();
+                    return (
+                      <View key={artist.key} style={styles.shareRankRow}>
+                        <Text style={styles.shareRankIndex}>{index + 1}</Text>
+                        {image ? (
+                          <Image
+                            source={{ uri: image }}
+                            style={[styles.shareRankArtwork, styles.shareRankArtworkRound]}
+                            contentFit="cover"
+                          />
+                        ) : (
+                          <View
+                            style={[
+                              styles.shareRankArtwork,
+                              styles.shareRankArtworkRound,
+                              styles.shareRankFallback,
+                            ]}>
+                            <Text style={styles.shareRankFallbackText}>{initial}</Text>
+                          </View>
+                        )}
+                        <View style={styles.shareRankText}>
+                          <Text style={styles.shareRankTitle} numberOfLines={1}>
+                            {artist.label || '—'}
+                          </Text>
+                          <Text style={styles.shareRankMeta}>
+                            {t('wrapped.plays', { count: artist.plays })}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })
+                ) : (
+                  <Text style={styles.shareCardEmpty}>{t('wrapped.empty_hint')}</Text>
+                )}
+              </>
+            )}
+
+            {renderCardShell(
+              'tracks',
+              <>
+                <Text style={styles.shareCardHeading}>{t('wrapped.tracks_title')}</Text>
+                {stats.topTracks.length > 0 ? (
+                  stats.topTracks.slice(0, 5).map((track, index) => (
+                    <View key={track.key} style={styles.shareRankRow}>
+                      <Text style={styles.shareRankIndex}>{index + 1}</Text>
+                      {track.artwork ? (
+                        <Image
+                          source={{ uri: track.artwork }}
+                          style={styles.shareRankArtwork}
+                          contentFit="cover"
+                        />
+                      ) : (
+                        <View style={[styles.shareRankArtwork, styles.shareRankFallback]}>
+                          <Ionicons name="musical-note" size={16} color="#d4d4d8" />
+                        </View>
+                      )}
+                      <View style={styles.shareRankText}>
+                        <Text style={styles.shareRankTitle} numberOfLines={1}>
+                          {track.label || '—'}
+                        </Text>
+                        <Text style={styles.shareRankMeta} numberOfLines={1}>
+                          {track.subtitle
+                            ? `${track.subtitle} · ${t('wrapped.plays', { count: track.plays })}`
+                            : t('wrapped.plays', { count: track.plays })}
+                        </Text>
+                      </View>
                     </View>
-                  ))}
-                </>
-              ) : null}
+                  ))
+                ) : (
+                  <Text style={styles.shareCardEmpty}>{t('wrapped.empty_hint')}</Text>
+                )}
+              </>
+            )}
 
-              <Text style={styles.shareBrand}>RunMusic</Text>
-            </View>
+            {renderCardShell(
+              'habits',
+              <>
+                <Text style={styles.shareCardHeading}>{t(PERSONA_TITLE_KEYS[persona])}</Text>
+                <Text style={styles.shareCardSubheading}>
+                  {t(PERSONA_DESC_KEYS[persona])}
+                </Text>
+                <View style={styles.shareDivider} />
+                {habitLines.map((line) => (
+                  <View key={line.label} style={styles.shareLine}>
+                    <Text style={styles.shareLineLabel}>{line.label}</Text>
+                    <Text style={styles.shareLineValue} numberOfLines={1}>
+                      {line.value}
+                    </Text>
+                  </View>
+                ))}
+              </>
+            )}
           </ScrollView>
+
+          <View style={styles.shareDots}>
+            {SHARE_CARD_IDS.map((cardId, index) => (
+              <View
+                key={cardId}
+                style={[
+                  styles.shareDot,
+                  index === cardIndex && {
+                    backgroundColor: SHARE_CARD_PALETTES[cardId].a,
+                    width: 18,
+                  },
+                ]}
+              />
+            ))}
+          </View>
 
           {status === 'saved' ? (
             <Text style={styles.shareStatus}>{t('player.share_downloaded')}</Text>
@@ -1725,18 +1940,114 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 14,
   },
-  shareCardArea: {
+  shareCardHint: {
+    fontSize: 11,
+    color: '#71717a',
+    marginTop: 2,
+  },
+  shareCardNameRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 10,
+  },
+  shareCardName: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  shareCardCounter: {
+    fontSize: 11,
+    color: '#71717a',
+  },
+  shareCardTrack: {
+    alignItems: 'flex-start',
     paddingVertical: 10,
+    paddingRight: SHARE_CARD_GAP,
   },
   shareCard: {
-    width: 300,
+    width: SHARE_CARD_WIDTH,
+    minHeight: 420,
     borderRadius: 22,
     borderWidth: 1,
     backgroundColor: '#101013',
     padding: 20,
     gap: 4,
     overflow: 'hidden',
+    marginRight: SHARE_CARD_GAP,
+  },
+  shareCardHeading: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginTop: 6,
+    marginBottom: 10,
+  },
+  shareCardSubheading: {
+    fontSize: 12,
+    color: '#a1a1aa',
+    lineHeight: 17,
+    marginBottom: 2,
+  },
+  shareCardEmpty: {
+    fontSize: 12,
+    color: '#71717a',
+    marginTop: 12,
+  },
+  shareRankRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 6,
+  },
+  shareRankIndex: {
+    width: 14,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#71717a',
+  },
+  shareRankArtwork: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#27272a',
+  },
+  shareRankArtworkRound: {
+    borderRadius: 17,
+  },
+  shareRankFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shareRankFallbackText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#d4d4d8',
+  },
+  shareRankText: {
+    flex: 1,
+    gap: 1,
+  },
+  shareRankTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  shareRankMeta: {
+    fontSize: 10,
+    color: '#a1a1aa',
+  },
+  shareDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 5,
+    paddingTop: 4,
+  },
+  shareDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#3f3f46',
   },
   shareCardGlow: {
     position: 'absolute',
