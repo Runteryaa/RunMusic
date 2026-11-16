@@ -477,6 +477,7 @@ export const translations = {
       weekday_short_sun: 'Paz',
     },
     artist: {
+      title: 'Sanatçı',
       play: 'Çal',
       shuffle: 'Karıştır',
       songs: 'Şarkılar',
@@ -1194,6 +1195,7 @@ export const translations = {
       weekday_short_sun: 'Sun',
     },
     artist: {
+      title: 'Artist',
       play: 'Play',
       shuffle: 'Shuffle',
       songs: 'Songs',

@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getHistoryInRange } from '../services/statsDatabase';
 import { cleanTrackFields } from '../services/displayNames';
 import { loadArtistImages, normalizeArtistKey } from '../services/artistImages';
+import { buildArtistTitleHints } from '../services/artistProfile';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useTranslation } from '../services/i18n';
@@ -190,8 +191,13 @@ export default function WrappedScreen() {
         scrollRef.current?.scrollTo({ x: 0, animated: false });
 
         // Sanatçı fotoğrafları arka planda yüklenir; hazır olunca satırlar
-        // harf rozetinden gerçek fotoğrafa geçer.
-        void loadArtistImages(nextStats.topArtists.map((artist) => artist.label))
+        // harf rozetinden gerçek fotoğrafa geçer. Dinlenen parça adları ipucu
+        // olarak verilir: Deezer'da aynı adda birden çok sanatçı olduğu için
+        // doğru kaydı bunlar belirler.
+        void loadArtistImages(
+          nextStats.topArtists.map((artist) => artist.label),
+          buildArtistTitleHints(rows)
+        )
           .then((images) => setArtistImages(images))
           .catch(() => {});
       } catch {

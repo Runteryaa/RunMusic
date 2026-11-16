@@ -72,12 +72,83 @@ export function buildArtistIndex(tracks: LibraryArtistInput[]): Map<string, Arti
   return index;
 }
 
+/** Sanatçının en çok dinlenen parçalarından fotoğraf doğrulama ipuçları. */
+export const MAX_TITLE_HINTS_PER_ARTIST = 4;
+
+/**
+ * Dinleme geçmişinden **sanatçı → parça adları** haritası üretir.
+ *
+ * Bu harita sanatçı fotoğrafı aramasında kullanılır: Deezer'da aynı adda
+ * birden çok sanatçı olduğu için, gerçekten dinlenen parçaların adları
+ * (ör. "Cennet", "YIN YANG") doğru kaydı kesin olarak belirler.
+ *
+ * Tek geçişte üretilir; parça adları dinlenme sayısına göre sıralanır.
+ * Dönüş: normalize sanatçı anahtarı → en çok dinlenen birkaç parça adı.
+ */
+export function buildArtistTitleHints(
+  rows: WrappedPlayRow[],
+  options?: { perArtist?: number }
+): Record<string, string[]> {
+  const perArtist = Math.max(1, options?.perArtist ?? MAX_TITLE_HINTS_PER_ARTIST);
+  // Anahtar → (başlık → sayı, ilk görülme sırası).
+  const titleCounts = new Map<string, Map<string, number>>();
+
+  for (const row of rows) {
+    const title = (row.title ?? '').trim();
+    if (!title) continue;
+    const names = artistNamesFromRow(row.artist);
+    const seen = new Set<string>();
+    for (const name of names) {
+      const key = normalizeArtistKey(name);
+      // Boş sanatçı ve aynı satırdaki tekrarlar atlanır.
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      let counts = titleCounts.get(key);
+      if (!counts) {
+        counts = new Map();
+        titleCounts.set(key, counts);
+      }
+      counts.set(title, (counts.get(title) ?? 0) + 1);
+    }
+  }
+
+  const hints: Record<string, string[]> = {};
+  for (const [key, counts] of titleCounts) {
+    hints[key] = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, perArtist)
+      .map(([title]) => title);
+  }
+  return hints;
+}
+
 /** Belirli bir sanatçının kütüphanedeki parçaları (yoksa boş dizi). */
 export function getArtistTracks(
   index: Map<string, ArtistLibraryEntry>,
   artistKey: string
 ): ArtistTrack[] {
   return index.get(normalizeArtistKey(artistKey))?.tracks ?? [];
+}
+
+/**
+ * Bir sanatçı için SQL ön süzmesinde kullanılacak ad yazımları.
+ *
+ * Sanatçı alanında farklı yazımlar olabiliyor ("UZI", "uzi", "UZI, MODD").
+ * Kütüphanedeki tüm parçalardan bu anahtara düşen yazımlar toplanır; böylece
+ * `LIKE` sorgusu hiçbir satırı kaçırmaz.
+ */
+export function collectArtistNameVariants(tracks: ArtistTrack[], artistKey: string): string[] {
+  const key = normalizeArtistKey(artistKey);
+  const variants = new Set<string>();
+  if (!key) return [];
+
+  for (const track of tracks) {
+    for (const name of artistNamesFromRow(track.artist)) {
+      if (normalizeArtistKey(name) === key && name.trim()) variants.add(name.trim());
+    }
+  }
+
+  return [...variants];
 }
 
 /**
@@ -126,35 +197,53 @@ export interface ArtistProfile {
 /**
  * Sanatçıya özel istatistik paketi.
  *
+ * `rows` **zaten o sanatçıya süzülmüş** satırlardır (`getHistoryInRangeForArtists`
+ * gibi SQL ön süzmesinden gelir). Tek geçişte hem istatistikler hem parça
+ * dinleme sayıları üretilir; eskiden aynı satırlar iki kez filtreleniyordu ve
+ * tüm geçmiş tarandığında bu saniyeler alıyordu.
+ *
  * `limit` Wrapped'teki varsayılan (5) yerine daha uzun liste üretmek için
  * kullanılır; sanatçı sayfasında "en çok dinlediğin" bölümünü besler.
  */
-export function buildArtistProfile(
+export function buildArtistProfileFromRows(
   rows: WrappedPlayRow[],
   artistKey: string,
   options?: { limit?: number }
 ): ArtistProfile {
   const key = normalizeArtistKey(artistKey);
-  const scoped = filterRowsForArtist(rows, key);
-  const stats = buildWrappedStats(scoped, { limit: options?.limit ?? 5 });
 
+  const playCounts = new Map<string, number>();
   let displayName = '';
-  for (const row of scoped) {
-    for (const name of artistNamesFromRow(row.artist)) {
-      if (normalizeArtistKey(name) === key && name.trim()) {
-        displayName = name.trim();
-        break;
+
+  for (const row of rows) {
+    const id = (row.track_id ?? '').trim();
+    if (id) playCounts.set(id, (playCounts.get(id) ?? 0) + 1);
+
+    if (!displayName) {
+      for (const name of artistNamesFromRow(row.artist)) {
+        if (normalizeArtistKey(name) === key && name.trim()) {
+          displayName = name.trim();
+          break;
+        }
       }
     }
-    if (displayName) break;
   }
 
   return {
     key,
     displayName,
-    stats,
-    playCounts: buildArtistTrackPlayCounts(rows, key),
+    stats: buildWrappedStats(rows, { limit: options?.limit ?? 5 }),
+    playCounts,
   };
+}
+
+/** Tüm geçmiş elde olduğunda kullanılan sarmalayıcı (sanatçıya süzer). */
+export function buildArtistProfile(
+  rows: WrappedPlayRow[],
+  artistKey: string,
+  options?: { limit?: number }
+): ArtistProfile {
+  return buildArtistProfileFromRows(filterRowsForArtist(rows, artistKey), artistKey, options);
 }
 
 /**

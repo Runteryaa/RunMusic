@@ -21,7 +21,10 @@ import {
 import {
   buildArtistIndex,
   buildArtistProfile,
+  buildArtistProfileFromRows,
+  buildArtistTitleHints,
   buildArtistTrackPlayCounts,
+  collectArtistNameVariants,
   filterRowsForArtist,
   getArtistTracks,
   getArtistTotalPlays,
@@ -147,6 +150,49 @@ const top = topArtistTracks(getArtistTracks(index, 'uzi'), counts, 5);
 check('top parçalar yalnızca dinlenenleri içerir', top.length === 2, String(top.length));
 check('top parçalar sıralı', top[0].track.id === 'a1');
 check('sıfır limiti en az bir sonuç', topArtistTracks(getArtistTracks(index, 'uzi'), counts, 0).length === 1);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('Ad yazımları (SQL ön süzmesi)');
+
+const variants = collectArtistNameVariants(getArtistTracks(index, 'uzi'), 'uzi');
+check('farklı yazımlar toplanır, düet adı ayrılır', variants.includes('UZI'), variants.join(' | '));
+check('anahtara düşmeyen isim eklenmez', !variants.includes('MODD'), variants.join(' | '));
+check('boş anahtar boş liste', collectArtistNameVariants(getArtistTracks(index, 'uzi'), '').length === 0);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('Ön süzülmüş satırlardan profil');
+
+const prefiltered = filterRowsForArtist(rows, 'uzi');
+const fromRows = buildArtistProfileFromRows(prefiltered, 'uzi', { limit: 10 });
+check('satırlardan profil toplam dinleme', fromRows.stats.totalPlays === 3, String(fromRows.stats.totalPlays));
+check('satırlardan profil toplam süre', fromRows.stats.totalSeconds === 550, String(fromRows.stats.totalSeconds));
+check('satırlardan görünen isim', fromRows.displayName === 'UZI', fromRows.displayName);
+check('satırlardan parça sayıları', fromRows.playCounts.get('a1') === 2 && fromRows.playCounts.get('a2') === 1);
+check(
+  'tam profil ile aynı sonuç',
+  fromRows.stats.totalPlays === uziProfile.stats.totalPlays &&
+    fromRows.stats.totalSeconds === uziProfile.stats.totalSeconds &&
+    fromRows.stats.uniqueTracks === uziProfile.stats.uniqueTracks
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('Fotoğraf ipuçları');
+
+const hintRows: WrappedPlayRow[] = [
+  ...rows,
+  { track_id: 'a2', played_at: '2026-01-06 15:00:00', duration_listened: 150, title: 'Solo UZI', artist: 'UZI' },
+  { track_id: 'a1', played_at: '2026-01-07 16:00:00', duration_listened: 200, title: 'Düet', artist: 'uzi, MODD' },
+];
+
+const hints = buildArtistTitleHints(hintRows);
+check('düet sanatçısı da ipucu alır', hints['modd']?.includes('Düet') ?? false);
+check('en çok dinlenen parça başta', hints['uzi']?.[0] === 'Düet', JSON.stringify(hints['uzi']));
+check('parça sayısı sınırlanır', buildArtistTitleHints(hintRows, { perArtist: 1 })['uzi']?.length === 1);
+check('boş başlık ipucuna girmez', (buildArtistTitleHints([
+  { track_id: 'x', played_at: '2026-01-01 00:00:00', duration_listened: 10, title: '  ', artist: 'UZI' },
+])['uzi'] ?? []).length === 0);
+check('boş sanatçı anahtarı üretilmez', !('' in buildArtistTitleHints(hintRows)));
+check('boş geçmiş boş harita', Object.keys(buildArtistTitleHints([])).length === 0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('Boş veri');

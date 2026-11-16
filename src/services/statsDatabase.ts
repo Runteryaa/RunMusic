@@ -261,6 +261,15 @@ export async function addListeningTime(seconds: number) {
 }
 
 /**
+ * `play_history` sorgularında seçilen sütunlar.
+ *
+ * `SELECT *` kullanıldığında tüm geçmiş (on binlerce satır) köprüden geçiyordu
+ * ve bu, istatistik ekranlarını saniyelerce kilitliyordu.
+ */
+const HISTORY_COLUMNS =
+  'track_id, played_at, duration_listened, title, artist, album, artwork';
+
+/**
  * Belirli bir zaman aralığındaki dinlemeleri döner (Wrapped için).
  *
  * `startSql` / `endSql`: `YYYY-MM-DD HH:MM:SS` (UTC) — `played_at` ile aynı
@@ -274,13 +283,67 @@ export async function getHistoryInRange(
   try {
     return await withStatsDB((database) =>
       database.getAllAsync<PlayHistoryItem>(
-        'SELECT * FROM play_history WHERE played_at >= ? AND played_at < ? ORDER BY played_at ASC',
+        `SELECT ${HISTORY_COLUMNS} FROM play_history WHERE played_at >= ? AND played_at < ? ORDER BY played_at ASC`,
         startSql,
         endSql
       )
     );
   } catch (error) {
     console.warn('Failed to get history range:', error);
+    return [];
+  }
+}
+
+/** LIKE deseninde özel karakterleri kaçırır (`%`, `_`, `\`). */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+/**
+ * Belirli bir dönemde **yalnızca verilen sanatçı adlarını** içeren dinlemeler.
+ *
+ * Sanatçı sayfası için kritik: tüm geçmişi çekip JS'te süzmek yerine SQL'de
+ * ön süzme yapılır. Dönen satırlar yine JS'te tam eşleşmeyle doğrulanır
+ * (`artistMatch`), çünkü `LIKE` alt dize eşleşmesidir.
+ *
+ * `names` en fazla `MAX_ARTIST_FILTER_NAMES` adet kullanılır; bu, sanatçı
+ * alanında çok sayıda isim olan derleme etiketlerine karşı üst sınırdır.
+ */
+const MAX_ARTIST_FILTER_NAMES = 8;
+
+export async function getHistoryInRangeForArtists(
+  startSql: string,
+  endSql: string,
+  names: string[]
+): Promise<PlayHistoryItem[]> {
+  const patterns = [
+    ...new Set(
+      names
+        .map((name) => (name || '').trim())
+        // Tek harfli sanatçı adları da geçerli; yalnızca boş ad atlanır.
+        .filter((name) => name.length > 0)
+        .map((name) => `%${escapeLikePattern(name)}%`)
+    ),
+  ].slice(0, MAX_ARTIST_FILTER_NAMES);
+
+  // Ad yoksa hiçbir satır dönmez (tüm geçmişi çekmek yerine boş sonuç).
+  if (patterns.length === 0) return [];
+
+  const where = patterns.map(() => "artist LIKE ? ESCAPE '\\'").join(' OR ');
+
+  try {
+    return await withStatsDB((database) =>
+      database.getAllAsync<PlayHistoryItem>(
+        `SELECT ${HISTORY_COLUMNS} FROM play_history
+          WHERE played_at >= ? AND played_at < ? AND (${where})
+          ORDER BY played_at ASC`,
+        startSql,
+        endSql,
+        ...patterns
+      )
+    );
+  } catch (error) {
+    console.warn('Failed to get artist history range:', error);
     return [];
   }
 }
