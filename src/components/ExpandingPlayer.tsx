@@ -18,6 +18,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { useIsAppBackgrounded, useIsAppLongBackgrounded } from '../hooks/useIsAppActive';
 import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 import { useResilientActiveTrack } from '../hooks/useResilientActiveTrack';
+import { resolveArtistImagesForTrack } from '../services/artistImages';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MINI_HEIGHT = 62;
@@ -71,6 +72,24 @@ export function ExpandingPlayer() {
       usePlayerUIStore.getState().setLyricsMode(true);
     }
   }, [isFullscreenPlayerOpen]);
+
+  /*
+   * Çalan parçadan sanatçı fotoğrafı çözümleme.
+   *
+   * Deezer'da aynı adda çok sayıda sanatçı var ("Motive" için dört, "UZI" için
+   * ondan fazla kayıt). Parça adı + sanatçı adı birlikte arandığında doğru
+   * kayıt kesin olarak bulunur. Bu yüzden fotoğraf tam da şarkı çalarken
+   * çözülür ve önbelleğe yazılır: istatistik/Wrapped açıldığında hazır olur.
+   *
+   * Uzak cihaz oynatılırken atlanır: oradaki sanatçı yerel kütüphanede yok.
+   */
+  useEffect(() => {
+    if (isRemote) return;
+    const title = localActiveTrack?.title;
+    const artist = localActiveTrack?.artist;
+    if (!title || !artist) return;
+    void resolveArtistImagesForTrack(title, artist).catch(() => {});
+  }, [isRemote, localActiveTrack?.id, localActiveTrack?.title, localActiveTrack?.artist]);
 
   useEffect(() => {
     const toValue = isFullscreenPlayerOpen ? 1 : 0;

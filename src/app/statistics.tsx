@@ -27,6 +27,7 @@ import {
   resolveWrappedPersona,
   resolveWrappedWindow,
   type WrappedPeriod,
+  type WrappedPlayRow,
   type WrappedRankedItem,
   type WrappedStats,
 } from '../services/wrappedStats';
@@ -58,7 +59,7 @@ const EMPTY_DETAIL: WrappedStats = buildWrappedStats([]);
 const DETAIL_CACHE_TTL_MS = 60_000;
 const DETAIL_CACHE = new Map<
   WrappedPeriod,
-  { at: number; stats: WrappedStats }
+  { at: number; stats: WrappedStats; rows: WrappedPlayRow[] }
 >();
 
 const PERSONA_TITLE_KEYS: Record<string, string> = {
@@ -149,6 +150,30 @@ export default function StatisticsScreen() {
   }, []);
 
   /**
+   * Sanatçı fotoğraflarını yükler.
+   *
+   * Harf rozeti hemen gösterilir, fotoğraf geldikçe yerini alır. Gerçekten
+   * dinlenen parça adları ipucu olarak verilir: Deezer'da aynı adda birden çok
+   * sanatçı olduğu için doğru kaydı bunlar belirler.
+   *
+   * Sonuçlar **birleştirilir**: dönem değiştirildiğinde önceki fotoğraflar
+   * kaybolmaz, yalnızca yeni gelenler eklenir.
+   */
+  const loadPhotosFor = useCallback(
+    (stats: WrappedStats, rows: WrappedPlayRow[] | null) => {
+      const names = stats.topArtists.map((artist) => artist.label);
+      if (names.length === 0) return;
+      void loadArtistImages(names, rows ? buildArtistTitleHints(rows) : undefined)
+        .then((images) => {
+          if (Object.keys(images).length === 0) return;
+          setArtistImages((previous) => ({ ...previous, ...images }));
+        })
+        .catch(() => {});
+    },
+    []
+  );
+
+  /**
    * Ayrıntılı istatistikler: seçilen dönemin tüm geçmişi çekilip Wrapped'in
    * saf istatistik modülüyle hesaplanır. Böylece buradaki sayılar Wrapped'teki
    * sayılarla birebir aynı olur; fark yalnızca liste uzunluğudur (burada 25).
@@ -156,44 +181,40 @@ export default function StatisticsScreen() {
    * Sonuç kısa süreliğine önbelleğe alınır: sekmeler arasında gezinirken tüm
    * geçmişin yeniden çekilip temizlenmesi ekranı kilitliyordu.
    */
-  const loadDetail = useCallback(async (period: WrappedPeriod) => {
-    const cached = DETAIL_CACHE.get(period);
-    if (cached && Date.now() - cached.at < DETAIL_CACHE_TTL_MS) {
-      setDetail(cached.stats);
-      setDetailLoading(false);
-      return;
-    }
+  const loadDetail = useCallback(
+    async (period: WrappedPeriod) => {
+      const cached = DETAIL_CACHE.get(period);
+      if (cached && Date.now() - cached.at < DETAIL_CACHE_TTL_MS) {
+        setDetail(cached.stats);
+        setDetailLoading(false);
+        // Önbellekteki istatistik de olsa fotoğraflar yüklenmeli: aksi halde
+        // geri dönüldüğünde liste rozetlerle kalıyordu.
+        loadPhotosFor(cached.stats, cached.rows);
+        return;
+      }
 
-    setDetailLoading(true);
-    try {
-      const range = resolveWrappedWindow(period, Date.now());
-      const rows = await getHistoryInRange(range.startSql, range.endSql);
-      // Geçmişteki ham isimler de uygulamanın genel isim politikasına uysun.
-      const cleaned = rows.map((row) => {
-        const fields = cleanTrackFields(row.title, row.artist);
-        return { ...row, title: fields.title || row.title, artist: fields.artist };
-      });
-      const nextStats = buildWrappedStats(cleaned, { limit: DETAIL_LIMIT });
-      DETAIL_CACHE.set(period, { at: Date.now(), stats: nextStats });
-      setDetail(nextStats);
-
-      // Profil fotoğrafları liste göründükten sonra ayrıca yüklenir; harf
-      // rozeti hemen gösterilir, fotoğraf geldikçe yerini alır. Gerçekten
-      // dinlenen parça adları ipucu olarak verilir: Deezer'da aynı adda
-      // birden çok sanatçı olduğu için doğru kaydı bunlar belirler.
-      void loadArtistImages(
-        nextStats.topArtists.map((artist) => artist.label),
-        buildArtistTitleHints(cleaned)
-      )
-        .then((images) => setArtistImages(images))
-        .catch(() => {});
-    } catch (e) {
-      console.warn('Detailed stats fetch error:', e);
-      setDetail(EMPTY_DETAIL);
-    } finally {
-      setDetailLoading(false);
-    }
-  }, []);
+      setDetailLoading(true);
+      try {
+        const range = resolveWrappedWindow(period, Date.now());
+        const rows = await getHistoryInRange(range.startSql, range.endSql);
+        // Geçmişteki ham isimler de uygulamanın genel isim politikasına uysun.
+        const cleaned = rows.map((row) => {
+          const fields = cleanTrackFields(row.title, row.artist);
+          return { ...row, title: fields.title || row.title, artist: fields.artist };
+        });
+        const nextStats = buildWrappedStats(cleaned, { limit: DETAIL_LIMIT });
+        DETAIL_CACHE.set(period, { at: Date.now(), stats: nextStats, rows: cleaned });
+        setDetail(nextStats);
+        loadPhotosFor(nextStats, cleaned);
+      } catch (e) {
+        console.warn('Detailed stats fetch error:', e);
+        setDetail(EMPTY_DETAIL);
+      } finally {
+        setDetailLoading(false);
+      }
+    },
+    [loadPhotosFor]
+  );
 
   useEffect(() => {
     // Dönem değişince önceki dönemin fotoğrafları görünmesin.

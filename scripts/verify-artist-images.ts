@@ -19,7 +19,6 @@
 import {
   MAX_TITLE_CANDIDATES,
   artistPictureOf,
-  bestVotedId,
   isPlaceholderPicture,
   matchingTrackArtistIds,
   pickByTitleOverlap,
@@ -184,18 +183,16 @@ check('doğru kimlik çıkar', matchedIds[0] === 98336572, String(matchedIds[0])
 check('boş isim → sonuç yok', matchingTrackArtistIds(trackResults, '').length === 0);
 check('kimliksiz sonuç atlanır', matchingTrackArtistIds([{ artist: { name: 'Uzi' } }], 'Uzi').length === 0);
 
-check('oy yoksa null', bestVotedId(new Map<number, number>()) === null);
+// Deezer sonuçları alaka sırasına göre gelir; uygulama ilk kimliği kullanır.
 check(
-  'en çok oyu alan kazanır',
-  bestVotedId(new Map([[1, 1], [2, 3]]), [1, 2]) === 2
-);
-check(
-  'eşitlikte popüler aday kazanır',
-  bestVotedId(new Map([[7, 2], [3, 2]]), [3, 7]) === 3
-);
-check(
-  'eşitlikte aday dışı kimlik geride kalır',
-  bestVotedId(new Map([[55, 1], [9, 1]]), [9]) === 9
+  'alaka sırası korunur (ilk eşleşme önce)',
+  matchingTrackArtistIds(
+    [
+      { title: 'XO Tour Llif3', artist: { id: 7101343, name: 'Lil Uzi Vert' } },
+      { title: 'Cennet', artist: { id: 98336572, name: 'Uzi' } },
+    ],
+    'UZI'
+  )[0] === 98336572
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -205,33 +202,40 @@ interface DeezerSearchResponse {
   data?: DeezerArtistLike[];
 }
 
-/** Uygulamadaki `fetchFromDeezer` akışının aynısı (ağ + saf kararlar). */
+/**
+ * Uygulamadaki `fetchFromDeezer` akışının aynısı (ağ + saf kararlar).
+ *
+ * Sıra uygulamayla birebir aynı olmalı: **önce parça araması**, sonra sanatçı
+ * araması, sonra başlık örtüşmesi, en son popülerlik.
+ */
 async function resolveArtistId(name: string, knownTitles: string[]): Promise<number | null> {
-  const search = await fetch(
-    `https://api.deezer.com/search/artist?q=${encodeURIComponent(name)}&limit=10`
-  ).then((res) => res.json() as Promise<DeezerSearchResponse>);
-  const ranked = rankDeezerArtists(Array.isArray(search?.data) ? search.data : [], name);
-  if (ranked.length === 0) return null;
-  if (ranked.length === 1 || knownTitles.length === 0) return ranked[0].id ?? null;
+  const titles = [...new Set(knownTitles.map((title) => title.trim()).filter(Boolean))].slice(0, 3);
 
-  const candidateIds = ranked
-    .map((artist) => artist.id)
-    .filter((id): id is number => typeof id === 'number');
-
-  const votes = new Map<number, number>();
-  let resolvedId: number | null = null;
-  for (const title of knownTitles.slice(0, 3)) {
+  // 1. Parça araması: çalan parçayı yayınlayan kayıt doğrudan bulunur.
+  for (const title of titles) {
     const found = await fetch(
       `https://api.deezer.com/search?q=${encodeURIComponent(`${title} ${name}`)}&limit=6`
     ).then((res) => res.json() as Promise<{ data?: DeezerTrackLike[] }>);
     const ids = matchingTrackArtistIds(Array.isArray(found?.data) ? found.data : [], name);
     if (ids.length === 0) continue;
-    votes.set(ids[0], (votes.get(ids[0]) ?? 0) + 1);
-    resolvedId = bestVotedId(votes, candidateIds);
-    if (resolvedId != null && candidateIds.includes(resolvedId)) break;
-  }
-  if (resolvedId != null) return resolvedId;
 
+    // Profil fotoğrafı doğrulanır: yer tutucuysa bu aday işe yaramaz.
+    const artist = await fetch(`https://api.deezer.com/artist/${ids[0]}`).then(
+      (res) => res.json() as Promise<DeezerArtistLike>
+    );
+    const picture = artistPictureOf(artist);
+    if (picture && !isPlaceholderPicture(picture)) return ids[0];
+  }
+
+  // 2. Sanatçı araması.
+  const search = await fetch(
+    `https://api.deezer.com/search/artist?q=${encodeURIComponent(name)}&limit=10`
+  ).then((res) => res.json() as Promise<DeezerSearchResponse>);
+  const ranked = rankDeezerArtists(Array.isArray(search?.data) ? search.data : [], name);
+  if (ranked.length === 0) return null;
+  if (ranked.length === 1 || titles.length === 0) return ranked[0].id ?? null;
+
+  // 3. En popüler parçaların başlık örtüşmesi.
   const candidates = ranked.slice(0, MAX_TITLE_CANDIDATES);
   const tops = await Promise.all(
     candidates.map(async (candidate) => {
@@ -242,7 +246,9 @@ async function resolveArtistId(name: string, knownTitles: string[]): Promise<num
       return (top?.data ?? []).map((item) => item.title || '').filter(Boolean);
     })
   );
-  return candidates[pickByTitleOverlap(candidates, knownTitles, tops)].id ?? null;
+
+  // 4. Popülerlik sırası korunur (rankDeezerArtists zaten sıralı döner).
+  return candidates[pickByTitleOverlap(candidates, titles, tops)].id ?? null;
 }
 
 const liveCases: { name: string; titles: string[]; expected: number }[] = [

@@ -46,6 +46,11 @@ import { RUNMUSIC_TCP_PORT, type DiscoveredHost, type RemoteTrackSummary } from 
 import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
+import { rememberArtistImage } from '../services/artistImages';
+import { normalizeArtistKey } from '../services/artistMatch';
+import { splitArtistNames } from '../services/wrappedStats';
+import { router } from 'expo-router';
+
 import { useTranslation } from '../services/i18n';
 import { showRewardedAd } from '../services/adService';
 import {
@@ -106,6 +111,52 @@ import { useIsAppActive } from '../hooks/useIsAppActive';
 import { useResilientActiveTrack } from '../hooks/useResilientActiveTrack';
 import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 import { LyricSharePreviewModal, MAX_SHARE_LINES, type LyricShareLine } from './LyricShareModal';
+
+/**
+ * Şarkı altındaki sanatçı adları.
+ *
+ * Sanatçı alanı virgülle ayrılmış olabilir ("UZI, MODD"); her ad ayrı ayrı
+ * dokunulabilir ve kendi sanatçı sayfasını açar. Uygulamanın genel kuralı
+ * gereği ortak çalışmalar tek kişi gibi gösterilmez.
+ */
+function ArtistLinks({
+  artist,
+  style,
+  onOpenArtist,
+}: {
+  artist: string;
+  style?: StyleProp<TextStyle>;
+  onOpenArtist: (name: string) => void;
+}) {
+  const names = useMemo(() => splitArtistNames(artist), [artist]);
+
+  // Ayrıştırma sonuç vermezse ham metin gösterilir (ör. yalnızca virgül).
+  if (names.length === 0) {
+    return (
+      <Text style={style} numberOfLines={1}>
+        {artist}
+      </Text>
+    );
+  }
+
+  return (
+    <View style={styles.artistLinksRow}>
+      {names.map((name, index) => (
+        <React.Fragment key={`${name}-${index}`}>
+          {index > 0 ? <Text style={style}>{', '}</Text> : null}
+          <Text
+            style={style}
+            numberOfLines={1}
+            onPress={() => onOpenArtist(name)}
+            suppressHighlighting
+            accessibilityRole="link">
+            {name}
+          </Text>
+        </React.Fragment>
+      ))}
+    </View>
+  );
+}
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 56, 350);
@@ -3536,6 +3587,23 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     player.activeTrack?.id,
   ]);
 
+  /**
+   * Player'daki sanatçı adına dokunulduğunda sanatçı sayfasını açar.
+   *
+   * Önce player kapatılır: sanatçı sayfası tam ekran bir sekme olarak açılır,
+   * arkada açık bir player modal'ı kalırsa geri dönüşte iki katman üst üste
+   * binmiş görünür.
+   */
+  const openArtistProfile = useCallback(
+    (name: string) => {
+      const target = name.trim();
+      if (!target) return;
+      closeFullscreenPlayer();
+      router.push({ pathname: '/artist', params: { name: target } });
+    },
+    [closeFullscreenPlayer]
+  );
+
   const loadLyricsForTrack = async (title: string, artist?: string, force = false) => {
     if (player.isRemote || !localActiveTrack) return;
     const cleanArtist = artist && artist !== 'Local Audio' && artist !== 'Bilinmeyen Sanatçı' ? artist : '';
@@ -3590,6 +3658,21 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
         });
         if (existing && !force) {
           return;
+        }
+
+        // Genius sözü çekerken o şarkının sanatçı görselini de verir: Deezer'da
+        // bulunamayan/karışan sanatçılar için doğrudan kaynak. Yerel sanatçı
+        // adıyla eşleşiyorsa onun adına yazılır (uygulama bu anahtarla arıyor).
+        if (result.artistImageUrl && result.artistImageName) {
+          const geniusKey = normalizeArtistKey(result.artistImageName);
+          const localName = splitArtistNames(cleanArtist).find(
+            (name) => normalizeArtistKey(name) === geniusKey
+          );
+          void rememberArtistImage(
+            localName || result.artistImageName,
+            result.artistImageUrl,
+            'genius'
+          );
         }
 
         if (result.candidates && result.candidates.length > 0) {
@@ -5444,7 +5527,11 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
           <Animated.View style={[styles.metaRow, metaMorphStyle]}>
             <View style={{ flex: 1, marginRight: 14 }}>
               <MarqueeText text={displayTitle || ''} style={styles.trackTitle} />
-              <MarqueeText text={displayArtist || ''} style={styles.trackArtist} />
+              <ArtistLinks
+                artist={displayArtist || ''}
+                style={styles.trackArtist}
+                onOpenArtist={openArtistProfile}
+              />
             </View>
 
             {/* Sözler, Çalma Sırası veya Uyku Zamanlayıcısı Modundayken Sağ Tarafa Animasyonla Yerleşen Küçük Kapak */}
@@ -6637,6 +6724,13 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.65)',
     fontSize: 17,
     fontWeight: '500',
+    marginTop: 2,
+  },
+  /** Player'da sanatçı adları satırı (her ad ayrı dokunulabilir). */
+  artistLinksRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
     marginTop: 2,
   },
   metaActionBtn: {

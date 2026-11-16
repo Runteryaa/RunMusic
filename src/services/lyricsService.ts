@@ -1191,6 +1191,10 @@ export async function searchGenius(title: string, artist = ''): Promise<LyricsRe
       parsedLines: [],
       source: 'genius',
       candidates: geniusCandidates,
+      // Genius, sözü çektiğimiz şarkının sanatçı görselini de veriyor. Bu,
+      // Deezer'da bulunamayan/karışan sanatçılar için doğrudan kaynaktır.
+      artistImageUrl: bestHit.primary_artist?.image_url || null,
+      artistImageName: bestHit.primary_artist?.name || null,
     };
   } catch (e) {
     console.warn('Genius fetch error:', e);

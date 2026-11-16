@@ -65,4 +65,14 @@ export interface LyricsResult {
   candidates?: LyricsCandidate[];
   isUserSelected?: boolean;
   selectedCandidateId?: string;
+  /**
+   * Kaynağın verdiği sanatçı profil fotoğrafı (yalnızca Genius sağlar).
+   *
+   * Saf veri olarak taşınır: `lyricsService` native modül import etmez (Node
+   * doğrulama betikleri onu doğrudan çalıştırır). Görseli önbelleğe yazma işi
+   * sonucu alan ekran tarafından `rememberArtistImage` ile yapılır.
+   */
+  artistImageUrl?: string | null;
+  /** `artistImageUrl`'in sahibi olan sanatçı adı (kaynağın yazımıyla). */
+  artistImageName?: string | null;
 }
