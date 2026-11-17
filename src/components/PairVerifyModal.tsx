@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -22,9 +22,25 @@ export function PairVerifyModal() {
   const pendingVerify = useRemoteConnectStore((s) => s.pendingPinVerification);
   const setPendingVerify = useRemoteConnectStore((s) => s.setPendingPinVerification);
   const connectedDeviceName = useRemoteConnectStore((s) => s.connectedDeviceName);
+  const scannedPairing = useRemoteConnectStore((s) => s.scannedPairing);
+  const setScannedPairing = useRemoteConnectStore((s) => s.setScannedPairing);
 
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  // QR ile gelinmişse PIN otomatik doldurulur; kullanıcı yine de "Doğrula"ya
+  // basar. 2 dakikadan eski QR bilgisi kullanılmaz (host PIN'i yenilenmiş
+  // olabilir); bu durumda temizlenir.
+  useEffect(() => {
+    if (!pendingVerify || !scannedPairing) return;
+    if (Date.now() - scannedPairing.receivedAt > 120_000) {
+      setScannedPairing(null);
+      return;
+    }
+    setPin(scannedPairing.pin);
+    setError(null);
+    setScannedPairing(null);
+  }, [pendingVerify, scannedPairing, setScannedPairing]);
 
   if (!pendingVerify) return null;
 

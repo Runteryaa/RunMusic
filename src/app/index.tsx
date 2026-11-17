@@ -4,7 +4,6 @@ import {
   StyleSheet,
   Text,
   View,
-  FlatList,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
@@ -14,6 +13,7 @@ import {
   Pressable,
   BackHandler,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import * as FileSystem from 'expo-file-system';
 import TrackPlayer, { useActiveTrack } from 'react-native-track-player';
@@ -1213,11 +1213,22 @@ export default function LibraryScreen() {
       ) : null}
 
       {/* Track List */}
-      <FlatList
+      <FlashList
         data={isShowingRemoteLibrary ? (remoteDisplayedList as any) : displayedList}
         keyExtractor={(item: any) => (isShowingRemoteLibrary ? item.id : item.asset.id)}
         renderItem={isShowingRemoteLibrary ? (renderRemoteItem as any) : renderItem}
+        /**
+         * Reklam yerleşimi her 15 satırda bir korunur. Ayrı `getItemType`
+         * sayesinde FlashList reklamlı satırları reklamsızlarla aynı geri
+         * dönüşüm havuzunda karıştırmaz; yükseklik farkı zıplamaya yol açmaz.
+         */
+        getItemType={(_item: any, index: number) => {
+          const total = isShowingRemoteLibrary ? remoteDisplayedList.length : displayedList.length;
+          const hasAd = (index + 1) % 15 === 0 && index !== total - 1;
+          return hasAd ? 'row-with-ad' : 'row';
+        }}
         contentContainerStyle={styles.listContent}
+        style={{ flex: 1 }}
         ListHeaderComponent={
           <>
             {isShowingRemoteLibrary && (
@@ -1249,10 +1260,6 @@ export default function LibraryScreen() {
             <AdBanner style={{ marginTop: 8, marginBottom: 16 }} />
           ) : null
         }
-        initialNumToRender={15}
-        maxToRenderPerBatch={10}
-        windowSize={7}
-        removeClippedSubviews={true}
         refreshControl={
           isShowingRemoteLibrary ? (
             <RefreshControl

@@ -1,18 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useActiveTrack } from 'react-native-track-player';
 
+import { GradientSurface, withAlpha } from '../components/ui/GradientSurface';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
@@ -384,6 +385,15 @@ export default function ArtistScreen() {
     <View>
       {/* ── Sanatçı kartı: uygulamanın kart dilinde, tema rengiyle ── */}
       <View style={[styles.heroCard, { borderColor: `${theme.primary}44` }]}>
+        {/* Tema renginden koyu karta akan yüzey; düz #18181b yerine derinlik. */}
+        <GradientSurface
+          pointerEvents="none"
+          colors={[withAlpha(theme.primary, 0.3), withAlpha(theme.primary, 0.04), '#18181b']}
+          locations={[0, 0.55, 1]}
+          direction="diagonal"
+          borderRadius={20}
+          style={StyleSheet.absoluteFill}
+        />
         <View style={[styles.heroGlow, { backgroundColor: theme.glowColor }]} />
         {artistImage ? (
           <Image source={{ uri: artistImage }} style={styles.heroPhoto} contentFit="cover" />
@@ -596,10 +606,11 @@ export default function ArtistScreen() {
         </Text>
       </View>
 
-      <FlatList
+      <FlashList
         data={sortedTracks}
         keyExtractor={(item) => `artist-track-${item.id}`}
         renderItem={renderTrack}
+        style={{ flex: 1 }}
         ListHeaderComponent={header}
         ListEmptyComponent={
           <Text style={[styles.emptyText, { paddingHorizontal: 16 }]}>{t('artist.no_songs')}</Text>
@@ -611,10 +622,6 @@ export default function ArtistScreen() {
         }
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
-        initialNumToRender={12}
-        maxToRenderPerBatch={12}
-        windowSize={7}
-        removeClippedSubviews
       />
     </View>
   );

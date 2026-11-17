@@ -69,6 +69,19 @@ interface RemoteConnectStoreState {
   // Pairing Modals
   pendingPairChallenge: PendingPairChallenge | null;
   pendingPinVerification: ((pin: string) => void) | null;
+  /**
+   * QR koddan okunan eşleştirme bilgisi. Host ekranındaki QR, telefonun
+   * kamera uygulamasıyla okutulduğunda `runmusic://pair?...` derin bağlantısı
+   * açılır ve PIN buraya yazılır; doğrulama penceresi açıldığında alan
+   * otomatik dolar. Kullanıcı yine de onay verir.
+   */
+  scannedPairing: {
+    pin: string;
+    roomCode: string | null;
+    hostName: string | null;
+    receivedAt: number;
+  } | null;
+  setScannedPairing: (payload: RemoteConnectStoreState['scannedPairing']) => void;
 
   // Remote State
   remoteState: RemotePlaybackState;
@@ -204,6 +217,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
       internetHostStatus: 'idle',
       pendingPairChallenge: null,
       pendingPinVerification: null,
+      scannedPairing: null,
       remoteState: { ...initialRemotePlaybackState },
       remoteLibrary: [],
       isRemoteLibraryLoading: false,
@@ -288,6 +302,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
 
       setPendingPairChallenge: (challenge) => set({ pendingPairChallenge: challenge }),
       setPendingPinVerification: (cb) => set({ pendingPinVerification: cb }),
+      setScannedPairing: (payload) => set({ scannedPairing: payload }),
 
       setRemoteInitialState: (msg) => {
         const now = Date.now();
@@ -488,6 +503,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
           interpolatedPosition: 0,
           pendingPairChallenge: null,
           pendingPinVerification: null,
+          scannedPairing: null,
         });
       },
     }),

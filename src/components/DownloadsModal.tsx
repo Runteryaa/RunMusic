@@ -3,13 +3,13 @@ import {
   Modal,
   View,
   Text,
-  FlatList,
   TouchableOpacity,
   StyleSheet,
   Image,
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import TrackPlayer, { Track } from 'react-native-track-player';
@@ -291,11 +291,12 @@ export const DownloadsModal: React.FC = () => {
         )}
 
         {/* Görev Listesi */}
-        <FlatList
+        <FlashList
           data={tasks}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
+          style={{ flex: 1 }}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Ionicons name="cloud-download-outline" size={54} color="#3f3f46" />

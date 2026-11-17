@@ -21,6 +21,7 @@ import { useActivePlayer } from '../hooks/useActivePlayer';
 import { useActiveProgress } from '../hooks/useActiveProgress';
 import { TrackArtwork } from './TrackArtwork';
 import { MarqueeText } from './ui/MarqueeText';
+import { GradientSurface, withAlpha } from './ui/GradientSurface';
 import { cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import { cleanArtistName } from '../services/displayNames';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
@@ -339,6 +340,13 @@ function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
             isEmbedded && styles.miniPlayerContainerEmbedded,
             { borderColor: theme.border || 'rgba(255, 255, 255, 0.12)' },
           ]}>
+          <GradientSurface
+            pointerEvents="none"
+            colors={[withAlpha(theme.primary, 0.22), '#18181b', '#101012']}
+            locations={[0, 0.62, 1]}
+            direction="horizontal"
+            style={StyleSheet.absoluteFill}
+          />
           <View style={styles.contentRow}>
             <View
               style={[
@@ -383,6 +391,18 @@ function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
         { borderColor: theme.border || 'rgba(255, 255, 255, 0.12)' },
       ]}
       {...panResponder.panHandlers}>
+      {/* Tema renginden koyu zemine geçen yüzey: düz #18181b yerine marka
+          rengiyle hafifçe aydınlanan mini player. Embedded modda (tam ekran
+          oynatıcının içinde) kapalı; orada zaten kapak rengi var. */}
+      {!isEmbedded && (
+        <GradientSurface
+          pointerEvents="none"
+          colors={[withAlpha(theme.primary, 0.24), '#18181b', '#101012']}
+          locations={[0, 0.62, 1]}
+          direction="horizontal"
+          style={StyleSheet.absoluteFill}
+        />
+      )}
       {/* Top 2px Progress Bar */}
       <MiniPlayerProgressBar active={!isFullscreenPlayerOpen} color={theme.primary} />
 

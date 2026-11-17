@@ -13,6 +13,7 @@ import { useAlertStore } from '../store/useAlertStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useTranslation } from '../services/i18n';
 import type { AlertButton } from 'react-native';
+import { GlassBackdrop } from './ui/GlassBackdrop';
 
 export const AppAlertModal: React.FC = () => {
   const { t } = useTranslation();
@@ -103,6 +104,9 @@ export const AppAlertModal: React.FC = () => {
       onRequestClose={handleBackdropPress}
     >
       <View style={styles.backdrop}>
+        {/* Cam perde: modal kendi penceresinde çizildiği için gerçek blur
+            uygulanmaz; koyu cam tonu arka planı yumuşatır. */}
+        <GlassBackdrop intensity={40} overlayColor="rgba(0, 0, 0, 0.68)" />
         {/* Arka plan dokunma algılayıcısı */}
         <Pressable style={styles.overlayPress} onPress={handleBackdropPress} />
 

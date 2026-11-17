@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useExtensionStore } from '../store/useExtensionStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { useTranslation } from '../services/i18n';
+import { GlassBackdrop } from './ui/GlassBackdrop';
 
 export const InstallExtensionModal: React.FC = () => {
   const { t } = useTranslation();
@@ -59,6 +60,9 @@ export const InstallExtensionModal: React.FC = () => {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.backdrop}
       >
+        {/* Cam perde: modal penceresinde gerçek blur uygulanmaz; koyu cam
+            tonu arka planı yumuşatıp kartın öne çıkmasını sağlar. */}
+        <GlassBackdrop intensity={40} overlayColor="rgba(0, 0, 0, 0.68)" />
         <TouchableOpacity
           activeOpacity={1}
           style={styles.overlayTouch}

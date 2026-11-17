@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { logBreadcrumb } from './crashReporting';
+
 /**
  * Very small, dependency-free memory/event sampler.
  *
@@ -90,6 +92,9 @@ export function recordEvent(name: string, detail?: string): void {
   if (events.length > MAX_EVENTS) {
     events = events.slice(events.length - MAX_EVENTS);
   }
+  // Aynı olay Crashlytics'e ekmek kırıntısı olarak da yazılır; böylece çökme
+  // raporunda hangi olayların önce geldiği görülebilir.
+  logBreadcrumb(detail ? `${name}: ${detail}` : name);
 }
 
 function readHermesStats(): {

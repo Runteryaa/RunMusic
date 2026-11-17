@@ -46,6 +46,7 @@ import { RUNMUSIC_TCP_PORT, type DiscoveredHost, type RemoteTrackSummary } from 
 import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
+import { GlassBackdrop } from './ui/GlassBackdrop';
 import { rememberArtistImage } from '../services/artistImages';
 import { normalizeArtistKey } from '../services/artistMatch';
 import { splitArtistNames } from '../services/wrappedStats';
@@ -4534,17 +4535,18 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
           paddingBottom: Math.max(insets.bottom, 16),
         },
       ]}>
-      {/* Dynamic Blurred Background based on Cover Art */}
+      {/* Kapak görseli: asıl bulanıklık aşağıdaki GlassBackdrop tarafından
+          donanım hızlandırmalı olarak uygulanır (Image blurRadius pahalıydı). */}
       {currentArtworkUri ? (
         <Image
           source={{ uri: currentArtworkUri }}
           style={StyleSheet.absoluteFill}
-          blurRadius={35}
           contentFit="cover"
           transition={500}
         />
       ) : null}
-      <View style={[StyleSheet.absoluteFill, styles.backdropOverlay]} />
+      {/* Cam katman: kapağı bulanıklaştırıp koyu perdeyle okunabilirlik verir. */}
+      <GlassBackdrop intensity={85} overlayColor="rgba(10, 10, 14, 0.82)" />
       {/* Subtle Ambient Color Glow from Cover Art */}
       <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.glowColor, opacity: 0.14 }]} />
 

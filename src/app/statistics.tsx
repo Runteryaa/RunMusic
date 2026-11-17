@@ -38,6 +38,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { useStore } from '../store/useStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { AdBanner } from '../components/AdBanner';
+import { HourAreaChart, ShareRing, WeekdayBarChart } from '../components/ui/StatsCharts';
 import { cleanTrackFields } from '../services/displayNames';
 import { loadArtistImages, normalizeArtistKey } from '../services/artistImages';
 import { buildArtistTitleHints } from '../services/artistProfile';
@@ -571,9 +572,6 @@ export default function StatisticsScreen() {
   }
 
   const persona = resolveWrappedPersona(detail);
-  const hourMax = Math.max(1, ...detail.hourHistogram);
-  const weekdayMax = Math.max(1, ...detail.weekdayHistogram);
-
   return (
     <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
       {/* Header */}
@@ -722,6 +720,17 @@ export default function StatisticsScreen() {
                       </Text>
                       <Text style={styles.personaDesc}>{t(PERSONA_DESC_KEYS[persona])}</Text>
 
+                      {detail.topTrackShare > 0 ? (
+                        <View style={styles.shareRingRow}>
+                          <ShareRing value={detail.topTrackShare} color={theme.primary} size={72}>
+                            <Text style={[styles.shareRingValue, { color: theme.primary }]}>
+                              {Math.round(detail.topTrackShare * 100)}%
+                            </Text>
+                          </ShareRing>
+                          <Text style={styles.shareRingLabel}>{t('stats.top_track_share')}</Text>
+                        </View>
+                      ) : null}
+
                       <View style={styles.habitDivider} />
 
                       {habitRows.map((row) => (
@@ -737,26 +746,12 @@ export default function StatisticsScreen() {
                     {/* Saat dağılımı */}
                     <Text style={styles.chartTitle}>{t('stats.hour_distribution')}</Text>
                     <View style={styles.chartCard}>
-                      <View style={styles.hourBars}>
-                        {detail.hourHistogram.map((count, hour) => (
-                          <View key={`hour-${hour}`} style={styles.hourBarSlot}>
-                            <View
-                              style={[
-                                styles.hourBar,
-                                {
-                                  height: Math.max(2, Math.round((count / hourMax) * 72)),
-                                  backgroundColor:
-                                    count === 0
-                                      ? '#27272a'
-                                      : detail.busiestHour === hour
-                                        ? theme.primary
-                                        : `${theme.primary}80`,
-                                },
-                              ]}
-                            />
-                          </View>
-                        ))}
-                      </View>
+                      {/* SVG alan grafiği: 24 ayrı view yerine tek çizim. */}
+                      <HourAreaChart
+                        data={detail.hourHistogram}
+                        highlightIndex={detail.busiestHour}
+                        color={theme.primary}
+                      />
                       <View style={styles.hourLabels}>
                         {[0, 6, 12, 18, 23].map((hour) => (
                           <Text key={`hl-${hour}`} style={styles.hourLabel}>
@@ -769,25 +764,23 @@ export default function StatisticsScreen() {
                     {/* Hafta günü dağılımı */}
                     <Text style={styles.chartTitle}>{t('stats.weekday_distribution')}</Text>
                     <View style={[styles.chartCard, styles.weekdayCard]}>
-                      {detail.weekdayHistogram.map((count, index) => (
-                        <View key={`weekday-${index}`} style={styles.weekdaySlot}>
-                          <View
+                      <WeekdayBarChart
+                        data={detail.weekdayHistogram}
+                        highlightIndex={detail.busiestWeekday}
+                        color={theme.primary}
+                      />
+                      <View style={styles.weekdayLabelRow}>
+                        {WEEKDAY_SHORT_KEYS.map((key, index) => (
+                          <Text
+                            key={`weekday-label-${index}`}
                             style={[
-                              styles.weekdayBar,
-                              {
-                                height: Math.max(2, Math.round((count / weekdayMax) * 56)),
-                                backgroundColor:
-                                  count === 0
-                                    ? '#27272a'
-                                    : detail.busiestWeekday === index
-                                      ? theme.primary
-                                      : `${theme.primary}80`,
-                              },
-                            ]}
-                          />
-                          <Text style={styles.weekdayLabel}>{t(WEEKDAY_SHORT_KEYS[index])}</Text>
-                        </View>
-                      ))}
+                              styles.weekdayLabel,
+                              detail.busiestWeekday === index && { color: theme.primary },
+                            ]}>
+                            {t(key)}
+                          </Text>
+                        ))}
+                      </View>
                     </View>
                   </View>
 
@@ -1124,6 +1117,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#27272a',
     marginVertical: 12,
   },
+  shareRingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginTop: 14,
+  },
+  shareRingValue: {
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  shareRingLabel: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#a1a1aa',
+  },
   habitRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1156,21 +1166,6 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 14,
   },
-  hourBars: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    height: 76,
-    gap: 2,
-  },
-  hourBarSlot: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
-  hourBar: {
-    width: '100%',
-    borderRadius: 2,
-  },
   hourLabels: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1181,22 +1176,16 @@ const styles = StyleSheet.create({
     color: '#71717a',
   },
   weekdayCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
     height: 96,
-  },
-  weekdaySlot: {
-    flex: 1,
-    alignItems: 'center',
     justifyContent: 'flex-end',
-    gap: 6,
   },
-  weekdayBar: {
-    width: '55%',
-    borderRadius: 3,
+  weekdayLabelRow: {
+    flexDirection: 'row',
+    marginTop: 6,
   },
   weekdayLabel: {
+    flex: 1,
+    textAlign: 'center',
     fontSize: 10,
     color: '#71717a',
   },

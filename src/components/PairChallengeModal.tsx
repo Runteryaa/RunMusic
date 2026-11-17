@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, View, Modal, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import QRCode from 'react-native-qrcode-svg';
 import { useThemeStore } from '../store/useThemeStore';
 import { useTranslation } from '../services/i18n';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
@@ -10,6 +11,18 @@ export function PairChallengeModal() {
   const theme = useThemeStore((s) => s.theme);
   const challenge = useRemoteConnectStore((s) => s.pendingPairChallenge);
   const setChallenge = useRemoteConnectStore((s) => s.setPendingPairChallenge);
+  const roomCode = useRemoteConnectStore((s) => s.internetRoomCode);
+  const hostDeviceName = useRemoteConnectStore((s) => s.customDeviceName);
+
+  // QR, telefonun kamera uygulamasıyla okutulunca `runmusic://pair?...`
+  // derin bağlantısı açılır ve istemcide PIN otomatik dolar.
+  const pairingLink = useMemo(() => {
+    if (!challenge) return '';
+    const params = new URLSearchParams({ pin: challenge.pin });
+    if (hostDeviceName) params.set('name', hostDeviceName);
+    if (roomCode) params.set('room', roomCode);
+    return `runmusic://pair?${params.toString()}`;
+  }, [challenge, hostDeviceName, roomCode]);
 
   if (!challenge) return null;
 
@@ -52,6 +65,14 @@ export function PairChallengeModal() {
             <Text style={[styles.pinText, { color: theme.primaryLight || theme.primary }]}>
               {challenge.pin}
             </Text>
+          </View>
+
+          {/* QR: kamera uygulamasıyla okutulduğunda PIN istemcide otomatik dolar. */}
+          <View style={styles.qrSection}>
+            <View style={styles.qrBox}>
+              <QRCode value={pairingLink} size={132} backgroundColor="#ffffff" color="#0b0b0f" />
+            </View>
+            <Text style={styles.qrHint}>{t('remote.qr_hint')}</Text>
           </View>
 
           <View style={styles.actions}>
@@ -145,6 +166,23 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     letterSpacing: 8,
     fontFamily: 'monospace',
+  },
+  qrSection: {
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 20,
+  },
+  qrBox: {
+    backgroundColor: '#ffffff',
+    padding: 10,
+    borderRadius: 14,
+  },
+  qrHint: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: 'rgba(255,255,255,0.55)',
+    textAlign: 'center',
+    maxWidth: 280,
   },
   actions: {
     flexDirection: 'row',

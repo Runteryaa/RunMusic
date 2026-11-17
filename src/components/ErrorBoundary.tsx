@@ -2,6 +2,7 @@ import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { t } from '../services/i18n';
+import { reportError } from '../services/crashReporting';
 
 interface Props {
   children: ReactNode;
@@ -26,6 +27,12 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public override componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('[ErrorBoundary caught error]:', error, errorInfo);
+    // Kullanıcıya çökme göstermeden önce Crashlytics'e raporla. Geliştirme
+    // derlemesinde toplama kapalıdır (bkz. services/crashReporting.ts).
+    reportError(error, {
+      boundary: 'react',
+      componentStack: (errorInfo.componentStack || '').slice(0, 1000),
+    });
     this.props.onError?.(error, errorInfo);
   }
 

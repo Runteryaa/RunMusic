@@ -26,6 +26,7 @@ import { initSleepTimerService } from '../store/useSleepTimerStore';
 import { useTranslation, t } from '../services/i18n';
 import { initAdService } from '../services/adService';
 import { startNetworkMonitoring } from '../services/networkStatus';
+import { initCrashReporting } from '../services/crashReporting';
 import * as Font from 'expo-font';
 import { getCachedLibrary } from '../services/libraryStorage';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
@@ -47,6 +48,8 @@ try {
 }
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+// Çökme raporlama: geliştirme derlemesinde toplama kapalı, üretimde açık.
+initCrashReporting();
 // Ağ durumu tek dinleyiciden izlenir; çevrimdışıyken söz/kapak/sanatçı
 // istekleri atılmaz, bağlantı gelince scrobble kuyruğu boşaltılır.
 startNetworkMonitoring();
@@ -338,6 +341,25 @@ export async function handleAppDeepLink(url: string | null): Promise<void> {
       (parsed.queryParams?.manifest as string) ||
       (parsed.queryParams?.install as string) ||
       (parsed.queryParams?.extension_url as string);
+
+    /**
+     * QR eşleştirme: host ekranındaki QR okutulduğunda kamera uygulaması
+     * `runmusic://pair?pin=...&room=...` açar. PIN burada saklanır ve doğrulama
+     * penceresi açıldığında otomatik dolar. Eşleşme yine kullanıcı onayıyla
+     * tamamlanır; QR tek başına yetki vermez.
+     */
+    if (host === 'pair') {
+      const pin = String(parsed.queryParams?.pin ?? '').trim();
+      if (pin) {
+        useRemoteConnectStore.getState().setScannedPairing({
+          pin,
+          roomCode: (parsed.queryParams?.room as string) || null,
+          hostName: (parsed.queryParams?.name as string) || null,
+          receivedAt: Date.now(),
+        });
+      }
+      return;
+    }
 
     if (isExtensionLink && manifestUrl) {
       const cleanUrl = decodeURIComponent(manifestUrl).trim();

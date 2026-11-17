@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GradientSurface, withAlpha } from '../components/ui/GradientSurface';
 import { getHistoryInRange } from '../services/statsDatabase';
 import { cleanTrackFields } from '../services/displayNames';
 import { loadArtistImages, normalizeArtistKey } from '../services/artistImages';
@@ -50,9 +51,9 @@ import {
  * Bağlantılar (Last.fm / ListenBrainz) burada okunmaz; iki özellik birbirinden
  * tamamen bağımsızdır.
  *
- * Görsel derinlik gradient yerine tema renginden türetilen yarı saydam
- * katmanlarla sağlanır: `expo-linear-gradient` native modül olduğu için
- * eklenmedi (mevcut APK'ların OTA alabilmesi için runtimeVersion sabit).
+ * Görsel derinlik gerçek gradient ile sağlanır (`GradientSurface`): palet
+ * renkleri slayt arka planına akar, üzerine yumuşak vurgu daireleri eklenir.
+ * Renkler her zaman RunMusic paletinden gelir; düz siyah zemin korunur.
  */
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -70,7 +71,8 @@ const SLIDE_TITLE_KEYS: Record<WrappedSlideId, string> = {
 /**
  * Her slaytın kendi renk çifti. Tema rengi tek başına kullanıldığında ekran
  * siyah-beyazımsı görünüyordu; bu çiftler slayt arka planına ve vurgulara
- * renk katar. Yarı saydam katmanlarla uygulanır (gradient native modülü yok).
+ * renk katar. Slayt arka planına `GradientSurface` ile akan iki renkli geçiş
+ * olarak uygulanır.
  */
 const SLIDE_PALETTES: Record<WrappedSlideId, { a: string; b: string }> = {
   intro: { a: '#a855f7', b: '#ec4899' },
@@ -264,6 +266,19 @@ export default function WrappedScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Gerçek renk geçişi: üç yarı saydam daire yerine palet renklerinden
+          akan tek bir gradient taban. Daireler üstte yumuşak vurgu olarak kalır. */}
+      <GradientSurface
+        pointerEvents="none"
+        colors={[
+          withAlpha(slidePalette(slides[pageIndex]).a, 0.32),
+          withAlpha(slidePalette(slides[pageIndex]).b, 0.18),
+          'rgba(9,9,11,0)',
+        ]}
+        locations={[0, 0.55, 1]}
+        direction="vertical"
+        style={StyleSheet.absoluteFill}
+      />
       <View style={[styles.glowTop, { backgroundColor: slidePalette(slides[pageIndex]).a }]} />
       <View style={[styles.glowBottom, { backgroundColor: slidePalette(slides[pageIndex]).b }]} />
       <View style={[styles.glowMid, { backgroundColor: theme.primary }]} />
@@ -1247,6 +1262,20 @@ function SharePreviewModal({
         }}
         collapsable={false}
         style={[styles.shareCard, { borderColor: `${palette.a}66` }]}>
+        {/* Kart zemini: palet renginden koyu yüzeye geçen gradient.
+            view-shot bu native görünümü de yakalar. */}
+        <GradientSurface
+          pointerEvents="none"
+          colors={[
+            withAlpha(palette.a, 0.34),
+            withAlpha(palette.b, 0.16),
+            '#101013',
+          ]}
+          locations={[0, 0.5, 1]}
+          direction="diagonal"
+          borderRadius={22}
+          style={StyleSheet.absoluteFill}
+        />
         <View style={[styles.shareCardGlow, { backgroundColor: palette.a }]} />
         <View style={[styles.shareCardGlowBottom, { backgroundColor: palette.b }]} />
         <Text style={[styles.shareKicker, { color: palette.a }]}>
