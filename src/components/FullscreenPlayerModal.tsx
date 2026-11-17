@@ -375,6 +375,27 @@ function buildShareLines(lines: LyricLine[]): LyricShareLine[] {
 }
 
 /**
+ * Düz metin (senkronize olmayan) sözler için paylaşım satırları.
+ *
+ * NEDEN: paylaşım önceden yalnızca `parsedLines` (zaman damgalı sözler) varsa
+ * çalışıyordu; düz metin sözlerde kart hiç açılmıyordu. Anahtarlar söz
+ * panelindeki düz metin satırlarıyla (`plain-<index>`) birebir aynı üretiliyor,
+ * böylece seçim aynı anahtarlar üzerinden yapılır.
+ *
+ * Genius'un `[Verse 1]` bölüm başlıkları ve boş satırlar karta girmez.
+ */
+function buildPlainShareLines(source: string | null | undefined): LyricShareLine[] {
+  if (!source) return [];
+  const list: LyricShareLine[] = [];
+  source.split('\n').forEach((raw, index) => {
+    const text = raw.trim();
+    if (!text || isGeniusSectionHeader(text)) return;
+    list.push({ key: `plain-${index}`, text });
+  });
+  return list;
+}
+
+/**
  * Tek harf. Söylendikçe sönük renkten parlak renge geçer.
  *
  * Renk animasyonu bilinçli olarak `color` üzerinden yapılıyor: React Native'de
@@ -1334,8 +1355,19 @@ function LyricsPanel({
     return { activeRowIndex: row, activeLineRowIndex: lineRow };
   }, [displayRows, lyricPosition]);
 
-  /** Paylaşım kartı için satır listesi (boşluk işaretleri hariç). */
-  const shareLines = useMemo(() => buildShareLines(parsedLines), [parsedLines]);
+  /**
+   * Paylaşım kartı için satır listesi (boşluk işaretleri hariç).
+   *
+   * Zaman damgalı sözler varsa onlar kullanılır; yoksa düz metin sözlerden
+   * üretilir. Böylece paylaşım her söz tipinde çalışır.
+   */
+  const shareLines = useMemo(
+    () =>
+      parsedLines.length > 0
+        ? buildShareLines(parsedLines)
+        : buildPlainShareLines(currentLyrics?.plainLyrics),
+    [parsedLines, currentLyrics?.plainLyrics]
+  );
 
   /**
    * Arka vokali açılmış **son satırın** indeksi.
@@ -1356,15 +1388,20 @@ function LyricsPanel({
     return revealed;
   }, [displayRows, lyricPosition]);
 
-  /** Seçim moduna girerken çalan satır ve ardından gelen üç satır seçili gelir. */
+  /**
+   * Seçim moduna girerken çalan satır ve ardından gelen üç satır seçili gelir.
+   * Düz metin sözlerde "çalan satır" olmadığı için ilk dört satır seçilir.
+   */
   const shareInitialKeys = useMemo(() => {
-    if (activeLineRowIndex < 0) return [];
+    if (activeLineRowIndex < 0) {
+      return shareLines.slice(0, 4).map((line) => line.key);
+    }
     const keys: string[] = [];
     for (let i = activeLineRowIndex; i < displayRows.length && keys.length < 4; i++) {
       if (displayRows[i].kind === 'line') keys.push(displayRows[i].key);
     }
     return keys;
-  }, [activeLineRowIndex, displayRows]);
+  }, [activeLineRowIndex, displayRows, shareLines]);
 
   // Kaydırma hedefi: ara sürerken noktalara, satır gelmeden hemen önce ise bir
   // sonraki satıra. Böylece panel satırı söylenirken yerine oturur.
@@ -1859,6 +1896,23 @@ function LyricsPanel({
               </View>
             ) : row.kind === 'blank' ? (
               <View key={row.key} style={styles.plainLyricsBlankLine} />
+            ) : isShareSelecting ? (
+              /*
+               * Düz metin sözlerde de satır seçilebilir: paylaşım her söz tipinde
+               * çalışsın diye dokunuş satırı seçime ekler/çıkarır.
+               */
+              <TouchableOpacity
+                key={row.key}
+                activeOpacity={0.7}
+                onPress={() => onToggleShareLine(row.key)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: selectedShareSet.has(row.key) }}
+                style={[
+                  styles.lyricRowSelectable,
+                  selectedShareSet.has(row.key) && styles.lyricRowSelected,
+                ]}>
+                <Text style={styles.plainLyricsText}>{row.text}</Text>
+              </TouchableOpacity>
             ) : (
               <Text key={row.key} style={styles.plainLyricsText}>
                 {row.text}
@@ -3447,8 +3501,19 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     );
   }, [currentLyrics]);
 
-  /** Paylaşım kartına girebilecek satırlar (paneldeki sırayla). */
-  const shareLines = useMemo(() => buildShareLines(parsedLines), [parsedLines]);
+  /**
+   * Paylaşım kartına girebilecek satırlar (paneldeki sırayla).
+   *
+   * Zaman damgalı sözler yoksa düz metin sözlerden üretilir; paylaşım her söz
+   * tipinde çalışır.
+   */
+  const shareLines = useMemo(
+    () =>
+      parsedLines.length > 0
+        ? buildShareLines(parsedLines)
+        : buildPlainShareLines(currentLyrics?.plainLyrics),
+    [parsedLines, currentLyrics?.plainLyrics]
+  );
 
   /** Seçilen anahtarlar kart sırasına göre çözülür. */
   const selectedShareLines = useMemo(() => {
