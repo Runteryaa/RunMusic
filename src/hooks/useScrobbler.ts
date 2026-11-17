@@ -8,6 +8,7 @@ import { useConnectionsStore, hasActiveScrobbling } from '../store/useConnection
 import { useResilientActiveTrack } from './useResilientActiveTrack';
 import { useIsOnline } from './useIsOnline';
 import { broadcastNowPlaying, flushScrobbles, queueScrobble } from '../services/connections/scrobbleService';
+import { syncBackgroundScrobbleRegistration } from '../services/backgroundScrobble';
 import { scrobbleThresholdSeconds } from '../services/connections/scrobbleThreshold';
 import { cleanTrackFields } from '../services/displayNames';
 
@@ -151,4 +152,9 @@ export function useScrobbler(): void {
     }
     wasOnlineRef.current = isOnline;
   }, [isOnline]);
+
+  // Bağlantı varsa arka plan görevini kaydet; yoksa pil tüketmemek için kaldır.
+  useEffect(() => {
+    void syncBackgroundScrobbleRegistration(anyEnabled);
+  }, [anyEnabled]);
 }

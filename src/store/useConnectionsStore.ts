@@ -170,14 +170,43 @@ export const CONNECTIONS_STORAGE_KEY = 'runmusic-connections';
 let secretsPromise: Promise<void> | null = null;
 let secretsLoaded = false;
 
+function waitForConnectionsHydration(timeoutMs = 3000): Promise<void> {
+  if (useConnectionsStore.persist?.hasHydrated?.()) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let unsubscribe: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      unsubscribe?.();
+      resolve();
+    };
+
+    timer = setTimeout(finish, timeoutMs);
+    try {
+      unsubscribe = useConnectionsStore.persist.onFinishHydration(finish);
+    } catch {
+      finish();
+    }
+  });
+}
+
 export function areConnectionSecretsLoaded(): boolean {
   return secretsLoaded;
 }
 
 export function ensureConnectionSecretsLoaded(): Promise<void> {
+  if (secretsLoaded) return Promise.resolve();
   if (secretsPromise) return secretsPromise;
 
   secretsPromise = (async () => {
+    // Arka plan görevinde store henüz hidrasyon yapmamış olabilir; boş state'i
+    // okuyup token'ları "yok" saymamak için hidrasyonu bekle.
+    await waitForConnectionsHydration();
     const initial = useConnectionsStore.getState();
 
     const [lastfmSessionKey, listenbrainzToken, lastfmCustomSecret] = await Promise.all([
