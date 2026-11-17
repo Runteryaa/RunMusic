@@ -60,7 +60,9 @@ installGlobalAlert();
  * açılışı süresiz kilitlememek için üst sınır vardır.
  */
 function waitForStoreHydration(timeoutMs: number): Promise<void> {
-  if (useStore.getState().isHydrated || useStore.persist.hasHydrated?.()) {
+  // `isHydrated` artık söz SQLite yüklemesi bitince işaretlenir; persist'in
+  // ham `hasHydrated` bayrağı tek başına yeterli değildir.
+  if (useStore.getState().isHydrated) {
     return Promise.resolve();
   }
 
@@ -79,7 +81,11 @@ function waitForStoreHydration(timeoutMs: number): Promise<void> {
 
     timer = setTimeout(finish, timeoutMs);
     try {
-      unsubscribe = useStore.persist.onFinishHydration(finish);
+      // Söz veritabanı yüklendikten sonra `isHydrated` işaretlenir; persist'in
+      // ham hidrasyon olayı tek başına yeterli değildir.
+      unsubscribe = useStore.subscribe((state) => {
+        if (state.isHydrated) finish();
+      });
     } catch {
       finish();
     }

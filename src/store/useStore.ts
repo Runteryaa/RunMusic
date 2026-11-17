@@ -29,6 +29,14 @@ import {
   resolveDynamicColorPreference,
   type LyricsCacheEntry,
 } from '../services/persistSanitize';
+import {
+  clearLyricsCacheDB,
+  importLegacyLyricsOnce,
+  loadLyricsCache,
+  loadLyricsOffsets,
+  saveLyricsEntry,
+  scheduleLyricsOffsetsSave,
+} from '../services/lyricsStore';
 
 export interface FilterSettings {
   minLengthSec: number | null;
@@ -270,8 +278,13 @@ interface AppState {
  * v20: Wrapped'ten albüm slaytı kaldırıldı, paylaşım kartı seçimleri
  * (`shareItems`) eklendi. Migrasyon yeniden normalize eder: eski kayıtlardaki
  * `albums` slaytı düşer, paylaşım öğeleri varsayılana döner.
+ * v21: Şarkı sözü önbelleği ve söz ofsetleri AsyncStorage'dan SQLite'a taşındı
+ * (`lyricsStore.ts`). AsyncStorage tek-değer sınırı aşıldığında yazma sessizce
+ * durduğu için söz verisi tüm tercihleri de kilitleyebiliyordu. Migrasyon eski
+ * kaydı bellekte korur; açılışta bir kez SQLite'a aktarılır ve ancak yazma
+ * başarılı olduktan sonra AsyncStorage kaydından düşer.
  */
-const PERSIST_VERSION = 20;
+const PERSIST_VERSION = 21;
 
 export const useStore = create<AppState>()(
   persist(
@@ -321,7 +334,7 @@ export const useStore = create<AppState>()(
         }),
 
       lyricsCache: {},
-      setLyrics: (id, lyrics, alternateKeys) =>
+      setLyrics: (id, lyrics, alternateKeys) => {
         set((state) => {
           // Kanonik kayıt tam içerikle, alternatif anahtarlar yalnızca işaretçi
           // olarak yazılır; aynı içerik diskte tekrar tekrar tutulmaz.
@@ -332,11 +345,22 @@ export const useStore = create<AppState>()(
             }
           }
           return { lyricsCache: updated };
-        }),
+        });
+        // Kalıcı katman SQLite; yazma başarısız olsa bile bu oturumdaki
+        // bellekteki önbellek çalışmaya devam eder.
+        saveLyricsEntry(id, lyrics, alternateKeys).catch((error) => {
+          console.warn('[useStore] söz önbelleğe yazılamadı:', error);
+        });
+      },
       // Alternatif anahtarlar `{ ref }` işaretçisi olabileceği için çözümleme
       // `findLyricsInCache` içinde yapılır (paylaşılan, test edilebilir mantık).
       getLyricsFromCache: (params) => findLyricsInCache(get().lyricsCache, getLyricsCacheKeys(params)),
-      clearLyricsCache: () => set({ lyricsCache: {} }),
+      clearLyricsCache: () => {
+        set({ lyricsCache: {} });
+        clearLyricsCacheDB().catch((error) => {
+          console.warn('[useStore] söz önbelleği temizlenemedi:', error);
+        });
+      },
 
       lyricsOffsets: {},
       setLyricsOffset: (trackId, offsetSeconds) => {
@@ -354,6 +378,7 @@ export const useStore = create<AppState>()(
           if (current === value) return state;
           return { lyricsOffsets: { ...state.lyricsOffsets, [key]: value } };
         });
+        persistOffsetsIfReady();
       },
       setLyricsOffsets: (trackIds, offsetSeconds) => {
         const keys = Array.from(
@@ -385,6 +410,7 @@ export const useStore = create<AppState>()(
 
           return changed ? { lyricsOffsets: next } : state;
         });
+        persistOffsetsIfReady();
       },
 
       upNextIds: [],
@@ -739,17 +765,17 @@ export const useStore = create<AppState>()(
         unplayableTrackIds: state.unplayableTrackIds,
         artworkMap: state.artworkMap,
         metadataMap: state.metadataMap,
-        // Söz önbelleği tekilleştirilmiş + hafifletilmiş olarak yazılır.
-        lyricsCache: normalizeLyricsCache(state.lyricsCache),
-        // Parça başına söz ofsetleri; 0 ve geçersiz değerler yazılmaz.
-        lyricsOffsets: normalizeLyricsOffsets(state.lyricsOffsets),
+        // Söz önbelleği ve ofsetler ARTIK AsyncStorage'a yazılmaz; SQLite'ta
+        // tutulur (bkz. services/lyricsStore.ts). Böylece tek-kayıt boyut sınırı
+        // nedeniyle tüm store yazımının sessizce durması riski ortadan kalkar.
         // Kuyruk modeli: bağlam sırası + manuel "Sırada" listesi (yalnızca kimlikler).
         contextIds: state.contextIds,
         upNextIds: state.upNextIds,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
-          state.setIsHydrated(true);
+          // Söz verisi SQLite'tan yüklendikten SONRA `isHydrated` işaretlenir
+          // (aşağıdaki finishHydration). Böylece ilk karede söz ofsetleri hazır olur.
           if ((state as any).lastPlaybackState) {
             delete (state as any).lastPlaybackState;
           }
@@ -759,12 +785,55 @@ export const useStore = create<AppState>()(
   )
 );
 
-if (typeof useStore.persist?.onFinishHydration === 'function') {
-  useStore.persist.onFinishHydration(() => {
-    useStore.getState().setIsHydrated(true);
+/**
+ * Söz verisi SQLite'tan yüklenene kadar `isHydrated` işaretlenmez.
+ * Açılış ekranı bu bayrağı beklediği için sözler/ofsetler ilk karede hazırdır.
+ */
+let lyricsStorageReady = false;
+let lyricsBootstrapPromise: Promise<void> | null = null;
+let hydrationHandled = false;
+
+function persistOffsetsIfReady(): void {
+  if (!lyricsStorageReady) return;
+  scheduleLyricsOffsetsSave(useStore.getState().lyricsOffsets);
+}
+
+async function bootstrapLyricsStorage(): Promise<void> {
+  const state = useStore.getState();
+
+  // v20 ve öncesinde sözler AsyncStorage'daydı. Migrasyon onları belleğe alır;
+  // burada BİR KEZ SQLite'a taşınır. Taşıma başarılı olmadan bayrak yazılmaz.
+  await importLegacyLyricsOnce({
+    cache: state.lyricsCache,
+    offsets: state.lyricsOffsets,
   });
+
+  const [cache, offsets] = await Promise.all([loadLyricsCache(), loadLyricsOffsets()]);
+  useStore.setState({ lyricsCache: cache, lyricsOffsets: offsets });
+  lyricsStorageReady = true;
+}
+
+function finishHydration(): void {
+  if (hydrationHandled) return;
+  hydrationHandled = true;
+
+  const bootstrap = (lyricsBootstrapPromise ??= bootstrapLyricsStorage());
+  bootstrap
+    .catch((error) => {
+      // SQLite açılamazsa uygulama yine açılsın: bu oturumda migrasyondan gelen
+      // bellekteki sözlerle devam edilir, sonraki açılışta taşıma yeniden denenir.
+      console.warn('[useStore] söz veritabanı hazırlanamadı:', error);
+      lyricsStorageReady = true;
+    })
+    .finally(() => {
+      useStore.getState().setIsHydrated(true);
+    });
+}
+
+if (typeof useStore.persist?.onFinishHydration === 'function') {
+  useStore.persist.onFinishHydration(finishHydration);
 }
 if (useStore.persist?.hasHydrated?.()) {
-  useStore.getState().setIsHydrated(true);
+  finishHydration();
 }
 

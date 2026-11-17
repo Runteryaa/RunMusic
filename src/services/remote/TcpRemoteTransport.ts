@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import { tcpHostServer } from './tcpHostServer';
 import { tcpClient, type ClientConnectionStatus } from './tcpClient';
 import { udpDiscoveryService } from './udpDiscovery';
+import { createDeviceId, generatePairingToken } from './pairingSecurity';
 import { RUNMUSIC_TCP_PORT, type RemoteMessage } from './remoteTypes';
 import type {
   IRemoteTransport,
@@ -21,13 +22,12 @@ export class TcpRemoteTransport implements IRemoteTransport {
   public async startHost(deviceName: string): Promise<void> {
     if (this.isHosting) return;
 
-    const deviceId = `device_${Platform.OS}_${Date.now()}`;
+    const deviceId = createDeviceId();
 
     // Configure Host server handlers
     tcpHostServer.setHandlers({
       validateToken: (token, clientDeviceId) => true, // Will be overridden or passed via hostHandlers
-      generateToken: (clientDeviceId, clientDeviceName) =>
-        `token_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      generateToken: (clientDeviceId, clientDeviceName) => generatePairingToken(),
       onPairChallenge: (challenge) => {
         this.hostHandlers?.onPairChallenge?.(challenge);
       },

@@ -1,9 +1,10 @@
-import { AppState, Platform } from 'react-native';
+import { AppState } from 'react-native';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
 import { RepeatMode } from 'react-native-track-player';
+import { createDeviceId } from '../services/remote/pairingSecurity';
 import type {
   DiscoveredHost,
   TrustedClient,
@@ -179,7 +180,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
   persist(
     (set, get) => ({
       // Persisted defaults
-      localDeviceId: `device_${Platform.OS}_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`,
+      localDeviceId: createDeviceId(),
       isServiceEnabled: false,
       startOnLaunch: false,
       customDeviceName: DEFAULT_DEVICE_NAME,
@@ -503,7 +504,7 @@ export const useRemoteConnectStore = create<RemoteConnectStoreState>()(
           persistedState.startOnLaunch = false;
         }
         if (version < 3 || !persistedState.localDeviceId) {
-          persistedState.localDeviceId = `device_${Platform.OS}_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`;
+          persistedState.localDeviceId = createDeviceId();
         }
         if (!persistedState.pairedHosts) {
           persistedState.pairedHosts = {};

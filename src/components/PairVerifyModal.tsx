@@ -14,6 +14,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { useTranslation } from '../services/i18n';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { tcpClient } from '../services/remote/tcpClient';
+import { PAIRING_PIN_LENGTH } from '../services/remote/pairingSecurity';
 
 export function PairVerifyModal() {
   const { t } = useTranslation();
@@ -29,7 +30,7 @@ export function PairVerifyModal() {
 
   const handleVerify = () => {
     const trimmed = pin.trim();
-    if (trimmed.length !== 4) {
+    if (trimmed.length !== PAIRING_PIN_LENGTH) {
       setError(t('remote.pin_error'));
       return;
     }
@@ -84,10 +85,10 @@ export function PairVerifyModal() {
               setError(null);
               setPin(val.replace(/[^0-9]/g, ''));
             }}
-            placeholder="0000"
+            placeholder="000000"
             placeholderTextColor="rgba(255,255,255,0.25)"
             keyboardType="number-pad"
-            maxLength={4}
+            maxLength={PAIRING_PIN_LENGTH}
             autoFocus
             textAlign="center"
           />
@@ -113,10 +114,10 @@ export function PairVerifyModal() {
               style={[
                 styles.button,
                 styles.verifyBtn,
-                { backgroundColor: theme.primary, opacity: pin.length === 4 ? 1 : 0.6 },
+                { backgroundColor: theme.primary, opacity: pin.length === PAIRING_PIN_LENGTH ? 1 : 0.6 },
               ]}
               onPress={handleVerify}
-              disabled={pin.length !== 4}
+              disabled={pin.length !== PAIRING_PIN_LENGTH}
               activeOpacity={0.7}
             >
               <Text style={styles.verifyBtnText}>

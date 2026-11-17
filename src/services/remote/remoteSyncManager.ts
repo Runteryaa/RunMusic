@@ -8,6 +8,12 @@ import TrackPlayer, {
 import { tcpHostServer, type PendingPairChallenge } from './tcpHostServer';
 import { tcpClient, type ClientConnectionStatus } from './tcpClient';
 import { udpDiscoveryService } from './udpDiscovery';
+import {
+  constantTimeEqual,
+  generateNumericCode,
+  generatePairingToken,
+  generateRequestId,
+} from './pairingSecurity';
 import { useRemoteConnectStore } from '../../store/useRemoteConnectStore';
 import { useStore } from '../../store/useStore';
 import { useThemeStore } from '../../store/useThemeStore';
@@ -144,11 +150,15 @@ class RemoteSyncManager {
     tcpHostServer.setHandlers({
       validateToken: (token: string, clientDeviceId: string) => {
         const trusted = useRemoteConnectStore.getState().trustedDevices;
-        return trusted.some((c) => c.token === token && (c.deviceId === clientDeviceId || !c.deviceId));
+        return trusted.some(
+          (c) =>
+            constantTimeEqual(c.token, token) &&
+            (!c.deviceId || constantTimeEqual(c.deviceId, clientDeviceId))
+        );
       },
 
       generateToken: (clientDeviceId: string, clientDeviceName: string) => {
-        const token = `token_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        const token = generatePairingToken();
         const client: TrustedClient = {
           deviceId: clientDeviceId,
           deviceName: clientDeviceName,
@@ -241,7 +251,7 @@ class RemoteSyncManager {
     const rawStored = useRemoteConnectStore.getState().internetRoomCode;
     const roomCode = rawStored
       ? rawStored.replace(/^RUN-/, '')
-      : `${Math.floor(1000 + Math.random() * 9000)}`;
+      : generateNumericCode(6);
     this.startInternetHostRoom(roomCode).catch((err) => {
       console.warn('[RemoteSyncManager] Internet host start failed:', err);
     });
@@ -1086,7 +1096,7 @@ class RemoteSyncManager {
     const rawCode =
       customCode ||
       useRemoteConnectStore.getState().internetRoomCode ||
-      `${Math.floor(1000 + Math.random() * 9000)}`;
+      generateNumericCode(6);
 
     const code = rawCode
       .toUpperCase()
@@ -1401,7 +1411,7 @@ class RemoteSyncManager {
 
   public queryRemoteLibrary(search = '', offset = 0, limit = 50): Promise<LibraryResultMessage> {
     return new Promise((resolve, reject) => {
-      const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const requestId = generateRequestId('req');
       const timer = setTimeout(() => {
         this.pendingLibraryQueries.delete(requestId);
         reject(new Error('Library query timed out'));

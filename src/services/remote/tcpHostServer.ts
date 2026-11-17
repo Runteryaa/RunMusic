@@ -1,6 +1,12 @@
 import TcpSocket from 'react-native-tcp-socket';
 import { serializeNDJSON, NDJSONParser } from './ndjsonFramer';
 import {
+  MAX_PIN_ATTEMPTS,
+  constantTimeEqual,
+  generatePairingPin,
+  generatePairingToken,
+} from './pairingSecurity';
+import {
   RUNMUSIC_TCP_PORT,
   type RemoteMessage,
   type PairInitMessage,
@@ -34,6 +40,8 @@ interface ConnectedClient {
   clientDeviceId?: string;
   clientDeviceName?: string;
   activePin?: string;
+  /** Bu eşleştirme denemesinde yanlış girilen PIN sayısı. */
+  failedPinAttempts?: number;
 }
 
 class TCPHostServer {
@@ -151,9 +159,10 @@ class TCPHostServer {
       return;
     }
 
-    // Otherwise, generate 4-digit PIN for challenge
-    const pin = Math.floor(1000 + Math.random() * 9000).toString();
+    // Otherwise, generate a 6-digit PIN for the challenge (CSPRNG).
+    const pin = generatePairingPin();
     client.activePin = pin;
+    client.failedPinAttempts = 0;
 
     // Send challenge required to client
     const challengeMsg: PairChallengeRequiredMessage = {
@@ -182,19 +191,45 @@ class TCPHostServer {
   }
 
   private handlePairVerify(client: ConnectedClient, msg: PairVerifyMessage): void {
-    if (client.activePin && msg.pin === client.activePin) {
-      client.activePin = undefined;
-      const token = this.tokenGenerator
-        ? this.tokenGenerator(client.clientDeviceId || 'unknown', client.clientDeviceName || 'client')
-        : `token_${Date.now()}`;
-      this.authorizeClient(client, token);
-    } else {
+    // Aktif bir challenge yoksa (süresi dolmuş/reddedilmiş/temizlenmiş) doğrulama
+    // yapılmaz. Aksi halde eski PIN ile tekrar deneme kabul edilebilirdi.
+    if (!client.activePin) {
       const fail: PairFailureMessage = {
         type: 'PAIR_FAILURE',
-        reason: 'INVALID_PIN',
+        reason: 'UNAUTHORIZED',
       };
       this.sendToClient(client.socket, fail);
+      return;
     }
+
+    if (constantTimeEqual(msg.pin, client.activePin)) {
+      client.activePin = undefined;
+      client.failedPinAttempts = 0;
+      const token = this.tokenGenerator
+        ? this.tokenGenerator(client.clientDeviceId || 'unknown', client.clientDeviceName || 'client')
+        : generatePairingToken();
+      this.authorizeClient(client, token);
+      return;
+    }
+
+    // Yanlış PIN: deneme sayılır. Beş yanlış denemeden sonra eşleştirme
+    // kilitlenir ve kullanıcı host ekranından yeniden başlatmak zorundadır.
+    client.failedPinAttempts = (client.failedPinAttempts ?? 0) + 1;
+    if (client.failedPinAttempts >= MAX_PIN_ATTEMPTS) {
+      client.activePin = undefined;
+      const locked: PairFailureMessage = {
+        type: 'PAIR_FAILURE',
+        reason: 'TOO_MANY_ATTEMPTS',
+      };
+      this.sendToClient(client.socket, locked);
+      return;
+    }
+
+    const fail: PairFailureMessage = {
+      type: 'PAIR_FAILURE',
+      reason: 'INVALID_PIN',
+    };
+    this.sendToClient(client.socket, fail);
   }
 
   private authorizeClient(client: ConnectedClient, token: string): void {
