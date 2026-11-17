@@ -418,14 +418,22 @@ export async function playQueueTrack(
     duration: targetTrack.duration || 0,
     hasArtwork: !!art,
   };
-  useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
-  if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
-    useThemeStore.getState().updateThemeFromArtwork(art);
-  }
 
-  // Doğrudan hedef parçaya atla ve çal (ses kesintisi ve setQueue sıfırlaması olmadan)
-  await TrackPlayer.skip(targetIndex);
-  await TrackPlayer.play();
+  // Doğrudan hedef parçaya atla ve çal (ses kesintisi ve setQueue sıfırlaması olmadan).
+  // Optimistik arayüz/tema, atlama ile AYNI anda uygulanır: önce uygulanırsa
+  // "arayüz değişti ama şarkı başlamadı", sonra uygulanırsa "şarkı başladı ama
+  // arayüz eskide kaldı" görüntüsü oluşuyordu.
+  try {
+    await TrackPlayer.skip(targetIndex);
+    useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+    if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
+      useThemeStore.getState().updateThemeFromArtwork(art);
+    }
+    await TrackPlayer.play();
+  } catch (skipError) {
+    // Atlama başarısızsa arayüz de değişmemeli; hatayı çağırana bırak.
+    throw skipError;
+  }
 
   const currentUpNextIds = useStore.getState().upNextIds;
   const clearOnSelect = useStore.getState().preferences.clearQueueOnTrackSelect;
@@ -745,6 +753,11 @@ export async function startPlaybackFromLibrary(params: {
   const startTrack = ordered[startIndex];
   recordAttemptedTrack(startTrack, startIndex);
 
+  // Arayüz/tema bilgisi burada YALNIZCA hesaplanır; uygulanması `play()`
+  // öncesine bırakılır. Erken uygulanırsa kuyruk kurulumu (setQueue) uzun
+  // sürdüğünde ekran yeni şarkıya geçip ses eski şarkıda kalıyordu — kullanıcı
+  // bunu "arayüz değişti ama şarkı başlamadı" olarak görüyordu.
+  let optimisticApply: (() => void) | null = null;
   if (startTrack) {
     const meta = metadataMap[startTrack.id];
     const art =
@@ -758,10 +771,12 @@ export async function startPlaybackFromLibrary(params: {
       duration: startTrack.duration || 0,
       hasArtwork: !!art,
     };
-    useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
-    if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
-      useThemeStore.getState().updateThemeFromArtwork(art);
-    }
+    optimisticApply = () => {
+      useOptimisticPlayerStore.getState().setOptimisticTrack(summary, art);
+      if (art && useStore.getState().preferences.dynamicColorFromArtwork) {
+        useThemeStore.getState().updateThemeFromArtwork(art);
+      }
+    };
   }
 
   // Kullanıcının manuel olarak eklediği (Up Next) şarkıları koru
@@ -875,7 +890,10 @@ export async function startPlaybackFromLibrary(params: {
   if (finalStartIndex > 0) {
     await TrackPlayer.skip(finalStartIndex);
   }
+  // Kuyruk hazır ve ses gerçekten başlamak üzereyken arayüz/tema uygulanır.
+  // Böylece "ekran yeni şarkıya geçti ama ses hâlâ eskisinde" durumu oluşmaz.
   try {
+    optimisticApply?.();
     await TrackPlayer.play();
   } catch (e) {
     console.warn('[queueController] startPlaybackFromLibrary play error:', e);

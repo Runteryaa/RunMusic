@@ -738,15 +738,14 @@ export default function LibraryScreen() {
         duration: selectedAsset.duration || 0,
         hasArtwork: !!targetArtwork,
       };
-      useOptimisticPlayerStore.getState().setOptimisticTrack(summary, targetArtwork || null);
 
-      // 1. Temayı hemen yeni seçilen şarkının kapağına geçir ki ara renk / flash olmasın
-      if (targetArtwork && preferences.dynamicColorFromArtwork) {
-        useThemeStore.getState().updateThemeFromArtwork(targetArtwork);
-      }
-
-      // Uzak cihaz bağlantısı aktifse komutu doğrudan sunucu cihaza yönlendir
+      // Uzak cihaz bağlantısı aktifse komutu doğrudan sunucu cihaza yönlendir.
+      // Bu yolda yerel oynatıcı olmadığı için arayüz iyimser katmandan beslenir.
       if (useRemoteConnectStore.getState().isRemoteConnected()) {
+        useOptimisticPlayerStore.getState().setOptimisticTrack(summary, targetArtwork || null);
+        if (targetArtwork && preferences.dynamicColorFromArtwork) {
+          useThemeStore.getState().updateThemeFromArtwork(targetArtwork);
+        }
         remoteSyncManager.sendClientCommand({
           type: 'COMMAND_PLAY_TRACK',
           trackId: selectedAsset.id,
@@ -1510,12 +1509,13 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#18181b',
+    // Cam buton: saydam dolgu + ince saydam kenarlık.
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 8,
     borderWidth: 1,
-    borderColor: '#27272a',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   searchBarContainer: {
     flexDirection: 'row',
@@ -1532,12 +1532,12 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#18181b',
-    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 14,
     paddingHorizontal: 12,
     height: 42,
     borderWidth: 1,
-    borderColor: '#27272a',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   searchInnerIcon: {
     marginRight: 8,

@@ -1501,10 +1501,11 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
   },
   section: {
-    backgroundColor: '#18181b',
-    borderRadius: 14,
+    // Cam kart: saydam dolgu + ince saydam kenarlık (uygulama cam dili).
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#27272a',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
     marginBottom: 14,
     overflow: 'hidden',
   },
@@ -1517,8 +1518,10 @@ const styles = StyleSheet.create({
   sectionIcon: {
     width: 32,
     height: 32,
-    borderRadius: 8,
-    backgroundColor: '#27272a',
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
