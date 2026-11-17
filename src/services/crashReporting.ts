@@ -35,6 +35,37 @@ export function isCrashReportingEnabled(): boolean {
 }
 
 /**
+ * Yakalanmamış JS hatalarını (fatal olanlar dahil) Crashlytics'e iletir.
+ *
+ * NEDEN: `ErrorBoundary` yalnızca React render hatalarını görür. Promise
+ * reddi, olay işleyicisi veya native köprüden gelen bir hata bu sınırın
+ * dışında kalır ve uygulama sessizce çöker; o durumda panelde hiçbir iz
+ * olmuyordu. RN'in kendi global işleyicisi korunur: rapor yazıldıktan sonra
+ * hata yine ona devredilir, böylece kırmızı ekran/çökme davranışı değişmez.
+ */
+export function installGlobalErrorHandler(): void {
+  try {
+    const errorUtils = (globalThis as { ErrorUtils?: { getGlobalHandler: () => unknown; setGlobalHandler: (handler: unknown) => void } }).ErrorUtils;
+    if (!errorUtils) return;
+
+    const previousHandler = errorUtils.getGlobalHandler();
+    errorUtils.setGlobalHandler((error: unknown, isFatal?: boolean) => {
+      // Raporlama asla çökme yolunu kesmemeli.
+      try {
+        reportError(error, { source: 'global', fatal: isFatal === true });
+      } catch {
+        // yoksay
+      }
+      if (typeof previousHandler === 'function') {
+        (previousHandler as (e: unknown, f?: boolean) => void)(error, isFatal);
+      }
+    });
+  } catch (error) {
+    console.warn('[crashReporting] global hata yakalayıcı kurulamadı:', error);
+  }
+}
+
+/**
  * Yakalanan bir hatayı raporlar. Hata nesnesi olmayan değerler de kabul edilir
  * (`throw 'mesaj'` gibi durumlar için).
  */

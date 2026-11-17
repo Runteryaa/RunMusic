@@ -26,7 +26,7 @@ import { initSleepTimerService } from '../store/useSleepTimerStore';
 import { useTranslation, t } from '../services/i18n';
 import { initAdService } from '../services/adService';
 import { startNetworkMonitoring } from '../services/networkStatus';
-import { initCrashReporting } from '../services/crashReporting';
+import { initCrashReporting, installGlobalErrorHandler } from '../services/crashReporting';
 import * as Font from 'expo-font';
 import { getCachedLibrary } from '../services/libraryStorage';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
@@ -37,6 +37,7 @@ import { DeviceSelectorModal } from '../components/DeviceSelectorModal';
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useExtensionStore } from '../store/useExtensionStore';
 import { AppAlertModal } from '../components/AppAlertModal';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { installGlobalAlert } from '../services/customAlert';
 
 let MusicWidgetModule: any = null;
@@ -50,6 +51,9 @@ try {
 SplashScreen.preventAutoHideAsync().catch(() => {});
 // Çökme raporlama: geliştirme derlemesinde toplama kapalı, üretimde açık.
 initCrashReporting();
+// ErrorBoundary dışında kalan JS hataları (promise reddi, olay işleyici) da
+// panele düşsün; RN'in kendi işleyicisi zincirin sonunda korunur.
+installGlobalErrorHandler();
 // Ağ durumu tek dinleyiciden izlenir; çevrimdışıyken söz/kapak/sanatçı
 // istekleri atılmaz, bağlantı gelince scrobble kuyruğu boşaltılır.
 startNetworkMonitoring();
@@ -615,5 +619,9 @@ export default function TabLayout() {
     return <View style={{ flex: 1, backgroundColor: '#121212' }} />;
   }
 
-  return <MainAppLayout onFirstLayout={hideSplashAfterFirstLayout} />;
+  return (
+    <ErrorBoundary>
+      <MainAppLayout onFirstLayout={hideSplashAfterFirstLayout} />
+    </ErrorBoundary>
+  );
 }
