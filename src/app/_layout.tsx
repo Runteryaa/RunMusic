@@ -26,7 +26,7 @@ import { initSleepTimerService } from '../store/useSleepTimerStore';
 import { useTranslation, t } from '../services/i18n';
 import { initAdService } from '../services/adService';
 import { startNetworkMonitoring } from '../services/networkStatus';
-import { initCrashReporting, installGlobalErrorHandler } from '../services/crashReporting';
+import { initCrashReporting, installGlobalErrorHandler, logBreadcrumb } from '../services/crashReporting';
 import * as Font from 'expo-font';
 import { getCachedLibrary } from '../services/libraryStorage';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
@@ -233,6 +233,18 @@ function MainAppLayout({ onFirstLayout }: { onFirstLayout: () => void }) {
       router.replace('/');
     }
   }, [extensionsEnabled, pathname]);
+
+  // Çökme raporuna bağlam: hangi ekranda ve hangi parça çalarken olduğu.
+  // Breadcrumb'lar yalnızca tanılama içindir; akışı hiç etkilemez.
+  useEffect(() => {
+    if (pathname) logBreadcrumb(`screen:${pathname}`);
+  }, [pathname]);
+
+  const breadcrumbTrack = useActiveTrack();
+  useEffect(() => {
+    if (!breadcrumbTrack?.id) return;
+    logBreadcrumb(`track:${breadcrumbTrack.id}`);
+  }, [breadcrumbTrack?.id]);
 
   // Uygulama kapatılınca çalma davranışını native servise senkronize et
   useEffect(() => {
