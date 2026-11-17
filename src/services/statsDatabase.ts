@@ -304,6 +304,39 @@ export async function getHistoryInRange(
   }
 }
 
+/** Isı haritası için hafif satır: yalnızca zaman damgası ve dinlenen süre. */
+export interface DailyPlayRow {
+  played_at: string;
+  duration_listened: number | null;
+}
+
+/**
+ * Verilen aralıktaki dinlemelerin **hafif** listesi (ısı haritası ve aylık özet).
+ *
+ * Başlık/sanatçı/kapak alanları seçilmez: bir yıllık geçmişte binlerce satır
+ * dönebildiği için gereksiz veri taşınmaz. Gün bazında gruplama JS'te yerel
+ * saat dilimine göre yapılır (SQLite UTC tutar, `played_at` yerel değildir).
+ */
+export async function getDailyPlayStats(
+  startSql: string,
+  endSql: string
+): Promise<DailyPlayRow[]> {
+  try {
+    return await withStatsDB((database) =>
+      database.getAllAsync<DailyPlayRow>(
+        `SELECT played_at, duration_listened FROM play_history
+          WHERE played_at >= ? AND played_at < ?
+          ORDER BY played_at ASC`,
+        startSql,
+        endSql
+      )
+    );
+  } catch (error) {
+    console.warn('Failed to get daily play stats:', error);
+    return [];
+  }
+}
+
 /** LIKE deseninde özel karakterleri kaçırır (`%`, `_`, `\`). */
 function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (match) => `\\${match}`);

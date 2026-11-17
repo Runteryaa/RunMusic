@@ -49,6 +49,12 @@ import {
 import { compareAddedDate, type SortOption } from '../services/librarySort';
 import { normalizeSearchText } from '../services/searchUtils';
 import { useTranslation } from '../services/i18n';
+import { searchLyricsCache, type LyricsSearchHit } from '../services/lyricsSearch';
+import {
+  addRecentSearch,
+  clearRecentSearches,
+  loadRecentSearches,
+} from '../services/recentSearches';
 import { getCachedLibrary, saveCachedLibrary } from '../services/libraryStorage';
 import {
   mergeCompletedDownloadsIntoAssets,
@@ -68,6 +74,33 @@ const TRACK_INFO_CACHE = new Map<
 >();
 const MAX_TRACK_INFO_CACHE = 3000;
 
+/** Kitaplık listesindeki tek satır: parça + bir kez hesaplanmış görünen bilgiler. */
+interface LibraryListItem {
+  asset: MediaLibrary.Asset;
+  cacheKey: string;
+  info: { title: string; artist: string };
+  sortKey: string;
+  searchTarget: string;
+}
+
+/**
+ * Bir satırın normalize edilmiş arama hedefini döndürür.
+ *
+ * Hedef ilk aramada hesaplanıp bilgi önbelleğine yazılır; sonraki aramalar
+ * anında çalışır. Önbellek yazımı render sırasında yeni nesne üretmediği için
+ * memoize edilmiş listeler geçersizleşmez.
+ */
+function resolveSearchTarget(item: LibraryListItem): string {
+  if (item.searchTarget) return item.searchTarget;
+  const cached = TRACK_INFO_CACHE.get(item.cacheKey);
+  if (cached?.searchTarget) return cached.searchTarget;
+  const target = normalizeSearchText(
+    `${item.info.title} ${item.info.artist} ${item.asset.filename}`
+  );
+  if (cached) cached.searchTarget = target;
+  return target;
+}
+
 export default function LibraryScreen() {
   useComponentDiagnostics('LibraryScreen');
   const insets = useSafeAreaInsets();
@@ -80,6 +113,7 @@ export default function LibraryScreen() {
   const settings = useStore((s) => s.settings);
   const hideTrack = useStore((s) => s.hideTrack);
   const artworkMap = useStore((s) => s.artworkMap);
+  const lyricsCache = useStore((s) => s.lyricsCache);
   const metadataMap = useStore((s) => s.metadataMap);
   const setBatchTrackMetadata = useStore((s) => s.setBatchTrackMetadata);
   const isShuffle = useStore((s) => s.isShuffle);
@@ -117,6 +151,8 @@ export default function LibraryScreen() {
   // Search state
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  /** Son aramalar (en fazla 8) — ayrı AsyncStorage anahtarında tutulur. */
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
 
   // Sort state (defaults to name_asc)
   // Sıralama tercihi kalıcıdır (Ayarlar'da da değiştirilebilir); yerel state yok.
@@ -126,6 +162,10 @@ export default function LibraryScreen() {
   // Track action menu state
   const [selectedTrackForMenu, setSelectedTrackForMenu] = useState<MediaLibrary.Asset | null>(null);
   const [trackToEdit, setTrackToEdit] = useState<EditTrackTarget | null>(null);
+
+  // Çoklu seçim: uzun basışla açılır, satıra dokunmak seçimi değiştirir.
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Added to queue toast indicator
   const [queueToast, setQueueToast] = useState<string | null>(null);
@@ -249,6 +289,183 @@ export default function LibraryScreen() {
         },
       ]
     );
+  };
+
+  /** Seçim modunu açar; ilk parça seçili gelir. */
+  const startSelection = (asset: MediaLibrary.Asset) => {
+    setIsSelectionMode(true);
+    setSelectedIds([asset.id]);
+  };
+
+  const exitSelection = () => {
+    setIsSelectionMode(false);
+    setSelectedIds([]);
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    );
+  };
+
+  const selectAllDisplayed = () => {
+    setSelectedIds(displayedList.map((item) => item.asset.id));
+  };
+
+  /**
+   * Seçili parçaları kuyruğa ekler. Tek tek `handleAddToQueue` çağırmak her
+   * parça için ayrı toast açardı; bu yüzden tek bir toplu işlem yapılır.
+   */
+  const handleBulkAddToQueue = (position: 'end' | 'next') => {
+    if (selectedAssets.length === 0) return;
+    const isRemote = useRemoteConnectStore.getState().isRemoteConnected();
+    try {
+      for (const asset of selectedAssets) {
+        const track = buildQueueTrack(asset);
+        if (isRemote) {
+          remoteSyncManager.sendClientCommand({
+            type: 'COMMAND_QUEUE_ADD',
+            trackId: asset.id,
+            title: track.title,
+            artist: track.artist || undefined,
+            position: position === 'next' ? 'next' : 'end',
+          });
+        } else if (position === 'next') {
+          playNext(track);
+        } else {
+          addToQueue(track);
+        }
+      }
+      showToast(
+        `${selectedAssets.length} ${t(
+          position === 'next' ? 'library.play_next_added' : 'library.added_to_queue'
+        )}`
+      );
+      exitSelection();
+    } catch (e) {
+      console.warn('Bulk queue action failed', e);
+    }
+  };
+
+  /** Seçili parçaları kütüphaneden gizler (dosya silinmez). */
+  const handleBulkHide = async () => {
+    if (selectedAssets.length === 0) return;
+    try {
+      const active = await TrackPlayer.getActiveTrack();
+      const queue = await TrackPlayer.getQueue();
+      for (const asset of selectedAssets) {
+        if (active && (active.id === asset.id || active.url === asset.uri)) {
+          try {
+            await TrackPlayer.skipToNext();
+          } catch {
+            await TrackPlayer.pause();
+          }
+        }
+        const trackIdx = queue.findIndex((t) => t.id === asset.id || t.url === asset.uri);
+        if (trackIdx !== -1) {
+          await TrackPlayer.remove(trackIdx).catch(() => {});
+        }
+        hideTrack(asset.id);
+      }
+      saveCachedLibrary(useStore.getState().library).catch(() => {});
+      showToast(t('library.selected_count', { count: selectedAssets.length }));
+      exitSelection();
+    } catch (e) {
+      console.warn('Bulk hide failed', e);
+    }
+  };
+
+  /** Seçili parçaları cihazdan kalıcı olarak siler (onaylı). */
+  const handleBulkDelete = () => {
+    if (selectedAssets.length === 0) return;
+    const count = selectedAssets.length;
+    Alert.alert(
+      t('library.delete_selected_title'),
+      t('library.delete_selected_msg', { count }),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('common.delete'),
+          style: 'destructive',
+          onPress: async () => {
+            const ids = selectedAssets.map((asset) => asset.id);
+            try {
+              const success = await MediaLibrary.deleteAssetsAsync(ids);
+              if (!success) {
+                Alert.alert(t('common.error'), t('library.delete_error_permission'));
+                return;
+              }
+              const idSet = new Set(ids);
+              const uriSet = new Set(selectedAssets.map((asset) => asset.uri));
+              const updatedLibrary = useStore
+                .getState()
+                .library.filter((asset) => !idSet.has(asset.id));
+              useStore.getState().setLibrary(updatedLibrary);
+              saveCachedLibrary(updatedLibrary).catch(() => {});
+
+              try {
+                const active = await TrackPlayer.getActiveTrack();
+                if (active && (idSet.has(active.id || '') || uriSet.has(active.url || ''))) {
+                  try {
+                    await TrackPlayer.skipToNext();
+                  } catch {
+                    await TrackPlayer.pause();
+                  }
+                }
+                const queue = await TrackPlayer.getQueue();
+                // Sondan başa doğru sil ki indeksler kaymasın.
+                for (let i = queue.length - 1; i >= 0; i--) {
+                  const entry = queue[i];
+                  if (idSet.has(entry.id || '') || uriSet.has(entry.url || '')) {
+                    await TrackPlayer.remove(i).catch(() => {});
+                  }
+                }
+              } catch (e) {
+                console.warn('TrackPlayer update on bulk delete failed', e);
+              }
+
+              showToast(t('library.delete_selected_success', { count }));
+              exitSelection();
+            } catch (e) {
+              console.error('Failed to delete selected assets', e);
+              Alert.alert(t('common.error'), t('library.delete_error_generic'));
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Arama açıldığında son aramaları yükle.
+  useEffect(() => {
+    if (!isSearchOpen) return;
+    let cancelled = false;
+    loadRecentSearches().then((items) => {
+      if (!cancelled) setRecentSearches(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSearchOpen]);
+
+  const commitSearch = useCallback((value: string) => {
+    addRecentSearch(value, recentSearches)
+      .then((items) => setRecentSearches(items))
+      .catch(() => {});
+  }, [recentSearches]);
+
+  const clearSearchHistory = () => {
+    clearRecentSearches().catch(() => {});
+    setRecentSearches([]);
+  };
+
+  const openLyricsHit = (hit: LyricsSearchHit) => {
+    const asset = library.find((item) => item.id === hit.track.id);
+    commitSearch(searchQuery);
+    if (asset) {
+      closeSearch();
+      playTrack(asset);
+    }
   };
 
   const scanMedia = useCallback(async () => {
@@ -549,6 +766,11 @@ export default function LibraryScreen() {
         setIsSortModalOpen(false);
         return true;
       }
+      if (isSelectionMode) {
+        setIsSelectionMode(false);
+        setSelectedIds([]);
+        return true;
+      }
       if (isSearchOpen) {
         setIsSearchOpen(false);
         setSearchQuery('');
@@ -567,7 +789,7 @@ export default function LibraryScreen() {
     return () => {
       backSub.remove();
     };
-  }, [selectedTrackForMenu, trackToEdit, isSortModalOpen, isSearchOpen]);
+  }, [selectedTrackForMenu, trackToEdit, isSortModalOpen, isSearchOpen, isSelectionMode]);
 
   // Compute info once per track to avoid O(N log N) regex operations during sorting
   const libraryWithInfo = useMemo(() => {
@@ -636,34 +858,45 @@ export default function LibraryScreen() {
   // The final sorted array of raw assets for TrackPlayer integration
   const fullSortedList = useMemo(() => fullSortedListWithInfo.map(item => item.asset), [fullSortedListWithInfo]);
 
-  // Displayed list (array of objects with asset and precomputed info)
-  const displayedList = useMemo(() => {
-    if (!searchQuery.trim()) return fullSortedListWithInfo;
-    const q = normalizeSearchText(searchQuery);
-    if (!q) return fullSortedListWithInfo;
+  /**
+   * Sözlerde arama için hafif parça listesi. Başlık/sanatçı zaten görünen
+   * (temizlenmiş) değerlerdir; söz önbelleği kimlik ve dosya yoluyla eşlenir.
+   */
+  const lyricsSearchTracks = useMemo(
+    () =>
+      fullSortedListWithInfo.map(({ asset, info }) => ({
+        id: asset.id,
+        uri: asset.uri,
+        title: info.title,
+        artist: info.artist,
+      })),
+    [fullSortedListWithInfo]
+  );
 
-    const terms = q.split(' ').filter(Boolean);
+  /** Sorguyla sözlerde eşleşen parçalar (en fazla 6). */
+  const lyricsHits = useMemo<LyricsSearchHit[]>(() => {
+    if (searchQuery.trim().length < 2) return [];
+    return searchLyricsCache(lyricsCache, lyricsSearchTracks, searchQuery, 6);
+  }, [lyricsCache, lyricsSearchTracks, searchQuery]);
 
-    return fullSortedListWithInfo.filter((item) => {
-      // Arama hedefini ilk aramada hesapla ve bilgi önbelleğinde sakla;
-      // sonraki aramalar anında çalışsın. Render edilen öğeyi değiştirmeyiz.
-      let searchTarget = item.searchTarget;
-      if (!searchTarget) {
-        const cached = TRACK_INFO_CACHE.get(item.cacheKey);
-        searchTarget = cached?.searchTarget || '';
-        if (!searchTarget) {
-          searchTarget = normalizeSearchText(
-            `${item.info.title} ${item.info.artist} ${item.asset.filename}`
-          );
-          if (cached) cached.searchTarget = searchTarget;
-        }
-      }
+  // Displayed list (array of objects with asset and precomputed info).
+  // React Compiler bu değeri kendi memoize eder; elle useMemo tutmak
+  // derleyicinin memoizasyonu korumasını engelliyordu.
+  const normalizedQuery = normalizeSearchText(searchQuery);
+  const searchTerms = normalizedQuery ? normalizedQuery.split(' ').filter(Boolean) : [];
+  const displayedList = !normalizedQuery
+    ? fullSortedListWithInfo
+    : fullSortedListWithInfo.filter((item) => {
+        const searchTarget = resolveSearchTarget(item);
+        if (searchTarget.includes(normalizedQuery)) return true;
+        if (searchTerms.length <= 1) return false;
+        return searchTerms.every((term) => searchTarget.includes(term));
+      });
 
-      if (searchTarget.includes(q)) return true;
-      if (terms.length <= 1) return false;
-      return terms.every((term) => searchTarget.includes(term));
-    });
-  }, [fullSortedListWithInfo, searchQuery]);
+  /** Seçim modunda işlem yapılacak parçalar (görünen sırayla). */
+  const selectedAssets = displayedList
+    .filter((item) => selectedIds.includes(item.asset.id))
+    .map((item) => item.asset);
 
   const remoteDisplayedList = useMemo(() => {
     if (!searchQuery.trim()) return remoteLibrary;
@@ -702,7 +935,7 @@ export default function LibraryScreen() {
     showToast(`"${item.title}" ${t('library.added_to_queue')}`);
   };
 
-  const handleRemoteShuffleAll = () => {
+  const handleRemoteShuffleAll = useCallback(() => {
     remoteSyncManager.sendClientCommand({
       type: 'COMMAND_SET_SHUFFLE',
       enabled: true,
@@ -721,7 +954,7 @@ export default function LibraryScreen() {
     }
     openFullscreenPlayer();
     showToast(t('library.shuffle_started'));
-  };
+  }, [openFullscreenPlayer, remoteLibrary, t]);
 
   const playTrack = async (selectedAsset: MediaLibrary.Asset) => {
     // Hızlı ardışık seçimlerde eski isteğin asenkron adımları (kuyruk okuma,
@@ -888,7 +1121,7 @@ export default function LibraryScreen() {
    * çalar. Yerelde son seçilen modu (akıllı veya standart) hatırlar; remote
    * istemcide host klasik karıştırmaya geçer.
    */
-  const handleShuffleAll = async () => {
+  const handleShuffleAll = useCallback(async () => {
     if (fullSortedList.length === 0) return;
     try {
       if (useRemoteConnectStore.getState().isRemoteConnected()) {
@@ -921,7 +1154,7 @@ export default function LibraryScreen() {
     } catch (e) {
       console.warn('Shuffle all failed', e);
     }
-  };
+  }, [buildQueueTrack, fullSortedList, isSmartShuffle, openFullscreenPlayer, t]);
 
   const closeSearch = () => {
     setSearchQuery('');
@@ -947,6 +1180,7 @@ export default function LibraryScreen() {
     const { asset, info } = item;
     const isPlayingCurrent =
       activeTrack && (activeTrack.id === asset.id || activeTrack.url === asset.uri);
+    const isSelected = selectedIds.includes(asset.id);
 
     const renderLeftActions = () => (
       <View style={[styles.swipeLeftActionBox, { backgroundColor: theme.primary }]}>
@@ -958,6 +1192,7 @@ export default function LibraryScreen() {
     return (
       <View key={`track-row-${asset.id}`}>
         <Swipeable
+          enabled={!isSelectionMode}
           renderLeftActions={renderLeftActions}
           friction={1}
           leftThreshold={130}
@@ -981,7 +1216,23 @@ export default function LibraryScreen() {
             <TouchableOpacity
               style={styles.trackMainContent}
               activeOpacity={0.7}
-              onPress={() => playTrack(asset)}>
+              onPress={() => {
+                if (isSelectionMode) toggleSelected(asset.id);
+                else playTrack(asset);
+              }}
+              onLongPress={() => {
+                if (!isSelectionMode) startSelection(asset);
+              }}
+              delayLongPress={350}>
+              {isSelectionMode ? (
+                <View style={{ marginRight: 12 }}>
+                  <Ionicons
+                    name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={22}
+                    color={isSelected ? theme.primary : '#71717a'}
+                  />
+                </View>
+              ) : null}
               <View style={{ marginRight: 12 }}>
                 <TrackArtwork
                   uri={metadataMap[asset.id]?.artwork || artworkMap[asset.id]}
@@ -1030,12 +1281,14 @@ export default function LibraryScreen() {
                 </Text>
               </View>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.trackMoreBtn}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              onPress={() => setSelectedTrackForMenu(asset)}>
-              <Ionicons name="ellipsis-vertical" size={18} color="#a1a1aa" />
-            </TouchableOpacity>
+            {!isSelectionMode ? (
+              <TouchableOpacity
+                style={styles.trackMoreBtn}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                onPress={() => setSelectedTrackForMenu(asset)}>
+                <Ionicons name="ellipsis-vertical" size={18} color="#a1a1aa" />
+              </TouchableOpacity>
+            ) : null}
           </View>
         </Swipeable>
         {/* Her 15 şarkıda bir araya zararsız banner reklam (son şarkı hariç) */}
@@ -1134,7 +1387,34 @@ export default function LibraryScreen() {
   return (
     <View style={styles.container}>
       {/* Top Header / Search Bar */}
-      {isSearchOpen ? (
+      {isSelectionMode ? (
+        <View
+          style={[
+            styles.selectionBar,
+            { paddingTop: Math.max(insets.top, 16) + 4, borderBottomColor: theme.border },
+          ]}>
+          <TouchableOpacity onPress={exitSelection} style={styles.selectionCloseBtn} hitSlop={8}>
+            <Ionicons name="close" size={22} color="#ffffff" />
+          </TouchableOpacity>
+          <Text style={styles.selectionCount} numberOfLines={1}>
+            {t('library.selected_count', { count: selectedIds.length })}
+          </Text>
+          <TouchableOpacity
+            style={styles.selectionTextBtn}
+            hitSlop={8}
+            onPress={() =>
+              selectedIds.length >= displayedList.length && displayedList.length > 0
+                ? setSelectedIds([])
+                : selectAllDisplayed()
+            }>
+            <Text style={[styles.selectionTextBtnLabel, { color: theme.textAccent }]}>
+              {selectedIds.length >= displayedList.length && displayedList.length > 0
+                ? t('library.select_none')
+                : t('library.select_all')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : isSearchOpen ? (
         <View style={[styles.searchBarContainer, { paddingTop: Math.max(insets.top, 16) + 4 }]}>
           <TouchableOpacity onPress={closeSearch} style={styles.searchBackBtn}>
             <Ionicons name="arrow-back" size={22} color="#ffffff" />
@@ -1147,6 +1427,8 @@ export default function LibraryScreen() {
               placeholderTextColor="#71717a"
               value={searchQuery}
               onChangeText={handleSearchChange}
+              returnKeyType="search"
+              onSubmitEditing={() => commitSearch(searchQuery)}
               autoFocus
             />
             {searchQuery.length > 0 && (
@@ -1212,6 +1494,46 @@ export default function LibraryScreen() {
         </View>
       ) : null}
 
+      {/* Seçim modu eylemleri */}
+      {isSelectionMode ? (
+        <View style={styles.selectionActions}>
+          <TouchableOpacity
+            style={[styles.selectionAction, { borderColor: theme.border }]}
+            activeOpacity={0.75}
+            disabled={selectedIds.length === 0}
+            onPress={() => handleBulkAddToQueue('next')}>
+            <Ionicons name="play-forward-outline" size={20} color={theme.textAccent} />
+            <Text style={styles.selectionActionLabel}>{t('library.play_selected_next')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.selectionAction, { borderColor: theme.border }]}
+            activeOpacity={0.75}
+            disabled={selectedIds.length === 0}
+            onPress={() => handleBulkAddToQueue('end')}>
+            <Ionicons name="list-outline" size={20} color={theme.textAccent} />
+            <Text style={styles.selectionActionLabel}>{t('library.add_to_queue')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.selectionAction, { borderColor: theme.border }]}
+            activeOpacity={0.75}
+            disabled={selectedIds.length === 0}
+            onPress={handleBulkHide}>
+            <Ionicons name="eye-off-outline" size={20} color={theme.textAccent} />
+            <Text style={styles.selectionActionLabel}>{t('library.hide_track')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.selectionAction, { borderColor: theme.border }]}
+            activeOpacity={0.75}
+            disabled={selectedIds.length === 0}
+            onPress={handleBulkDelete}>
+            <Ionicons name="trash-outline" size={20} color="#f87171" />
+            <Text style={[styles.selectionActionLabel, { color: '#f87171' }]}>
+              {t('library.delete_track')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       {/* Track List */}
       <FlashList
         data={isShowingRemoteLibrary ? (remoteDisplayedList as any) : displayedList}
@@ -1250,6 +1572,62 @@ export default function LibraryScreen() {
                 </TouchableOpacity>
               </View>
             )}
+
+            {!isShowingRemoteLibrary && isSelectionMode ? (
+              <Text style={styles.selectionHint}>{t('library.selection_hint')}</Text>
+            ) : null}
+
+            {!isShowingRemoteLibrary && !isSelectionMode && isSearchOpen && !searchQuery.trim() && recentSearches.length > 0 ? (
+              <View style={[styles.searchPanel, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+                <View style={styles.searchPanelHeader}>
+                  <Text style={styles.searchPanelTitle}>{t('library.recent_searches')}</Text>
+                  <TouchableOpacity onPress={clearSearchHistory} hitSlop={8}>
+                    <Text style={[styles.searchPanelAction, { color: theme.textAccent }]}>
+                      {t('library.clear_recent_searches')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.recentChipRow}>
+                  {recentSearches.map((term) => (
+                    <TouchableOpacity
+                      key={term}
+                      style={[styles.recentChip, { borderColor: theme.border }]}
+                      activeOpacity={0.75}
+                      onPress={() => setSearchQuery(term)}>
+                      <Ionicons name="time-outline" size={13} color="#a1a1aa" />
+                      <Text style={styles.recentChipText} numberOfLines={1}>
+                        {term}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
+            {!isShowingRemoteLibrary && !isSelectionMode && isSearchOpen && lyricsHits.length > 0 ? (
+              <View style={[styles.searchPanel, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+                <Text style={styles.searchPanelTitle}>{t('library.lyrics_matches')}</Text>
+                {lyricsHits.map((hit) => (
+                  <TouchableOpacity
+                    key={`lyrics-hit-${hit.track.id}`}
+                    style={styles.lyricsHitRow}
+                    activeOpacity={0.75}
+                    onPress={() => openLyricsHit(hit)}>
+                    <Ionicons name="mic-outline" size={16} color={theme.primary} />
+                    <View style={styles.lyricsHitTextWrap}>
+                      <Text style={styles.lyricsHitTitle} numberOfLines={1}>
+                        {hit.track.title}
+                        {hit.track.artist ? ` · ${hit.track.artist}` : ''}
+                      </Text>
+                      <Text style={styles.lyricsHitSnippet} numberOfLines={1}>
+                        {hit.snippet}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
+
             {(isShowingRemoteLibrary ? remoteDisplayedList.length > 0 : displayedList.length > 0) ? (
               <AdBanner style={{ marginBottom: 8 }} />
             ) : null}
@@ -1504,6 +1882,131 @@ const styles = StyleSheet.create({
   headerRightActions: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  selectionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  selectionCloseBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    marginRight: 12,
+  },
+  selectionCount: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  selectionTextBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
+  selectionTextBtnLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  selectionActions: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+  selectionAction: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 9,
+    borderRadius: 12,
+    borderWidth: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+  },
+  selectionActionLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#a1a1aa',
+    textAlign: 'center',
+  },
+  selectionHint: {
+    fontSize: 12,
+    color: '#71717a',
+    paddingHorizontal: 4,
+    paddingBottom: 8,
+  },
+  searchPanel: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 12,
+    marginBottom: 10,
+  },
+  searchPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  searchPanelTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#a1a1aa',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  searchPanelAction: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  recentChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  recentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    maxWidth: '100%',
+  },
+  recentChipText: {
+    fontSize: 12,
+    color: '#d4d4d8',
+    flexShrink: 1,
+  },
+  lyricsHitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 7,
+  },
+  lyricsHitTextWrap: {
+    flex: 1,
+  },
+  lyricsHitTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#e4e4e7',
+  },
+  lyricsHitSnippet: {
+    fontSize: 11,
+    color: '#a1a1aa',
+    marginTop: 2,
+    fontStyle: 'italic',
   },
   headerActionBtn: {
     width: 38,

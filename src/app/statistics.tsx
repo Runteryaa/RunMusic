@@ -18,9 +18,22 @@ import {
   getTotalListeningTime,
   getTotalHistoryCount,
   getHistoryInRange,
+  getDailyPlayStats,
   PlayHistoryItem,
   MostPlayedItem,
 } from '../services/statsDatabase';
+import {
+  HEATMAP_RANGES,
+  HEATMAP_RANGE_WEEKS,
+  compareCurrentMonth,
+  heatmapSqlWindow,
+  summarizeDailyRows,
+  type HeatmapRange,
+  type HeatmapSummary,
+  type MonthComparison,
+} from '../services/statsHeatmap';
+import { toSqlTimestamp } from '../services/wrappedStats';
+import { ActivityHeatmap } from '../components/ui/ActivityHeatmap';
 import { getStatsEpoch } from '../services/statsEpoch';
 import {
   buildWrappedStats,
@@ -130,6 +143,51 @@ export default function StatisticsScreen() {
   const [artistImages, setArtistImages] = useState<Record<string, string>>({});
 
   const [refreshing, setRefreshing] = useState(false);
+
+  // Dinleme ısı haritası: seçili aralık + aylık özet.
+  const [heatmapRange, setHeatmapRange] = useState<HeatmapRange>('year');
+  const [heatmap, setHeatmap] = useState<HeatmapSummary>({
+    counts: {},
+    seconds: {},
+    totalPlays: 0,
+    totalSeconds: 0,
+    maxCount: 0,
+  });
+  const [heatmapLoading, setHeatmapLoading] = useState(true);
+  const [monthComparison, setMonthComparison] = useState<MonthComparison | null>(null);
+
+  const loadHeatmap = useCallback(async (range: HeatmapRange) => {
+    setHeatmapLoading(true);
+    try {
+      const window = heatmapSqlWindow(HEATMAP_RANGE_WEEKS[range]);
+      const rows = await getDailyPlayStats(window.startSql, window.endSql);
+      setHeatmap(summarizeDailyRows(rows));
+    } catch (e) {
+      console.warn('Heatmap fetch error:', e);
+    } finally {
+      setHeatmapLoading(false);
+    }
+  }, []);
+
+  /**
+   * Aylık özet her zaman son iki ayı okur: seçili ızgara aralığı "1 ay" olsa
+   * bile "geçen aya göre" karşılaştırması eksik kalmasın.
+   */
+  const loadMonthSummary = useCallback(async () => {
+    try {
+      const now = Date.now();
+      const current = new Date(now);
+      const start = new Date(current.getFullYear(), current.getMonth() - 1, 1).getTime();
+      const rows = await getDailyPlayStats(toSqlTimestamp(start), toSqlTimestamp(now + 1000));
+      setMonthComparison(compareCurrentMonth(summarizeDailyRows(rows), now));
+    } catch (e) {
+      console.warn('Month summary fetch error:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadHeatmap(heatmapRange);
+  }, [heatmapRange, loadHeatmap]);
 
   const loadStats = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
@@ -262,14 +320,17 @@ export default function StatisticsScreen() {
   useFocusEffect(
     useCallback(() => {
       loadStats();
-    }, [loadStats])
+      void loadMonthSummary();
+    }, [loadStats, loadMonthSummary])
   );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     loadStats(true);
     void loadDetail(detailPeriod);
-  }, [loadStats, loadDetail, detailPeriod]);
+    void loadHeatmap(heatmapRange);
+    void loadMonthSummary();
+  }, [loadStats, loadDetail, detailPeriod, loadHeatmap, loadMonthSummary, heatmapRange]);
 
   const formatDurationDetailed = (totalSeconds: number) => {
     const days = Math.floor(totalSeconds / 86400);
@@ -652,6 +713,98 @@ export default function StatisticsScreen() {
                 </View>
               </TouchableOpacity>
 
+              {/* Dinleme ısı haritası + aylık özet */}
+              <View
+                style={[
+                  styles.heatmapCard,
+                  { borderColor: theme.border, backgroundColor: theme.surface },
+                ]}>
+                <View style={styles.heatmapHeader}>
+                  <Text style={styles.heatmapTitle}>{t('stats.heatmap_title')}</Text>
+                  <View style={styles.heatmapChips}>
+                    {HEATMAP_RANGES.map((range) => {
+                      const active = heatmapRange === range;
+                      return (
+                        <TouchableOpacity
+                          key={range}
+                          style={[
+                            styles.heatmapChip,
+                            active && { backgroundColor: theme.primary },
+                          ]}
+                          activeOpacity={0.75}
+                          onPress={() => setHeatmapRange(range)}>
+                          <Text
+                            style={[
+                              styles.heatmapChipText,
+                              active && { color: '#ffffff', fontWeight: '700' },
+                            ]}>
+                            {range === 'month'
+                              ? t('stats.heatmap_range_month')
+                              : range === 'half'
+                                ? t('stats.heatmap_range_half')
+                                : t('stats.heatmap_range_year')}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {heatmapLoading ? (
+                  <View style={styles.heatmapLoading}>
+                    <ActivityIndicator size="small" color={theme.primary} />
+                  </View>
+                ) : heatmap.totalPlays === 0 ? (
+                  <Text style={styles.heatmapEmpty}>{t('stats.heatmap_empty')}</Text>
+                ) : (
+                  <ActivityHeatmap
+                    counts={heatmap.counts}
+                    weeks={HEATMAP_RANGE_WEEKS[heatmapRange]}
+                    theme={theme}
+                    lessLabel={t('stats.heatmap_less')}
+                    moreLabel={t('stats.heatmap_more')}
+                  />
+                )}
+
+                {monthComparison ? (
+                  <View style={styles.monthSummaryRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.monthSummaryLabel}>{t('stats.month_summary')}</Text>
+                      <Text style={[styles.monthSummaryValue, { color: theme.textAccent }]}>
+                        {t('stats.month_summary_plays', { count: monthComparison.plays })}
+                        {monthComparison.seconds > 0
+                          ? ` · ${formatWrappedDuration(monthComparison.seconds, durationLabels)}`
+                          : ''}
+                      </Text>
+                    </View>
+                    {monthComparison.percentChange !== null ? (
+                      <Text
+                        style={[
+                          styles.monthSummaryDiff,
+                          {
+                            color:
+                              monthComparison.percentChange > 0
+                                ? '#4ade80'
+                                : monthComparison.percentChange < 0
+                                  ? '#f87171'
+                                  : '#a1a1aa',
+                          },
+                        ]}>
+                        {monthComparison.percentChange === 0
+                          ? t('stats.month_summary_diff_same')
+                          : monthComparison.percentChange > 0
+                            ? t('stats.month_summary_diff_up', {
+                                percent: monthComparison.percentChange,
+                              })
+                            : t('stats.month_summary_diff_down', {
+                                percent: Math.abs(monthComparison.percentChange),
+                              })}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+
               {/* Total Time Card */}
               <View style={styles.card}>
                 <Ionicons name="time-outline" size={32} color={theme.primary} />
@@ -1018,6 +1171,75 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderWidth: 1,
     borderColor: '#27272a',
+  },
+  heatmapCard: {
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+  },
+  heatmapHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+    gap: 8,
+  },
+  heatmapTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#ffffff',
+    flexShrink: 1,
+  },
+  heatmapChips: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  heatmapChip: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255, 255, 255, 0.07)',
+  },
+  heatmapChipText: {
+    fontSize: 11,
+    color: '#a1a1aa',
+    fontWeight: '600',
+  },
+  heatmapLoading: {
+    paddingVertical: 24,
+    alignItems: 'center',
+  },
+  heatmapEmpty: {
+    fontSize: 13,
+    color: '#71717a',
+    paddingVertical: 16,
+  },
+  monthSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    gap: 10,
+  },
+  monthSummaryLabel: {
+    fontSize: 11,
+    color: '#71717a',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 3,
+  },
+  monthSummaryValue: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  monthSummaryDiff: {
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'right',
+    flexShrink: 1,
   },
   cardTextContent: {
     marginLeft: 16,

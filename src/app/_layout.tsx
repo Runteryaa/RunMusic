@@ -19,6 +19,7 @@ import { ExpandingPlayer } from '../components/ExpandingPlayer';
 import { ensureActiveTrackArtwork } from '../services/activeTrackArtwork';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
 import { usePlayTracker } from '../hooks/usePlayTracker';
+import { useResumePositions } from '../hooks/useResumePositions';
 import { useScrobbler } from '../hooks/useScrobbler';
 import { useMemoryDiagnostics } from '../hooks/useMemoryDiagnostics';
 import { useIsAppActive } from '../hooks/useIsAppActive';
@@ -111,6 +112,7 @@ function waitForStoreHydration(timeoutMs: number): Promise<void> {
 function PlayerSideEffects() {
   useWidgetUpdater();
   usePlayTracker();
+  useResumePositions();
   useScrobbler();
   useMemoryDiagnostics();
   return null;

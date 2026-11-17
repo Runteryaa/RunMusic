@@ -69,6 +69,16 @@ node .tmp-verify/scripts/verify-persist-migration.js
 
 One version for the whole ecosystem. **You do not bump version files on every release.** `package.json` holds the baseline (`1.2.0`); the release workflow keeps its `major.minor` and sets `version = <major.minor>.<workflow run number>` plus `buildNumber = git commit count` in the workspace before building. To move to a new minor/major line, bump the baseline once (`npm run version:bump -- minor`) and commit it; use `npm run version:sync` / `npm run version:check` only when changing the baseline or debugging. `runtimeVersion` is intentionally decoupled from the app version (currently `"1.2"`): bump it only when native code changes, otherwise OTA updates stop reaching installed APKs. The Android workflow publishes the OTA before the Gradle/NDK setup so updates can be tested quickly. Full details: `docs/RELEASE.md`.
 
+## Product scope (settled — do not propose again)
+
+These decisions are final. Do not suggest, plan, or implement them, and do not bring them up as "next features" in recommendations.
+
+- **No playlists.** No user-created playlists, playlist folders, playlist covers, playlist reordering, or "add to playlist" flows. The app is built around the device file library plus the transient up-next queue, and that model stays.
+- **No album browsing.** No Albums tab, album grid, album cards, or album detail screen. The app currently has no such screen and will not get one. `album` remains a plain metadata field only: the editable field in `EditTrackModal`, the small album label under a track row on the artist page, `ReplayGainMode = 'album'`, and the scrobbler/stats payload. Those existing uses must not be removed.
+- **No backup/restore.** No export/import of the store, statistics, metadata, or settings. Keep the persist versioning discipline (`PERSIST_VERSION` + `migrate`); do not add a separate backup layer.
+
+When proposing improvements, draw from areas the app actually covers: player experience, lyrics (sync, editing, search, sharing), statistics and wrapped, library filtering/search/sort, artist profiles, audio effects, remote connection (Connecto), extensions, theming, and performance.
+
 ## Rules
 
 - If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.

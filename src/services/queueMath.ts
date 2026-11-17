@@ -101,6 +101,16 @@ function findArtistSafeIndex<T extends QueueTrackLike>(
 }
 
 /**
+ * Son kaç sanatçının tekrar etmemesi gerektiği.
+ *
+ * 2 pencere yalnızca "art arda aynı sanatçı olmasın" demekti; 3 pencere aynı
+ * sanatçının iki şarkısı arasına en az iki farklı sanatçı girmesini sağlar.
+ * Küçük kütüphanelerde kısıt esner (bkz. aşağıdaki fallback), bu yüzden
+ * değeri büyütmek sonsuz döngüye yol açmaz.
+ */
+const ARTIST_WINDOW = 3;
+
+/**
  * Akıllı Karıştırma (Smart Shuffle):
  * 1. Sanatçı Ayrıştırması: Aynı sanatçının şarkılarının arka arkaya gelmesini önler
  *    (araya en az 2 farklı sanatçı yerleştirilmeye çalışılır). Çalan şarkının
@@ -164,8 +174,8 @@ export function smartShuffleArray<T extends QueueTrackLike>(
       recentArtists.push(normalized);
     }
   }
-  if (recentArtists.length > 2) {
-    recentArtists.splice(0, recentArtists.length - 2);
+  if (recentArtists.length > ARTIST_WINDOW) {
+    recentArtists.splice(0, recentArtists.length - ARTIST_WINDOW);
   }
 
   const result: T[] = [];
@@ -192,7 +202,7 @@ export function smartShuffleArray<T extends QueueTrackLike>(
 
     result.push(selected.track);
     recentArtists.push(selected.artist);
-    if (recentArtists.length > 2) recentArtists.shift();
+    if (recentArtists.length > ARTIST_WINDOW) recentArtists.shift();
     preferRare = !preferRare;
   }
 

@@ -108,6 +108,12 @@ export interface AppPreferences {
    * alt gezinme çubuğunda GÖRÜNMEZ; Ayarlar'dan açılabilir.
    */
   extensionsEnabled: boolean;
+  /**
+   * 10 dakikadan uzun parçalarda (podcast, mix, uzun eserler) kaldığı yerden
+   * devam edilsin mi. Konumlar `services/resumePositions.ts` içinde ayrı ve
+   * küçük bir anahtarda tutulur; store'a yazılmaz.
+   */
+  resumeLongTracks: boolean;
   /** Kullanıcıya ait ekolayzer ve ReplayGain ayarları. */
   audioEffects: AudioEffectsSettings;
   /** RunMusic Wrapped kişiselleştirmesi (hangi slaytlar, kapak gösterilsin mi). */
@@ -134,6 +140,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   queueReplenishThreshold: 10,
   autoAddToQueue: true,
   extensionsEnabled: false,
+  resumeLongTracks: true,
   audioEffects: {
     ...DEFAULT_AUDIO_EFFECTS,
     equalizerBands: [...DEFAULT_AUDIO_EFFECTS.equalizerBands],
@@ -284,7 +291,7 @@ interface AppState {
  * kaydı bellekte korur; açılışta bir kez SQLite'a aktarılır ve ancak yazma
  * başarılı olduktan sonra AsyncStorage kaydından düşer.
  */
-const PERSIST_VERSION = 21;
+const PERSIST_VERSION = 22;
 
 export const useStore = create<AppState>()(
   persist(
@@ -727,6 +734,12 @@ export const useStore = create<AppState>()(
               typeof incomingPrefs.extensionsEnabled === 'boolean'
                 ? incomingPrefs.extensionsEnabled
                 : DEFAULT_PREFERENCES.extensionsEnabled,
+            // v22: uzun parçalarda kaldığı yerden devam. Eski kayıtlarda yok;
+            // varsayılan AÇIK (yalnızca 10 dakikadan uzun parçaları etkiler).
+            resumeLongTracks:
+              typeof incomingPrefs.resumeLongTracks === 'boolean'
+                ? incomingPrefs.resumeLongTracks
+                : DEFAULT_PREFERENCES.resumeLongTracks,
             // v14: ekolayzer + ReplayGain. v15: kullanıcı presetleri.
             // Eski kayıtlarda yok; güvenli varsayılanlarla doldurulur,
             // mevcut değerler aralığa sıkıştırılır.

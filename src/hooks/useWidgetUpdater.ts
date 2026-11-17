@@ -59,9 +59,6 @@ export function useWidgetUpdater() {
           const { isShuffle, isSmartShuffle } = useStore.getState();
           const { setShuffle } = await import('../services/queueController');
           await setShuffle(!isShuffle, isShuffle ? false : isSmartShuffle);
-        } else if (event.action === 'star') {
-          // You might have a favorite function, but for now we'll do nothing or a simple toast
-          console.log('Star clicked');
         }
       } catch (e) {
         console.error('Widget action error', e);

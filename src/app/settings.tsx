@@ -794,6 +794,13 @@ export default function SettingsScreen() {
             syncAppKilledPlaybackBehavior(v);
           }}
         />
+        <ToggleRow
+          theme={theme}
+          label={t('settings.resume_long_tracks')}
+          hint={t('settings.resume_long_tracks_hint')}
+          value={preferences.resumeLongTracks}
+          onChange={(v) => updatePreferences({ resumeLongTracks: v })}
+        />
         <ActionRow
           theme={theme}
           label={t('settings.audio_effects_title')}
@@ -1150,6 +1157,13 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        <ActionRow
+          theme={theme}
+          label={t('settings.library_tools')}
+          hint={t('settings.library_tools_hint')}
+          icon="construct-outline"
+          onPress={() => router.push('/library-tools')}
+        />
         <ActionRow
           theme={theme}
           label={t('settings.clear_artwork')}
