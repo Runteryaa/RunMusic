@@ -39,6 +39,7 @@ import { useRemoteConnectStore, DEFAULT_DEVICE_NAME } from '../store/useRemoteCo
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useConnectionsStore } from '../store/useConnectionsStore';
 import { ConnectionsSection } from '../components/connections/ConnectionsSection';
+import { LibraryToolsSection } from '../components/settings/LibraryToolsSection';
 
 const GITHUB_URL = 'https://github.com/Runteryaa/RunMusic';
 
@@ -1139,6 +1140,15 @@ export default function SettingsScreen() {
         />
       </Section>
 
+      {/* ── KİTAPLIK ARAÇLARI ─────────────────────────────────────────────── */}
+      <Section
+        icon="construct-outline"
+        title={t('settings.library_tools')}
+        subtitle={t('settings.library_tools_hint')}
+        theme={theme}>
+        <LibraryToolsSection />
+      </Section>
+
       {/* ── VERİ VE BAKIM ─────────────────────────────────────────────────── */}
       <Section icon="server-outline" title={t('settings.data_section')} theme={theme}>
         <View style={styles.row}>
@@ -1157,13 +1167,6 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        <ActionRow
-          theme={theme}
-          label={t('settings.library_tools')}
-          hint={t('settings.library_tools_hint')}
-          icon="construct-outline"
-          onPress={() => router.push('/library-tools')}
-        />
         <ActionRow
           theme={theme}
           label={t('settings.clear_artwork')}

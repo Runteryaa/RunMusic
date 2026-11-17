@@ -1,21 +1,12 @@
-import { useCallback, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { useRouter } from 'expo-router';
+import { useMemo, useState } from 'react';
+import { Alert, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { TouchableOpacity } from '../components/ui/TouchableOpacity';
-import { useStore, type TrackMetadata } from '../store/useStore';
-import { useThemeStore } from '../store/useThemeStore';
-import { useTranslation } from '../services/i18n';
-import { useBackToLibrary } from '../hooks/useBackToLibrary';
-import { cleanTrackFields, isPlaceholderArtist } from '../services/displayNames';
+
+import { TouchableOpacity } from '../ui/TouchableOpacity';
+import { useStore } from '../../store/useStore';
+import { useThemeStore } from '../../store/useThemeStore';
+import { useTranslation } from '../../services/i18n';
+import { cleanTrackFields, isPlaceholderArtist } from '../../services/displayNames';
 import {
   findDuplicateGroups,
   findMissingMetadata,
@@ -23,16 +14,25 @@ import {
   type DuplicateGroup,
   type LibraryToolTrack,
   type MissingMetadataTrack,
-} from '../services/libraryTools';
-import { searchOnlineArtwork } from '../services/artworkSearchService';
-import { saveCachedLibrary } from '../services/libraryStorage';
+} from '../../services/libraryTools';
+import { deleteTracksFromDevice } from '../../services/libraryDeletion';
+import { saveCachedLibrary } from '../../services/libraryStorage';
+import { EditTrackModal, type EditTrackTarget } from '../EditTrackModal';
 
 type Tab = 'duplicates' | 'metadata';
 
-export default function LibraryToolsScreen() {
-  const router = useRouter();
-  useBackToLibrary();
-  const insets = useSafeAreaInsets();
+/**
+ * Ayarlar ekranına gömülü kitaplık araçları.
+ *
+ * İki iş yapar: kopya dosyaları bulup **gizleme veya kalıcı silme**, ve
+ * kapak/sanatçı/albümü eksik parçaların meta verilerini düzenleme. Düzenleme,
+ * kütüphanedeki "Şarkı Bilgilerini Düzenle" ile aynı `EditTrackModal`'ı
+ * kullandığı için alanlar ve davranış birebir aynıdır.
+ *
+ * Bileşen yalnızca bölüm açıldığında monte edilir; tüm kütüphaneyi tarayan
+ * memo hesaplamaları bu yüzden Ayarlar açılışını yavaşlatmaz.
+ */
+export function LibraryToolsSection() {
   const { t } = useTranslation();
   const theme = useThemeStore((state) => state.theme);
 
@@ -40,13 +40,12 @@ export default function LibraryToolsScreen() {
   const metadataMap = useStore((state) => state.metadataMap);
   const artworkMap = useStore((state) => state.artworkMap);
   const hideTrack = useStore((state) => state.hideTrack);
-  const setTrackMetadata = useStore((state) => state.setTrackMetadata);
 
   const [tab, setTab] = useState<Tab>('duplicates');
   /** Kullanıcının kopya grubunda "tut" dediği parça kimliği. */
   const [keepByGroup, setKeepByGroup] = useState<Record<string, string>>({});
-  const [hiddenCount, setHiddenCount] = useState(0);
-  const [artworkBusyId, setArtworkBusyId] = useState<string | null>(null);
+  /** Düzenlenmekte olan eksik meta verili parça. */
+  const [editingTrack, setEditingTrack] = useState<EditTrackTarget | null>(null);
 
   /**
    * Kitaplıktaki her parçayı araç modeline çevirir. İsimler kütüphanede
@@ -82,7 +81,8 @@ export default function LibraryToolsScreen() {
     const toHide = group.tracks.filter((track) => track.id !== keepId);
     if (toHide.length === 0) return;
     toHide.forEach((track) => hideTrack(track.id));
-    setHiddenCount((count) => count + toHide.length);
+    saveCachedLibrary(useStore.getState().library).catch(() => {});
+    Alert.alert(t('common.ok'), t('tools.duplicates_hidden', { count: toHide.length }));
   };
 
   const hideAllDuplicates = () => {
@@ -95,44 +95,90 @@ export default function LibraryToolsScreen() {
         hidden += 1;
       });
     });
-    if (hidden > 0) setHiddenCount((count) => count + hidden);
-    // Kitaplık önbelleği bir sonraki açılışta gizlenenleri içermesin.
-    const state = useStore.getState();
-    saveCachedLibrary(state.library).catch(() => {});
+    if (hidden === 0) return;
+    saveCachedLibrary(useStore.getState().library).catch(() => {});
     Alert.alert(t('common.ok'), t('tools.duplicates_hidden', { count: hidden }));
   };
 
-  /** En iyi eşleşen kapağı parçaya uygular. */
-  const fixArtwork = useCallback(
-    async (track: MissingMetadataTrack) => {
-      if (artworkBusyId) return;
-      setArtworkBusyId(track.id);
-      try {
-        const results = await searchOnlineArtwork(track.title, track.artist);
-        const best = results[0];
-        if (!best?.artworkUrl) {
-          Alert.alert(t('common.info'), t('tools.no_artwork_result'));
-          return;
-        }
-        const existing = metadataMap[track.id] || metadataMap[track.uri] || {};
-        const next: TrackMetadata = {
-          ...existing,
-          artwork: best.artworkUrl,
-        };
-        setTrackMetadata(track.id, next);
-        if (track.uri && track.uri !== track.id) {
-          setTrackMetadata(track.uri, next);
-        }
-        Alert.alert(t('common.ok'), t('tools.artwork_applied'));
-      } catch (e) {
-        console.warn('Artwork repair failed', e);
-        Alert.alert(t('common.error'), t('tools.no_artwork_result'));
-      } finally {
-        setArtworkBusyId(null);
-      }
-    },
-    [artworkBusyId, metadataMap, setTrackMetadata, t]
-  );
+  /**
+   * Seçilen dosya dışındakileri cihazdan **kalıcı olarak** siler.
+   * Geri alınamadığı için her zaman ayrı bir onay ister.
+   */
+  const deleteDuplicates = (group: DuplicateGroup) => {
+    const keepId = keepIdFor(group);
+    const toDelete = group.tracks.filter((track) => track.id !== keepId);
+    if (toDelete.length === 0) return;
+
+    Alert.alert(
+      t('tools.delete_confirm_title'),
+      t('tools.delete_confirm_msg', { count: toDelete.length }),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('common.delete'),
+          style: 'destructive',
+          onPress: async () => {
+            const result = await deleteTracksFromDevice(toDelete);
+            if (result.failed) {
+              Alert.alert(t('common.error'), t('tools.delete_failed'));
+              return;
+            }
+            setKeepByGroup((current) => {
+              const next = { ...current };
+              delete next[group.key];
+              return next;
+            });
+            Alert.alert(t('common.ok'), t('tools.deleted', { count: result.deleted }));
+          },
+        },
+      ]
+    );
+  };
+
+  const deleteAllDuplicates = () => {
+    const toDelete: LibraryToolTrack[] = [];
+    duplicateGroups.forEach((group) => {
+      const keepId = keepIdFor(group);
+      group.tracks.forEach((track) => {
+        if (track.id !== keepId) toDelete.push(track);
+      });
+    });
+    if (toDelete.length === 0) return;
+
+    Alert.alert(
+      t('tools.delete_confirm_title'),
+      t('tools.delete_confirm_msg', { count: toDelete.length }),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('common.delete'),
+          style: 'destructive',
+          onPress: async () => {
+            const result = await deleteTracksFromDevice(toDelete);
+            if (result.failed) {
+              Alert.alert(t('common.error'), t('tools.delete_failed'));
+              return;
+            }
+            setKeepByGroup({});
+            Alert.alert(t('common.ok'), t('tools.deleted', { count: result.deleted }));
+          },
+        },
+      ]
+    );
+  };
+
+  /** Parçanın tüm meta verilerini düzenleme ekranını açar. */
+  const openEditor = (track: MissingMetadataTrack) => {
+    setEditingTrack({
+      id: track.id,
+      uri: track.uri,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      artwork: track.artwork ?? null,
+      originalArtwork: null,
+    });
+  };
 
   const renderDuplicateGroup = (group: DuplicateGroup) => {
     const keepId = keepIdFor(group);
@@ -178,15 +224,30 @@ export default function LibraryToolsScreen() {
           );
         })}
 
-        <TouchableOpacity
-          style={[styles.actionBtn, { borderColor: theme.border }]}
-          activeOpacity={0.75}
-          onPress={() => hideDuplicates(group)}>
-          <Ionicons name="eye-off-outline" size={15} color={theme.textAccent} />
-          <Text style={[styles.actionText, { color: theme.textAccent }]}>
-            {t('tools.duplicates_hide_others')}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.actionBtnFlex, { borderColor: theme.border }]}
+            activeOpacity={0.75}
+            onPress={() => hideDuplicates(group)}>
+            <Ionicons name="eye-off-outline" size={15} color={theme.textAccent} />
+            <Text style={[styles.actionText, { color: theme.textAccent }]} numberOfLines={1}>
+              {t('tools.duplicates_hide_others')}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.actionBtn,
+              styles.actionBtnFlex,
+              { borderColor: 'rgba(248, 113, 113, 0.45)' },
+            ]}
+            activeOpacity={0.75}
+            onPress={() => deleteDuplicates(group)}>
+            <Ionicons name="trash-outline" size={15} color="#f87171" />
+            <Text style={[styles.actionText, { color: '#f87171' }]} numberOfLines={1}>
+              {t('tools.delete_others')}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -212,46 +273,20 @@ export default function LibraryToolsScreen() {
           <Text style={styles.tag}>{t('tools.missing_album')}</Text>
         ) : null}
       </View>
-      {track.missing.includes('artwork') ? (
-        <TouchableOpacity
-          style={[styles.actionBtn, { borderColor: theme.border }]}
-          activeOpacity={0.75}
-          disabled={artworkBusyId === track.id}
-          onPress={() => fixArtwork(track)}>
-          {artworkBusyId === track.id ? (
-            <ActivityIndicator size="small" color={theme.primary} />
-          ) : (
-            <Ionicons name="image-outline" size={15} color={theme.textAccent} />
-          )}
-          <Text style={[styles.actionText, { color: theme.textAccent }]}>
-            {artworkBusyId === track.id
-              ? t('tools.searching_artwork')
-              : t('tools.fix_artwork')}
-          </Text>
-        </TouchableOpacity>
-      ) : null}
+      <TouchableOpacity
+        style={[styles.actionBtn, { borderColor: theme.border }]}
+        activeOpacity={0.75}
+        onPress={() => openEditor(track)}>
+        <Ionicons name="create-outline" size={15} color={theme.textAccent} />
+        <Text style={[styles.actionText, { color: theme.textAccent }]}>
+          {t('tools.edit_info')}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 
   return (
-    <View style={[styles.container, { paddingTop: Math.max(insets.top, 12) }]}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          hitSlop={12}
-          activeOpacity={0.7}
-          onPress={() => {
-            if (router.canGoBack()) router.back();
-            else router.replace('/settings');
-          }}>
-          <Ionicons name="arrow-back" size={21} color="#ffffff" />
-        </TouchableOpacity>
-        <View style={styles.headerText}>
-          <Text style={styles.headerTitle}>{t('tools.title')}</Text>
-          <Text style={styles.headerSubtitle}>{t('tools.subtitle')}</Text>
-        </View>
-      </View>
-
+    <View>
       <View style={styles.tabRow}>
         {(['duplicates', 'metadata'] as Tab[]).map((value) => {
           const active = tab === value;
@@ -269,93 +304,67 @@ export default function LibraryToolsScreen() {
         })}
       </View>
 
-      <ScrollView
-        contentContainerStyle={[
-          styles.content,
-          { paddingBottom: Math.max(insets.bottom, 24) + 32 },
-        ]}
-        showsVerticalScrollIndicator={false}>
-        {tab === 'duplicates' ? (
-          <>
-            <Text style={styles.hint}>{t('tools.duplicates_hint')}</Text>
-            <Text style={styles.countText}>
-              {t('tools.duplicates_found', { count: duplicateGroups.length })}
-              {hiddenCount > 0
-                ? ` · ${t('tools.duplicates_hidden', { count: hiddenCount })}`
-                : ''}
-            </Text>
-            {duplicateGroups.length === 0 ? (
-              <Text style={styles.emptyText}>{t('tools.duplicates_none')}</Text>
-            ) : (
-              <>
+      {tab === 'duplicates' ? (
+        <>
+          <Text style={styles.hint}>{t('tools.duplicates_hint')}</Text>
+          <Text style={styles.countText}>
+            {t('tools.duplicates_found', { count: duplicateGroups.length })}
+          </Text>
+          {duplicateGroups.length === 0 ? (
+            <Text style={styles.emptyText}>{t('tools.duplicates_none')}</Text>
+          ) : (
+            <>
+              <View style={styles.bulkRow}>
                 <TouchableOpacity
-                  style={[styles.primaryBtn, { backgroundColor: theme.primary }]}
-                  activeOpacity={0.8}
+                  style={[styles.bulkBtn, { borderColor: theme.border }]}
+                  activeOpacity={0.75}
                   onPress={hideAllDuplicates}>
-                  <Ionicons name="eye-off" size={16} color="#ffffff" />
-                  <Text style={styles.primaryBtnText}>{t('tools.duplicates_hide_others')}</Text>
+                  <Ionicons name="eye-off" size={15} color={theme.textAccent} />
+                  <Text style={[styles.bulkBtnText, { color: theme.textAccent }]}>
+                    {t('tools.hide_all')}
+                  </Text>
                 </TouchableOpacity>
-                {duplicateGroups.map(renderDuplicateGroup)}
-              </>
-            )}
-          </>
-        ) : (
-          <>
-            <Text style={styles.hint}>{t('tools.metadata_hint')}</Text>
-            <Text style={styles.countText}>
-              {t('tools.metadata_track_count', { count: missingMetadata.length })}
-            </Text>
-            {missingMetadata.length === 0 ? (
-              <Text style={styles.emptyText}>{t('tools.metadata_none')}</Text>
-            ) : (
-              missingMetadata.map(renderMissingTrack)
-            )}
-          </>
-        )}
-      </ScrollView>
+                <TouchableOpacity
+                  style={[styles.bulkBtn, { borderColor: 'rgba(248, 113, 113, 0.45)' }]}
+                  activeOpacity={0.75}
+                  onPress={deleteAllDuplicates}>
+                  <Ionicons name="trash" size={15} color="#f87171" />
+                  <Text style={[styles.bulkBtnText, { color: '#f87171' }]}>
+                    {t('tools.delete_all')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              {duplicateGroups.map(renderDuplicateGroup)}
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          <Text style={styles.hint}>{t('tools.metadata_hint')}</Text>
+          <Text style={styles.countText}>
+            {t('tools.metadata_track_count', { count: missingMetadata.length })}
+          </Text>
+          {missingMetadata.length === 0 ? (
+            <Text style={styles.emptyText}>{t('tools.metadata_none')}</Text>
+          ) : (
+            missingMetadata.map(renderMissingTrack)
+          )}
+        </>
+      )}
+
+      <EditTrackModal
+        visible={editingTrack != null}
+        track={editingTrack}
+        onClose={() => setEditingTrack(null)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#121212',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#18181b',
-    borderWidth: 1,
-    borderColor: '#27272a',
-    marginRight: 12,
-  },
-  headerText: {
-    flex: 1,
-  },
-  headerTitle: {
-    fontSize: 21,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: '#a1a1aa',
-    marginTop: 2,
-  },
   tabRow: {
     flexDirection: 'row',
     gap: 6,
-    paddingHorizontal: 16,
     paddingBottom: 8,
   },
   tab: {
@@ -368,10 +377,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#a1a1aa',
     fontWeight: '600',
-  },
-  content: {
-    paddingHorizontal: 16,
-    paddingTop: 4,
   },
   hint: {
     fontSize: 12,
@@ -388,21 +393,26 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 13,
     color: '#71717a',
-    paddingVertical: 20,
+    paddingVertical: 16,
   },
-  primaryBtn: {
+  bulkRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  bulkBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    borderRadius: 12,
-    paddingVertical: 12,
-    marginBottom: 14,
+    gap: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingVertical: 9,
   },
-  primaryBtnText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '700',
+  bulkBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   card: {
     borderRadius: 14,
@@ -448,6 +458,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#a1a1aa',
   },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
   actionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -456,11 +471,17 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     paddingVertical: 9,
+    paddingHorizontal: 10,
     marginTop: 4,
   },
+  actionBtnFlex: {
+    flex: 1,
+    marginTop: 0,
+  },
   actionText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
+    flexShrink: 1,
   },
   tagRow: {
     flexDirection: 'row',

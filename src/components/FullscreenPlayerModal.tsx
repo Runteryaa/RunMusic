@@ -1091,14 +1091,10 @@ function PlayerScrubber({
   active,
   player,
   theme,
-  abPointA = 0,
-  abPointB = 0,
 }: {
   active: boolean;
   player: ActivePlayerState;
   theme: ThemeColors;
-  abPointA?: number;
-  abPointB?: number;
 }) {
   const progress = useActiveProgress(active);
   const [barWidth, setBarWidth] = useState(0);
@@ -1162,24 +1158,6 @@ function PlayerScrubber({
             ]}
           />
         </View>
-        {duration > 0 && abPointA > 0 ? (
-          <View
-            pointerEvents="none"
-            style={[
-              styles.abMarker,
-              { left: `${Math.min(100, (abPointA / duration) * 100)}%`, backgroundColor: theme.primary },
-            ]}
-          />
-        ) : null}
-        {duration > 0 && abPointB > 0 ? (
-          <View
-            pointerEvents="none"
-            style={[
-              styles.abMarker,
-              { left: `${Math.min(100, (abPointB / duration) * 100)}%`, backgroundColor: '#f87171' },
-            ]}
-          />
-        ) : null}
       </View>
       <View style={styles.timeRow}>
         <Text style={styles.timeText}>{formatTime(currentPosition)}</Text>
@@ -2037,36 +2015,6 @@ function LyricsPanel({
   );
 }
 
-/**
- * A-B tekrarının döngü motoru.
- *
- * Yalnızca A ve B işaretleri birlikteyken monte edilir; böylece ekranın geri
- * kalanı 4 Hz konum güncellemesiyle yeniden çizilmez. Konum B'yi geçince A'ya
- * döner; art arda seek çağrılarını 600 ms ile sınırlar.
- */
-function ABRepeatLoop({
-  pointA,
-  pointB,
-  player,
-}: {
-  pointA: number;
-  pointB: number;
-  player: ActivePlayerState;
-}) {
-  const progress = useActiveProgress(true);
-  const lastSeekAtRef = useRef(0);
-
-  useEffect(() => {
-    if (progress.position < pointB) return;
-    const now = Date.now();
-    if (now - lastSeekAtRef.current < 600) return;
-    lastSeekAtRef.current = now;
-    player.seekTo(pointA).catch(() => {});
-  }, [progress.position, pointA, pointB, player]);
-
-  return null;
-}
-
 function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value } = {}) {
   useComponentDiagnostics('FullscreenPlayer');
   const insets = useSafeAreaInsets();
@@ -2091,17 +2039,6 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const activeTrack = player.activeTrack;
   const playing = player.isPlaying;
 
-  // A-B tekrarı: kalıcı değil, yalnızca bu oturum/parça için geçerlidir.
-  const [abStage, setAbStage] = useState<0 | 1 | 2>(0);
-  const [abPointA, setAbPointA] = useState(0);
-  const [abPointB, setAbPointB] = useState(0);
-  const abTrackKey = `${localActiveTrack?.id || ''}|${localActiveTrack?.url || ''}`;
-
-  useEffect(() => {
-    setAbStage(0);
-    setAbPointA(0);
-    setAbPointB(0);
-  }, [abTrackKey]);
   const remoteState = useRemoteConnectStore((s) => s.remoteState);
   const discoveredHosts = useRemoteConnectStore((s) => s.discoveredHosts);
   const setDiscoveredHosts = useRemoteConnectStore((s) => s.setDiscoveredHosts);
@@ -4474,58 +4411,6 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     }
   }, [player]);
 
-  /**
-   * A-B tekrar düğmesi: A noktası → B noktası → kapat döngüsü.
-   *
-   * Noktalar basıldığı andaki konumdan alınır; ekstra bir konum aboneliği
-   * açmamak için `TrackPlayer.getProgress()` (veya uzak modda yayınlanan
-   * interpolasyon) kullanılır.
-   */
-  const handleABPress = useCallback(async () => {
-    try {
-      if (abStage === 2) {
-        setAbStage(0);
-        setAbPointA(0);
-        setAbPointB(0);
-        return;
-      }
-
-      let position = 0;
-      let duration = activeTrack?.duration || 0;
-      if (player.isRemote) {
-        const remoteState = useRemoteConnectStore.getState();
-        position = remoteState.interpolatedPosition;
-        duration = remoteState.remoteState.activeTrack?.duration ?? duration;
-      } else {
-        const progress = await TrackPlayer.getProgress();
-        position = progress.position;
-        duration = progress.duration || duration;
-      }
-
-      if (!(duration > 0)) {
-        Alert.alert(t('common.info'), t('player.ab_repeat_need_play'));
-        return;
-      }
-
-      if (abStage === 0) {
-        setAbPointA(Math.max(0, Math.min(duration, position)));
-        setAbPointB(0);
-        setAbStage(1);
-        return;
-      }
-
-      // B, A'dan en az 1 saniye sonra olmalı; aksi halde döngü anlamsız olur.
-      if (position <= abPointA + 1) {
-        Alert.alert(t('common.info'), t('player.ab_repeat_need_play'));
-        return;
-      }
-      setAbPointB(Math.min(duration, position));
-      setAbStage(2);
-    } catch (e) {
-      console.warn('A-B repeat failed', e);
-    }
-  }, [abStage, abPointA, activeTrack, player, t]);
-
   const handleSeekForward = useCallback(async () => {
     try {
       if (player.isRemote) {
@@ -5828,12 +5713,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                 active={isFullscreenPlayerOpen}
                 player={player}
                 theme={theme}
-                abPointA={abStage > 0 ? abPointA : 0}
-                abPointB={abStage === 2 ? abPointB : 0}
               />
-              {abStage === 2 ? (
-                <ABRepeatLoop pointA={abPointA} pointB={abPointB} player={player} />
-              ) : null}
 
           {/* Oynatma Kontrolleri (Apple Music Minimalist Glyphs) */}
           <View style={styles.controlsRow}>
@@ -5918,42 +5798,6 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                     color={isPlaybackModeActive ? theme.primary : 'rgba(255, 255, 255, 0.55)'}
                   />
                 )}
-              </TouchableOpacity>
-
-              {/* A-B tekrarı: A → B → kapat */}
-              <TouchableOpacity
-                style={[
-                  styles.appleSubUtilBtn,
-                  abStage > 0 && styles.appleSubUtilBtnActive,
-                ]}
-                onPress={handleABPress}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  abStage === 2
-                    ? t('player.ab_point_b_set', { time: formatTime(abPointB) })
-                    : abStage === 1
-                      ? t('player.ab_point_a_set', { time: formatTime(abPointA) })
-                      : t('player.ab_repeat')
-                }
-                accessibilityHint={t('player.ab_repeat_hint')}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <View style={styles.abButtonGlyph}>
-                  <Text
-                    style={[
-                      styles.abButtonGlyphText,
-                      { color: abStage === 0 ? 'rgba(255, 255, 255, 0.55)' : theme.primary },
-                    ]}>
-                    {abStage === 0 ? 'A-B' : abStage === 1 ? 'A' : 'A-B'}
-                  </Text>
-                  {abStage > 0 ? (
-                    <View
-                      style={[
-                        styles.abButtonDot,
-                        { backgroundColor: abStage === 1 ? theme.primary : '#f87171' },
-                      ]}
-                    />
-                  ) : null}
-                </View>
               </TouchableOpacity>
 
               {/* RunMusic Connecto Butonu (Shuffle ile Sleep Timer arasında) */}
@@ -7095,29 +6939,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.18)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.32)',
-  },
-  abButtonGlyph: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  abButtonGlyphText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-  },
-  abButtonDot: {
-    position: 'absolute',
-    bottom: -1,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-  },
-  abMarker: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 2,
-    borderRadius: 1,
   },
   connectClientsBadgeWrapper: {
     position: 'absolute',

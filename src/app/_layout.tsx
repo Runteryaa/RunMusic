@@ -20,6 +20,7 @@ import { ensureActiveTrackArtwork } from '../services/activeTrackArtwork';
 import { useWidgetUpdater } from '../hooks/useWidgetUpdater';
 import { usePlayTracker } from '../hooks/usePlayTracker';
 import { useResumePositions } from '../hooks/useResumePositions';
+import { useStartupUpdateCheck } from '../hooks/useStartupUpdateCheck';
 import { useScrobbler } from '../hooks/useScrobbler';
 import { useMemoryDiagnostics } from '../hooks/useMemoryDiagnostics';
 import { useIsAppActive } from '../hooks/useIsAppActive';
@@ -113,6 +114,7 @@ function PlayerSideEffects() {
   useWidgetUpdater();
   usePlayTracker();
   useResumePositions();
+  useStartupUpdateCheck();
   useScrobbler();
   useMemoryDiagnostics();
   return null;
@@ -162,25 +164,18 @@ function ActiveTrackThemeSync() {
   /*
    * "Şarkı başladıktan sonra arayüz değişiyor" hatasının kaynağı: kapak
    * görseli çoğu zaman parça değiştikten sonra (dosyadan çıkarılarak) hazır
-   * oluyor. Tema o geç gelen kapağa göre uygulanınca oynatıcı, şarkı çalmaya
-   * başladıktan sonra ikinci kez renk değiştiriyordu.
+   * oluyor. Tema her kapak güncellemesinde uygulanınca oynatıcı aynı parça
+   * için birden fazla kez renk değiştiriyordu.
    *
-   * Çözüm: tema parça değişiminde **bir kez** uygulanır. Değişimden sonra
-   * gelen geç kapak yalnızca önbelleğe yazılır, arayüzü değiştirmez. Kullanıcı
-   * tema tercihini değiştirirse (aç/kapa veya hazır renk) sınır beklemeden
-   * hemen uygulanır.
+   * Çözüm: tema her parça için **bir kez** uygulanır (`appliedTrackRef`).
+   * Parça değişmeden gelen yeni kapak yalnızca önbelleğe yazılır. Böylece
+   * uygulama açılışında da kapak hazır olduğu anda tema bir kez uygulanır;
+   * önceki sürümde açılış "geç kapak" sayılıp tema hiç uygulanmıyordu.
+   * Kullanıcı tema tercihini değiştirirse tema hemen yeniden uygulanır.
    */
-  const trackSwitchAtRef = useRef(0);
-  const appliedKeyRef = useRef<string | null>(null);
+  const appliedTrackRef = useRef<string | null>(null);
   const preferenceKey = `${dynamicColorFromArtwork ? 'auto' : 'fixed'}|${presetThemeColor ?? ''}`;
   const lastPreferenceRef = useRef(preferenceKey);
-  /** Parça değişiminden sonra bu süre içinde gelen kapak temayı uygulayabilir. */
-  const LATE_ARTWORK_WINDOW_MS = 700;
-
-  useEffect(() => {
-    trackSwitchAtRef.current = Date.now();
-    appliedKeyRef.current = null;
-  }, [activeTrackId]);
 
   useEffect(() => {
     // Tercih de bağımlılık: kullanıcı "kapaktan renk türet"i açıp kapatınca
@@ -189,23 +184,16 @@ function ActiveTrackThemeSync() {
     lastPreferenceRef.current = preferenceKey;
 
     if (!dynamicColorFromArtwork) {
-      appliedKeyRef.current = null;
+      appliedTrackRef.current = null;
       updateThemeFromArtwork(null);
       return;
     }
     if (!effectiveArtworkUri) return;
 
-    const key = `${preferenceKey}|${activeTrackId ?? ''}|${effectiveArtworkUri}`;
-    if (appliedKeyRef.current === key) return;
+    const trackKey = activeTrackId ?? '';
+    if (!preferenceChanged && appliedTrackRef.current === trackKey) return;
 
-    const isLate = Date.now() - trackSwitchAtRef.current > LATE_ARTWORK_WINDOW_MS;
-    if (isLate && !preferenceChanged) {
-      // Geç gelen kapak: tema bir daha değişmesin.
-      appliedKeyRef.current = key;
-      return;
-    }
-
-    appliedKeyRef.current = key;
+    appliedTrackRef.current = trackKey;
     updateThemeFromArtwork(effectiveArtworkUri);
   }, [
     effectiveArtworkUri,
