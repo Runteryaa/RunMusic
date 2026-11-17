@@ -88,6 +88,41 @@ let isPlayerInitializing = false;
 let isPlayerInitialized = false;
 let isGlobalListenersAttached = false;
 
+/**
+ * Kurulumun kendisi (native köprü çağrısı) yanıt vermezse kilit sonsuza kadar
+ * `true` kalırdı: sonraki tüm çağrılar bitmeyen bir beklemeye girip oynatıcıyı
+ * kalıcı olarak "ölü" bırakıyordu. Bu süre aşılırsa kilidi bırakıp devam
+ * ediyoruz; çağıran taraf normal akışına döner, bir sonraki deneme yeniden
+ * kurulumu dener.
+ */
+const SETUP_TIMEOUT_MS = 12000;
+/** Başka bir kurulum sürerken beklenecek en uzun süre. */
+const INIT_WAIT_TIMEOUT_MS = 15000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(null);
+    }, ms);
+    promise
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(null);
+      });
+  });
+}
+
 export function attachGlobalPlayerEventListeners(): void {
   if (isGlobalListenersAttached) return;
   isGlobalListenersAttached = true;
@@ -118,19 +153,25 @@ export function attachGlobalPlayerEventListeners(): void {
 export async function setupTrackPlayerIfNeeded(): Promise<boolean> {
   if (isPlayerInitialized) return true;
   if (isPlayerInitializing) {
-    while (isPlayerInitializing) {
+    const deadline = Date.now() + INIT_WAIT_TIMEOUT_MS;
+    while (isPlayerInitializing && Date.now() < deadline) {
       await new Promise((res) => setTimeout(res, 50));
     }
+    // Kurulum takıldıysa kilidi zorla bırak ki oynatıcı kalıcı olarak kilitli
+    // kalmasın; aşağıdaki ilk çağrı yeniden kurulumu deneyecek.
+    if (isPlayerInitializing) isPlayerInitializing = false;
     return isPlayerInitialized;
   }
 
   isPlayerInitializing = true;
   try {
-    try {
-      await TrackPlayer.setupPlayer();
-    } catch {
-      // Zaten başlatılmışsa devam et
-    }
+    // `setupPlayer()` yanıt vermezse süreç kilitlenmesin: en fazla
+    // SETUP_TIMEOUT_MS bekle, sonra devam et (zaten kurulmuş olabilir).
+    const setupPromise = TrackPlayer.setupPlayer();
+    setupPromise.catch(() => {
+      // Zaten başlatılmışsa veya geç başarısız olursa yut.
+    });
+    await withTimeout(setupPromise, SETUP_TIMEOUT_MS);
 
     if (Platform.OS === 'android' && Platform.Version >= 33) {
       // İzin diyaloğu oynatıcının kurulmasını bekletmesin. Medya bildirimi

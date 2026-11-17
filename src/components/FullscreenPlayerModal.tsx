@@ -37,6 +37,7 @@ import { useExtensionStore } from '../store/useExtensionStore';
 import { startDownload } from '../services/downloadManager';
 import { useActivePlayer, type ActivePlayerState } from '../hooks/useActivePlayer';
 import { useActiveProgress } from '../hooks/useActiveProgress';
+import { readNativePlaying } from '../hooks/useResilientIsPlaying';
 import { remoteSyncManager } from '../services/remote/remoteSyncManager';
 import { wsRoomClient } from '../services/remote/wsRoomClient';
 import { udpDiscoveryService } from '../services/remote/udpDiscovery';
@@ -3915,35 +3916,38 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   };
 
   const togglePlayback = async () => {
-    if (player.isPlaying) {
-      await player.pause();
-      if (!player.isRemote && localActiveTrack) {
-        try {
-          const { position } = await TrackPlayer.getProgress();
-          if (position > 0) {
-            saveLastPlayback(
-              {
-                trackId: localActiveTrack.id || localActiveTrack.url,
-                trackIndex: activeIndex,
-                position,
-                track: {
-                  id: localActiveTrack.id || localActiveTrack.url,
-                  url: localActiveTrack.url,
-                  title: localActiveTrack.title,
-                  artist: localActiveTrack.artist,
-                  artwork: typeof localActiveTrack.artwork === 'string' ? localActiveTrack.artwork : undefined,
-                },
+    /*
+     * Duraklatma kararı native duruma göre verilir: kanca değeri bayatladığında
+     * (olay kaçtığında) düğme hiçbir şey yapmıyormuş gibi görünüyordu. Kanca
+     * yalnızca "duraklatınca konumu kaydet" adımı için kullanılır.
+     */
+    const nativePlaying = player.isRemote ? null : await readNativePlaying();
+    const wasPlaying = nativePlaying ?? player.isPlaying;
+    await player.togglePlayPause();
+    if (wasPlaying && !player.isRemote && localActiveTrack) {
+      try {
+        const { position } = await TrackPlayer.getProgress();
+        if (position > 0) {
+          saveLastPlayback(
+            {
+              trackId: localActiveTrack.id || localActiveTrack.url,
+              trackIndex: activeIndex,
+              position,
+              track: {
+                id: localActiveTrack.id || localActiveTrack.url,
+                url: localActiveTrack.url,
+                title: localActiveTrack.title,
+                artist: localActiveTrack.artist,
+                artwork: typeof localActiveTrack.artwork === 'string' ? localActiveTrack.artwork : undefined,
               },
-              true
-            );
-            updateQueueSnapshotActiveIndex(activeIndex, position);
-          }
-        } catch {
-          // Player may already be torn down; pausing is still successful.
+            },
+            true
+          );
+          updateQueueSnapshotActiveIndex(activeIndex, position);
         }
+      } catch {
+        // Player may already be torn down; pausing is still successful.
       }
-    } else {
-      await player.play();
     }
   };
 
@@ -3956,6 +3960,19 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const coverTransition = useMemo(() => new Animated.Value(1), []);
   const playBtnScale = useMemo(() => new Animated.Value(1), []);
   const [isSkipping, setIsSkipping] = useState(false);
+
+  /*
+   * Emniyet supabı: `isSkipping` yalnızca yatay kaydırma animasyonunun bitiş
+   * geri çağrısında temizleniyor. Animasyon iptal edilip geri çağrı hiç
+   * çalışmazsa bayrak `true` kalır; o zaman kapak jestleri (kaydırma, aşağı
+   * çekip kapatma) sürekli reddedilir ve oynatıcı "donmuş" gibi davranır. Bu
+   * yüzden bayrak en geç animasyon süresinden sonra kendiliğinden sıfırlanır.
+   */
+  useEffect(() => {
+    if (!isSkipping) return;
+    const timer = setTimeout(() => setIsSkipping(false), 1200);
+    return () => clearTimeout(timer);
+  }, [isSkipping]);
 
   // Kapak → sağ köşe geçişi için ölçüm.
   //

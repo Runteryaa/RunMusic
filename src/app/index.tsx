@@ -151,6 +151,12 @@ export default function LibraryScreen() {
   // Search state
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  /**
+   * Söz eşleşmelerinde "tamamını göster"e basılan parçalar. Varsayılan olarak
+   * kısa önizleme görünür; kullanıcı genişletirse eşleşen satır ve komşu
+   * satırlar açılır. Sorgu değişince sıfırlanır (eski genişletmeler anlamsız).
+   */
+  const [expandedLyricsHits, setExpandedLyricsHits] = useState<string[]>([]);
   /** Son aramalar (en fazla 8) — ayrı AsyncStorage anahtarında tutulur. */
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
 
@@ -878,6 +884,19 @@ export default function LibraryScreen() {
     if (searchQuery.trim().length < 2) return [];
     return searchLyricsCache(lyricsCache, lyricsSearchTracks, searchQuery, 6);
   }, [lyricsCache, lyricsSearchTracks, searchQuery]);
+
+  // Yeni bir sorguda önceki genişletmeler anlamsız kalmasın.
+  useEffect(() => {
+    setExpandedLyricsHits((current) => (current.length === 0 ? current : []));
+  }, [searchQuery]);
+
+  const toggleLyricsHitExpanded = (trackId: string) => {
+    setExpandedLyricsHits((current) =>
+      current.includes(trackId)
+        ? current.filter((id) => id !== trackId)
+        : [...current, trackId]
+    );
+  };
 
   // Displayed list (array of objects with asset and precomputed info).
   // React Compiler bu değeri kendi memoize eder; elle useMemo tutmak
@@ -1607,24 +1626,54 @@ export default function LibraryScreen() {
             {!isShowingRemoteLibrary && !isSelectionMode && isSearchOpen && lyricsHits.length > 0 ? (
               <View style={[styles.searchPanel, { borderColor: theme.border, backgroundColor: theme.surface }]}>
                 <Text style={styles.searchPanelTitle}>{t('library.lyrics_matches')}</Text>
-                {lyricsHits.map((hit) => (
-                  <TouchableOpacity
-                    key={`lyrics-hit-${hit.track.id}`}
-                    style={styles.lyricsHitRow}
-                    activeOpacity={0.75}
-                    onPress={() => openLyricsHit(hit)}>
-                    <Ionicons name="mic-outline" size={16} color={theme.primary} />
-                    <View style={styles.lyricsHitTextWrap}>
-                      <Text style={styles.lyricsHitTitle} numberOfLines={1}>
-                        {hit.track.title}
-                        {hit.track.artist ? ` · ${hit.track.artist}` : ''}
-                      </Text>
-                      <Text style={styles.lyricsHitSnippet} numberOfLines={1}>
-                        {hit.snippet}
-                      </Text>
+                {lyricsHits.map((hit) => {
+                  const expanded = expandedLyricsHits.includes(hit.track.id);
+                  const hasMore = hit.details !== hit.snippet;
+                  return (
+                    <View key={`lyrics-hit-${hit.track.id}`} style={styles.lyricsHitRow}>
+                      <TouchableOpacity
+                        style={styles.lyricsHitMain}
+                        activeOpacity={0.75}
+                        onPress={() => openLyricsHit(hit)}>
+                        <Ionicons name="mic-outline" size={16} color={theme.primary} />
+                        <View style={styles.lyricsHitTextWrap}>
+                          <Text style={styles.lyricsHitTitle} numberOfLines={1}>
+                            {hit.track.title}
+                            {hit.track.artist ? ` · ${hit.track.artist}` : ''}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.lyricsHitSnippet,
+                              expanded && styles.lyricsHitSnippetExpanded,
+                            ]}
+                            numberOfLines={expanded ? undefined : 2}>
+                            {expanded ? hit.details : hit.snippet}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                      {hasMore ? (
+                        <TouchableOpacity
+                          style={styles.lyricsHitToggle}
+                          activeOpacity={0.7}
+                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          accessibilityRole="button"
+                          accessibilityLabel={
+                            expanded ? t('library.lyrics_collapse') : t('library.lyrics_expand')
+                          }
+                          onPress={() => toggleLyricsHitExpanded(hit.track.id)}>
+                          <Text style={[styles.lyricsHitToggleText, { color: theme.primary }]}>
+                            {expanded ? t('library.lyrics_collapse') : t('library.lyrics_expand')}
+                          </Text>
+                          <Ionicons
+                            name={expanded ? 'chevron-up' : 'chevron-down'}
+                            size={14}
+                            color={theme.primary}
+                          />
+                        </TouchableOpacity>
+                      ) : null}
                     </View>
-                  </TouchableOpacity>
-                ))}
+                  );
+                })}
               </View>
             ) : null}
 
@@ -1991,8 +2040,15 @@ const styles = StyleSheet.create({
   lyricsHitRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     paddingVertical: 7,
+  },
+  /** Satırın gövdesi: parçayı açar. Genişletme düğmesi ayrı bir dokunuş alanı. */
+  lyricsHitMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   lyricsHitTextWrap: {
     flex: 1,
@@ -2007,6 +2063,25 @@ const styles = StyleSheet.create({
     color: '#a1a1aa',
     marginTop: 2,
     fontStyle: 'italic',
+  },
+  /** Genişletilmiş hâl: satır araları açılır, italik kalkar (okunaklı söz). */
+  lyricsHitSnippetExpanded: {
+    lineHeight: 17,
+    fontStyle: 'normal',
+    color: '#d4d4d8',
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  lyricsHitToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+  },
+  lyricsHitToggleText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   headerActionBtn: {
     width: 38,

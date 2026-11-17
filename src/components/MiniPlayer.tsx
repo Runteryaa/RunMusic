@@ -19,6 +19,7 @@ import { useThemeStore } from '../store/useThemeStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { useActivePlayer } from '../hooks/useActivePlayer';
 import { useActiveProgress } from '../hooks/useActiveProgress';
+import { readNativePlaying } from '../hooks/useResilientIsPlaying';
 import { TrackArtwork } from './TrackArtwork';
 import { MarqueeText } from './ui/MarqueeText';
 import { GradientSurface, withAlpha } from './ui/GradientSurface';
@@ -213,7 +214,11 @@ function MiniPlayerImpl({ isEmbedded = false }: { isEmbedded?: boolean } = {}) {
   }, [miniPanX, player]);
 
   const togglePlayback = async () => {
-    if (player.isPlaying) {
+    // Karar native duruma göre verilir: olay tabanlı kanca değeri bayatladığında
+    // oynat/duraklat düğmesi hiçbir şey yapmıyormuş gibi görünüyordu.
+    const nativePlaying = player.isRemote ? null : await readNativePlaying();
+    const wasPlaying = nativePlaying ?? player.isPlaying;
+    if (wasPlaying) {
       await player.pause();
       if (!player.isRemote && player.activeTrack) {
         try {

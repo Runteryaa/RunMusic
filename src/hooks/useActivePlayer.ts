@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import TrackPlayer, { useIsPlaying, RepeatMode } from 'react-native-track-player';
+import TrackPlayer, { RepeatMode } from 'react-native-track-player';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
@@ -19,6 +19,7 @@ import { findLyricsInCache } from '../services/persistSanitize';
 import { parseAnySyncedLyrics, getLyricsCacheKeys, type LyricLine } from '../services/lyricsService';
 import type { RemoteTrackSummary, RemoteLyricsSummary } from '../services/remote/remoteTypes';
 import { useResilientActiveTrack } from './useResilientActiveTrack';
+import { useResilientIsPlaying, readNativePlaying } from './useResilientIsPlaying';
 
 export interface ActivePlayerState {
   isRemote: boolean;
@@ -75,7 +76,7 @@ export function useActivePlayer(): ActivePlayerState {
 
   // Local Player hooks (only subscribed when not remote)
   const localActiveTrack = useResilientActiveTrack();
-  const { playing: localIsPlaying } = useIsPlaying();
+  const localIsPlaying = useResilientIsPlaying();
   const localArtworkMap = useStore((s) => s.artworkMap);
   const localIsShuffle = useStore((s) => s.isShuffle);
   const localIsSmartShuffle = useStore((s) => s.isSmartShuffle);
@@ -203,7 +204,15 @@ export function useActivePlayer(): ActivePlayerState {
 
   const localTogglePlayPause = useCallback(async () => {
     try {
-      if (localIsPlaying) {
+      /*
+       * Karar **native** duruma göre verilir. `localIsPlaying` yalnızca olay
+       * tabanlı bir kopya; olay kaçarsa bayatlayabilir ve düğme hiçbir şey
+       * yapmıyormuş gibi görünür. Native okuma başarısız olursa (nadiren) kanca
+       * değerine düşülür.
+       */
+      const native = await readNativePlaying();
+      const actuallyPlaying = native ?? localIsPlaying;
+      if (actuallyPlaying) {
         await TrackPlayer.pause();
       } else {
         await TrackPlayer.play();

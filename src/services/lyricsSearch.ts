@@ -19,12 +19,36 @@ export interface LyricsSearchTrack {
 
 export interface LyricsSearchHit {
   track: LyricsSearchTrack;
-  /** Eşleşmenin bulunduğu satır (kısaltılmış). */
+  /** Eşleşmenin bulunduğu satır (kısaltılmış önizleme). */
   snippet: string;
+  /**
+   * Eşleşen satır ve komşu satırlar. Kullanıcı önizlemeyi genişlettiğinde
+   * gösterilir; böylece sözün bağlamı görülür, arama sonucu kutusu ise ilk
+   * bakışta şişmez.
+   */
+  details: string;
 }
 
 const LRC_TAG = /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/g;
 const MAX_SNIPPET_LENGTH = 90;
+/** Genişletildiğinde gösterilecek en fazla karakter. */
+const MAX_DETAILS_LENGTH = 600;
+/** Eşleşen satırın üstünde/altında gösterilecek satır sayısı. */
+const DETAIL_CONTEXT_LINES = 2;
+
+function clip(text: string, limit = MAX_SNIPPET_LENGTH): string {
+  return text.length <= limit ? text : `${text.slice(0, limit - 1).trimEnd()}…`;
+}
+
+/**
+ * Eşleşen satırı komşularıyla birlikte döner: kullanıcı genişlettiğinde
+ * sözün bağlamını görür. Boş satırlar korunmaz, toplam uzunluk sınırlanır.
+ */
+function buildDetails(lines: string[], matchIndex: number): string {
+  const start = Math.max(0, matchIndex - DETAIL_CONTEXT_LINES);
+  const end = Math.min(lines.length, matchIndex + DETAIL_CONTEXT_LINES + 1);
+  return clip(lines.slice(start, end).join('\n'), MAX_DETAILS_LENGTH);
+}
 
 function resolveEntry(
   cache: Record<string, LyricsCacheEntry>,
@@ -60,12 +84,6 @@ function lyricsLines(entry: LyricsResult): string[] {
     .filter(Boolean);
 }
 
-function clip(text: string): string {
-  return text.length <= MAX_SNIPPET_LENGTH
-    ? text
-    : `${text.slice(0, MAX_SNIPPET_LENGTH - 1).trimEnd()}…`;
-}
-
 /**
  * Sorguyla eşleşen söz satırlarını döner.
  *
@@ -89,7 +107,7 @@ export function searchLyricsCache(
   for (const track of tracks) {
     if (seen.has(track.id)) continue;
     const keys = [track.id, track.uri].filter(Boolean) as string[];
-    let found: string | null = null;
+    let found: { snippet: string; details: string } | null = null;
     let canonicalKey: string | null = null;
 
     for (const key of keys) {
@@ -98,19 +116,22 @@ export function searchLyricsCache(
       // Aynı söz kanonik kaydı zaten listelendiyse bu anahtar atlanır (ref/kopya).
       if (seen.has(resolved.canonicalKey)) continue;
       const lines = lyricsLines(resolved.entry);
-      const line = lines.find((candidate) => {
+      const matchIndex = lines.findIndex((candidate) => {
         const normalizedLine = normalizeSearchText(candidate);
         return terms.every((term) => normalizedLine.includes(term));
       });
-      if (line) {
-        found = clip(line);
+      if (matchIndex >= 0) {
+        found = {
+          snippet: clip(lines[matchIndex]),
+          details: buildDetails(lines, matchIndex),
+        };
         canonicalKey = resolved.canonicalKey;
         break;
       }
     }
 
     if (found) {
-      hits.push({ track, snippet: found });
+      hits.push({ track, snippet: found.snippet, details: found.details });
       seen.add(track.id);
       keys.forEach((key) => seen.add(key));
       // Aynı sözü paylaşan diğer anahtarlar (kopya/ref) tekrar listelenmesin.

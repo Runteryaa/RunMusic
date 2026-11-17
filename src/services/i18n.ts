@@ -337,6 +337,8 @@ export const translations = {
       recent_searches: 'Son aramalar',
       clear_recent_searches: 'Temizle',
       lyrics_matches: 'Sözlerde eşleşenler',
+      lyrics_expand: 'Genişlet',
+      lyrics_collapse: 'Daralt',
       lyrics_match_in: '“{title}” içinde',
     },
     tools: {
@@ -1144,6 +1146,8 @@ export const translations = {
       recent_searches: 'Recent searches',
       clear_recent_searches: 'Clear',
       lyrics_matches: 'Matching lyrics',
+      lyrics_expand: 'Expand',
+      lyrics_collapse: 'Collapse',
       lyrics_match_in: 'in “{title}”',
     },
     tools: {
