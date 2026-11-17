@@ -13,6 +13,7 @@
  */
 
 import { normalizeArtistKey, artistNamesFromRow } from './artistMatch';
+import { cleanTrackFields } from './displayNames';
 import {
   buildWrappedStats,
   type WrappedPlayRow,
@@ -94,7 +95,9 @@ export function buildArtistTitleHints(
   const titleCounts = new Map<string, Map<string, number>>();
 
   for (const row of rows) {
-    const title = (row.title ?? '').trim();
+    // Fotoğraf arama ipuçları kullanıcıya görünen (temizlenmiş) başlıklardan
+    // üretilir: "Song (Official Video)" gibi ham etiketler aramaya sızmasın.
+    const title = cleanTrackFields(row.title, row.artist).title;
     if (!title) continue;
     const names = artistNamesFromRow(row.artist);
     const seen = new Set<string>();
