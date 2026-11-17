@@ -47,6 +47,7 @@ import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
 import { GlassBackdrop, RadialBlurFocus } from './ui/GlassBackdrop';
+import { glassSurface } from '../theme/glass';
 import { withAlpha } from './ui/GradientSurface';
 import { rememberArtistImage } from '../services/artistImages';
 import { normalizeArtistKey } from '../services/artistMatch';
@@ -2194,6 +2195,8 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const isShuffle = player.isRemote ? player.isShuffle : storeIsShuffle;
   const isSmartShuffle = player.isRemote ? player.isSmartShuffle : storeIsSmartShuffle;
   const playbackMode = player.playbackMode;
+  /** 'repeat-all' varsayılan (nötr) kabul edilir; diğerleri seçili sayılır. */
+  const isPlaybackModeActive = playbackMode !== 'repeat-all';
   const playbackModeLabel =
     playbackMode === 'smart'
       ? t('player.playback_mode_smart')
@@ -4546,22 +4549,24 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
           transition={500}
         />
       ) : null}
-      {/* Cam katman: kapağı bulanıklaştırıp koyu perdeyle okunabilirlik verir. */}
-      <GlassBackdrop intensity={85} overlayColor="rgba(10, 10, 14, 0.82)" />
+      {/* Cam katman: kapağı bulanıklaştırıp koyu perdeyle okunabilirlik verir.
+          Perde artık daha saydam: oynatıcı "camın arkasındaki kapak" gibi
+          görünüyor, düz siyah bir zemin gibi değil. */}
+      <GlassBackdrop intensity={60} overlayColor="rgba(10, 10, 14, 0.55)" />
       {/*
         Merkezden yayılan bulanıklık: ana oynatıcı alanında (kapak/parça
-        bilgisi) daha güçlü, köşelere doğru azalan bir bulanıklık. Bu katman
-        taban cam katmanının üzerine biner; kenarları radial gradyanla
+        bilgisi) biraz daha güçlü, köşelere doğru azalan bir bulanıklık. Bu
+        katman taban cam katmanının üzerine biner; kenarları radial gradyanla
         gizlendiği için keskin bir daire görünmez.
       */}
-      <RadialBlurFocus intensity={100} />
+      <RadialBlurFocus intensity={55} />
       {/* Subtle Ambient Color Glow from Cover Art */}
       <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.glowColor, opacity: 0.14 }]} />
       {/*
-        Ana oynatıcı alanından dışa yayılan odak: merkezde (kapak/parça bilgisi
-        bölgesi) renk ve ışık yoğun, köşelere gidildikçe hem renk hem ışık
-        azalıp koyulaşır. Böylece ekranın ortası "bulanık/parlak", köşeleri
-        sakin kalır — istenen yumuşak geçiş tek bir radial gradyanla çizilir.
+        Ana oynatıcı alanından dışa yayılan odak: merkezde renk ve ışık
+        yoğun, köşelere gidildikçe azalır. Kenarlardaki karartma bilinçli
+        olarak düşük tutuldu — önceki hâli ekranın çevresini fazla kapatıyor,
+        bulanıklık ekran dışına taşıyormuş gibi görünüyordu.
       */}
       <View
         pointerEvents="none"
@@ -4570,8 +4575,8 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
           {
             experimental_backgroundImage: `radial-gradient(circle at 50% 42%, ${withAlpha(
               theme.primary,
-              0.38
-            )} 0%, ${withAlpha(theme.glowColor, 0.2)} 32%, rgba(10, 10, 14, 0.34) 68%, rgba(4, 4, 6, 0.7) 100%)`,
+              0.32
+            )} 0%, ${withAlpha(theme.glowColor, 0.16)} 32%, rgba(10, 10, 14, 0.18) 68%, rgba(4, 4, 6, 0.38) 100%)`,
           },
         ]}
       />
@@ -5706,7 +5711,10 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
             {/* Orta: Karışık ve Tekrar Kontrolleri (Tek Buton) + Uyku Zamanlayıcısı */}
             <View style={styles.appleCenterUtilRow}>
               <TouchableOpacity
-                style={styles.appleSubUtilBtn}
+                style={[
+                  styles.appleSubUtilBtn,
+                  isPlaybackModeActive && styles.appleSubUtilBtnActive,
+                ]}
                 onPress={togglePlaybackMode}
                 accessibilityRole="button"
                 accessibilityLabel={playbackModeLabel}
@@ -5724,7 +5732,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                           : 'repeat'
                     }
                     size={20}
-                    color={theme.primary}
+                    color={isPlaybackModeActive ? theme.primary : 'rgba(255, 255, 255, 0.55)'}
                   />
                 )}
               </TouchableOpacity>
@@ -5733,7 +5741,8 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
               <TouchableOpacity
                 style={[
                   styles.appleSubUtilBtn,
-                  isConnectMode && styles.appleSubUtilBtnActive,
+                  (isConnectMode || isRemoteServiceEnabled || player.isRemote) &&
+                    styles.appleSubUtilBtnActive,
                 ]}
                 onPress={toggleConnectMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -5762,7 +5771,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
               <TouchableOpacity
                 style={[
                   styles.appleSubUtilBtn,
-                  isSleepTimerMode && styles.appleSubUtilBtnActive,
+                  (isSleepTimerMode || isSleepTimerActive) && styles.appleSubUtilBtnActive,
                 ]}
                 onPress={toggleSleepTimerMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -6227,9 +6236,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    ...glassSurface(19),
   },
   headerTitleBox: {
     alignItems: 'center',
@@ -6835,15 +6842,11 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
-    // Cam buton: saydam dolgu + ince saydam kenarlık (RunMusic cam dili).
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    // Nötr durumda buton tamamen saydam: arkasında hiçbir yüzey yok,
+    // yalnızca simge görünür. Cam yüzey sadece seçiliyken devreye girer.
+    backgroundColor: 'transparent',
   },
-  appleUtilBtnActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    borderColor: 'rgba(255, 255, 255, 0.32)',
-  },
+  appleUtilBtnActive: glassSurface(22, { active: true }),
   appleCenterUtilRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -6856,14 +6859,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    // Aynı kural orta gruptaki loop / connecto / uyku zamanlayıcısı için.
+    backgroundColor: 'transparent',
   },
-  appleSubUtilBtnActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    borderColor: 'rgba(255, 255, 255, 0.32)',
-  },
+  appleSubUtilBtnActive: glassSurface(20, { active: true }),
   connectClientsBadgeWrapper: {
     position: 'absolute',
     top: 1,

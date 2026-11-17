@@ -39,6 +39,7 @@ import { useRemoteConnectStore, DEFAULT_DEVICE_NAME } from '../store/useRemoteCo
 import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useConnectionsStore } from '../store/useConnectionsStore';
 import { ConnectionsSection } from '../components/connections/ConnectionsSection';
+import { glassSurface } from '../theme/glass';
 
 const GITHUB_URL = 'https://github.com/Runteryaa/RunMusic';
 
@@ -1501,11 +1502,8 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
   },
   section: {
-    // Cam kart: saydam dolgu + ince saydam kenarlık (uygulama cam dili).
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    // Cam kart: gradyan dolgu + parlak üst kenar (ortak cam dili).
+    ...glassSurface(16, { card: true }),
     marginBottom: 14,
     overflow: 'hidden',
   },
@@ -1519,9 +1517,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    ...glassSurface(10, { shadow: false }),
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
@@ -1611,12 +1607,9 @@ const styles = StyleSheet.create({
   smallBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    ...glassSurface(10, { shadow: false }),
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 10,
     gap: 5,
   },
   deleteBtn: {

@@ -60,7 +60,7 @@ export interface RadialBlurFocusProps {
   style?: StyleProp<ViewStyle>;
 }
 
-export function RadialBlurFocus({ intensity = 100, style }: RadialBlurFocusProps) {
+export function RadialBlurFocus({ intensity = 55, style }: RadialBlurFocusProps) {
   return (
     <View pointerEvents="none" style={[styles.focusCircle, style]}>
       <BlurView
@@ -69,13 +69,18 @@ export function RadialBlurFocus({ intensity = 100, style }: RadialBlurFocusProps
         tint="dark"
         blurMethod="dimezisBlurViewSdk31Plus"
       />
-      {/* Elips kenarını gizleyen yumuşak geçiş: ortada saydam, uçta koyu. */}
+      {/*
+        Elips kenarını gizleyen yumuşak geçiş. NEDEN BU KADAR SAYDAM: önceki
+        değerler kenarlarda neredeyse opak koyu bir halka bırakıyordu; ekranın
+        dışına taşan bulanıklık "abartılı" görünüyordu. Artık geçiş çok daha
+        erken başlıyor ve en uçta bile yalnızca hafif bir karartma kalıyor.
+      */}
       <View
         style={[
           StyleSheet.absoluteFill,
           {
             experimental_backgroundImage:
-              'radial-gradient(circle at 50% 50%, rgba(10, 10, 14, 0) 52%, rgba(10, 10, 14, 0.55) 82%, rgba(8, 8, 11, 0.85) 100%)',
+              'radial-gradient(circle at 50% 50%, rgba(10, 10, 14, 0) 42%, rgba(10, 10, 14, 0.18) 74%, rgba(8, 8, 11, 0.36) 100%)',
           },
         ]}
       />
@@ -86,10 +91,12 @@ export function RadialBlurFocus({ intensity = 100, style }: RadialBlurFocusProps
 const styles = StyleSheet.create({
   focusCircle: {
     position: 'absolute',
-    left: '-18%',
-    right: '-18%',
-    top: '4%',
-    bottom: '24%',
+    // Elips daraltıldı: bulanıklık artık kenarlara taşmıyor, yalnızca
+    // oynatıcının orta alanında (kapak/parça bilgisi) kalıyor.
+    left: '-4%',
+    right: '-4%',
+    top: '13%',
+    bottom: '32%',
     borderRadius: 9999,
     overflow: 'hidden',
   },

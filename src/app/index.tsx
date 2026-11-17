@@ -54,6 +54,7 @@ import {
   mergeCompletedDownloadsIntoAssets,
   syncCompletedDownloadsWithLibrary,
 } from '../services/downloadManager';
+import { glassSurface } from '../theme/glass';
 
 interface SortItem {
   id: SortOption;
@@ -1509,13 +1510,11 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    // Cam buton: saydam dolgu + ince saydam kenarlık.
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    // Cam buton: ortak cam dili (gradyan + parlak kenar + gölge).
+    ...glassSurface(19),
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   searchBarContainer: {
     flexDirection: 'row',
@@ -1532,12 +1531,9 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: 14,
+    ...glassSurface(14, { card: true, shadow: false }),
     paddingHorizontal: 12,
     height: 42,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   searchInnerIcon: {
     marginRight: 8,

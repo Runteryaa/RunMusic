@@ -172,18 +172,40 @@ export default function ArtistScreen() {
   const artworkMap = useStore((s) => s.artworkMap);
 
   const [period, setPeriod] = useState<WrappedPeriod>('all');
-  const [profile, setProfile] = useState<ArtistProfile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [artistImage, setArtistImage] = useState<string | null>(null);
+  /**
+   * Profil, ait olduğu sanatçı anahtarıyla birlikte tutulur.
+   *
+   * NEDEN: sayfa aynı route üzerinde yeni `name` parametresiyle yeniden
+   * kullanılabiliyor. State yalnızca sanatçıya göre sıfırlansaydı, ilk karede
+   * yeni sanatçının adıyla birlikte **eski** istatistikler görünürdü. Anahtar
+   * eşleşmediğinde `profile` doğrudan `null` türetilir; böylece eski veri hiçbir
+   * karede çizilmez ve render sırasında state yazmaya gerek kalmaz.
+   */
+  const [profileState, setProfileState] = useState<{
+    key: string;
+    value: ArtistProfile;
+  } | null>(null);
+  const profile = profileState?.key === artistKey ? profileState.value : null;
+  /** Yüklenmiş (sanatçı + dönem) anahtarı; eşleşmiyorsa yükleme sürüyor. */
+  const [loadedKey, setLoadedKey] = useState('');
+  const [artistImageState, setArtistImageState] = useState<{
+    key: string;
+    uri: string | null;
+  } | null>(null);
+  const artistImage = artistImageState?.key === artistKey ? artistImageState.uri : null;
   const [renameOpen, setRenameOpen] = useState(false);
   const [renamedTo, setRenamedTo] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
+
+  const loadKey = `${artistKey}|${period}`;
+  const loading = loadedKey !== loadKey;
 
   // Ekran kapandıktan sonra gelen sonuçların state yazmasını engeller
   // (hızlı geri dönüşlerde gereksiz iş yapılmaz).
   const mountedRef = useRef(true);
   /** Yalnızca en son dönem isteğinin sonucu uygulanır. */
   const requestRef = useRef(0);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -213,7 +235,7 @@ export default function ArtistScreen() {
     async (nextPeriod: WrappedPeriod) => {
       // Dönem hızlıca değiştirilirse eski isteğin sonucu yenisini ezmesin.
       const requestId = ++requestRef.current;
-      setLoading(true);
+      const key = `${artistKey}|${nextPeriod}`;
       try {
         const range = resolveWrappedWindow(nextPeriod, Date.now());
         const names = [
@@ -235,14 +257,17 @@ export default function ArtistScreen() {
         }
 
         if (!mountedRef.current || requestId !== requestRef.current) return;
-        setProfile(buildArtistProfileFromRows(cleaned, artistKey, { limit: TOP_TRACK_COUNT }));
+        setProfileState({
+          key: artistKey,
+          value: buildArtistProfileFromRows(cleaned, artistKey, { limit: TOP_TRACK_COUNT }),
+        });
       } catch (e) {
         console.warn('Artist stats fetch error:', e);
         if (mountedRef.current && requestId === requestRef.current) {
-          setProfile(buildArtistProfileFromRows([], artistKey));
+          setProfileState({ key: artistKey, value: buildArtistProfileFromRows([], artistKey) });
         }
       } finally {
-        if (mountedRef.current && requestId === requestRef.current) setLoading(false);
+        if (mountedRef.current && requestId === requestRef.current) setLoadedKey(key);
       }
     },
     [artistKey, artistName, artistTracks]
@@ -263,7 +288,7 @@ export default function ArtistScreen() {
     const titles = artistTracks.slice(0, 12).map((track) => track.title).filter(Boolean);
     void loadArtistImages([artistName], { [artistKey]: titles })
       .then((images) => {
-        if (!cancelled) setArtistImage(images[artistKey] || null);
+        if (!cancelled) setArtistImageState({ key: artistKey, uri: images[artistKey] || null });
       })
       .catch(() => {});
     return () => {
@@ -278,7 +303,9 @@ export default function ArtistScreen() {
 
   /** Başlıkta gösterilecek isim: geçmiş → kütüphane → ham parametre. */
   const displayName = useMemo(() => {
-    if (renamedTo) return renamedTo;
+    // Yeniden adlandırma sonucu yalnızca hâlâ bu sanatçıya aitse geçerlidir;
+    // başka bir sanatçıya geçildiğinde eski isim başlığa sızmaz.
+    if (renamedTo && normalizeArtistKey(renamedTo) === artistKey) return renamedTo;
     if (profile?.displayName) return profile.displayName;
     for (const track of artistTracks) {
       const match = artistNamesFromRow(track.artist).find(
@@ -351,7 +378,7 @@ export default function ArtistScreen() {
         }
         await renameArtistInHistory(displayName, replacement);
         // Artist image cache is keyed by name; the new name loads its own photo.
-        setArtistImage(null);
+        setArtistImageState(null);
         setRenamedTo(replacement);
         setRenameOpen(false);
         router.setParams({ name: replacement });
@@ -706,6 +733,9 @@ export default function ArtistScreen() {
       />
 
       <FlashList
+        // Sanatçı değişince liste baştan kurulur: kaydırma konumu ve eski
+        // satırlar yeni sanatçıya taşınmaz.
+        key={artistKey}
         data={sortedTracks}
         keyExtractor={(item) => `artist-track-${item.id}`}
         renderItem={renderTrack}
