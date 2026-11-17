@@ -4,13 +4,13 @@ import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
   Alert,
 } from 'react-native';
+import { TouchableOpacity } from './ui/TouchableOpacity';
 import { Ionicons } from '@expo/vector-icons';
 import { useExtensionStore } from '../store/useExtensionStore';
 import { useThemeStore } from '../store/useThemeStore';

@@ -44,25 +44,25 @@ export function GlassBackdrop({
 }
 
 /**
- * Merkezden yayılan bulanıklık (oynatıcı arka planı).
+ * Kapağın arkasından başlayıp kenarlara doğru azalan bulanıklık.
  *
- * NEDEN AYRI KATMAN: `BlurView` tek başına tüm ekranı eşit bulanıklaştırır.
- * İstenen görünüm, oynatıcının ana alanında (kapak/parça bilgisi) daha güçlü
- * bulanıklık ve köşelere doğru azalan bir etki. Android'de maske API'si
- * olmadığı için çözüm dairesel bir ikinci blur katmanı: geniş bir elipsin
- * içine yüksek yoğunluklu blur konur, elipsin kenarı da aynı arka plan rengine
- * doğru saydamlaşan radial gradyanla gizlenir. Böylece geçiş keskin bir daire
- * olarak görünmez, yumuşak bir odak oluşur.
+ * NEDEN TÜM EKRAN: Android'de maske API'si olmadığı için "sadece ortada
+ * bulanık" bir alan ancak elips bir BlurView ile taklit edilebiliyordu; o da
+ * ekranın ortasında ayrı bir yuvarlak leke gibi görünüyordu. Doğru görünüm
+ * için blur tüm ekranı kaplar, üzerine binen radial gradyan ise merkezde
+ * tamamen saydamdan başlayıp kenarlara doğru koyulaşır. Böylece kapak
+ * bölgesinde blur en güçlüdür, dışa doğru yumuşakça söner ve hiçbir yerde
+ * keskin bir daire kenarı oluşmaz.
  */
 export interface RadialBlurFocusProps {
-  /** Odak bölgesindeki bulanıklık şiddeti (taban katmandan yüksek olmalı). */
+  /** Odak (kapak) bölgesindeki bulanıklık şiddeti. */
   intensity?: number;
   style?: StyleProp<ViewStyle>;
 }
 
-export function RadialBlurFocus({ intensity = 55, style }: RadialBlurFocusProps) {
+export function RadialBlurFocus({ intensity = 65, style }: RadialBlurFocusProps) {
   return (
-    <View pointerEvents="none" style={[styles.focusCircle, style]}>
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, style]}>
       <BlurView
         style={StyleSheet.absoluteFill}
         intensity={intensity}
@@ -70,34 +70,19 @@ export function RadialBlurFocus({ intensity = 55, style }: RadialBlurFocusProps)
         blurMethod="dimezisBlurViewSdk31Plus"
       />
       {/*
-        Elips kenarını gizleyen yumuşak geçiş. NEDEN BU KADAR SAYDAM: önceki
-        değerler kenarlarda neredeyse opak koyu bir halka bırakıyordu; ekranın
-        dışına taşan bulanıklık "abartılı" görünüyordu. Artık geçiş çok daha
-        erken başlıyor ve en uçta bile yalnızca hafif bir karartma kalıyor.
+        Sönümleme: merkez (kapak) saydam → blur tam görünür; dışa doğru
+        gradyan koyulaşarak bulanıklığı yumuşakça örter. En uçta bile tam
+        opak değil, aksi hâlde ekranın çevresi siyah bir çerçeveye dönüşüyor.
       */}
       <View
         style={[
           StyleSheet.absoluteFill,
           {
             experimental_backgroundImage:
-              'radial-gradient(circle at 50% 50%, rgba(10, 10, 14, 0) 42%, rgba(10, 10, 14, 0.18) 74%, rgba(8, 8, 11, 0.36) 100%)',
+              'radial-gradient(circle at 50% 40%, rgba(10, 10, 14, 0) 18%, rgba(10, 10, 14, 0.10) 40%, rgba(10, 10, 14, 0.32) 64%, rgba(7, 7, 10, 0.58) 86%, rgba(5, 5, 8, 0.72) 100%)',
           },
         ]}
       />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  focusCircle: {
-    position: 'absolute',
-    // Elips daraltıldı: bulanıklık artık kenarlara taşmıyor, yalnızca
-    // oynatıcının orta alanında (kapak/parça bilgisi) kalıyor.
-    left: '-4%',
-    right: '-4%',
-    top: '13%',
-    bottom: '32%',
-    borderRadius: 9999,
-    overflow: 'hidden',
-  },
-});

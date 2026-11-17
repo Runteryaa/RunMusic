@@ -4,7 +4,6 @@ import {
   Text,
   View,
   Modal,
-  TouchableOpacity,
   TextInput,
   ScrollView,
   KeyboardAvoidingView,
@@ -12,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { TouchableOpacity } from './ui/TouchableOpacity';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';

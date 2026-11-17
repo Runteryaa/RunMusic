@@ -4,11 +4,11 @@ import {
   Text,
   View,
   Modal,
-  TouchableOpacity,
   TextInput,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { TouchableOpacity } from './ui/TouchableOpacity';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeStore } from '../store/useThemeStore';
 import { useTranslation } from '../services/i18n';

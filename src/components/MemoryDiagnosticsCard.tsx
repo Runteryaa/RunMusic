@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Share, StyleSheet, Text, View } from 'react-native';
+import { TouchableOpacity } from './ui/TouchableOpacity';
 import { Ionicons } from '@expo/vector-icons';
 import {
   clearMemoryDiagnostics,

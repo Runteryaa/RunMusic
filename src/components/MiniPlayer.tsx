@@ -3,11 +3,11 @@ import {
   StyleSheet,
   Text,
   View,
-  TouchableOpacity,
   PanResponder,
   Animated,
   Dimensions,
 } from 'react-native';
+import { TouchableOpacity } from './ui/TouchableOpacity';
 import { Ionicons } from '@expo/vector-icons';
 import TrackPlayer, {
   RepeatMode,
@@ -22,7 +22,6 @@ import { useActiveProgress } from '../hooks/useActiveProgress';
 import { TrackArtwork } from './TrackArtwork';
 import { MarqueeText } from './ui/MarqueeText';
 import { GradientSurface, withAlpha } from './ui/GradientSurface';
-import { glassSurface } from '../theme/glass';
 import { cleanDisplayTitle, getSearchKeywords } from '../services/lyricsService';
 import { cleanArtistName } from '../services/displayNames';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
@@ -606,8 +605,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 4,
-    // Cam görünüm ortak `glassSurface` ile: gradyan dolgu + parlak kenar + gölge.
-    ...glassSurface(21),
+    // Cam görünüm: saydam beyaz dolgu + ince saydam kenarlık.
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.16)',
   },
   remoteBadge: {
     flexDirection: 'row',

@@ -4,7 +4,6 @@ import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
   FlatList,
   ActivityIndicator,
   StyleSheet,
@@ -13,6 +12,7 @@ import {
   Image,
   Keyboard,
 } from 'react-native';
+import { TouchableOpacity } from '../components/ui/TouchableOpacity';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useExtensionStore } from '../store/useExtensionStore';

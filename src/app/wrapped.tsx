@@ -7,10 +7,10 @@ import {
   Switch,
   Text,
   TextInput,
-  TouchableOpacity,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { TouchableOpacity } from '../components/ui/TouchableOpacity';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';

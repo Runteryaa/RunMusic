@@ -3,12 +3,12 @@ import {
   Modal,
   View,
   Text,
-  TouchableOpacity,
   StyleSheet,
   Image,
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { TouchableOpacity } from './ui/TouchableOpacity';
 import { FlashList } from '@shopify/flash-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';

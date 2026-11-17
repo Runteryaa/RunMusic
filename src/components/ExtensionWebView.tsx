@@ -3,9 +3,9 @@ import {
   View,
   ActivityIndicator,
   Text,
-  TouchableOpacity,
   StyleSheet,
 } from 'react-native';
+import { TouchableOpacity } from './ui/TouchableOpacity';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeStore } from '../store/useThemeStore';

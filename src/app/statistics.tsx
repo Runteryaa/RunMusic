@@ -4,10 +4,10 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
+import { TouchableOpacity } from '../components/ui/TouchableOpacity';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -44,7 +44,6 @@ import { cleanTrackFields } from '../services/displayNames';
 import { loadArtistImages, normalizeArtistKey } from '../services/artistImages';
 import { buildArtistTitleHints } from '../services/artistProfile';
 import { useTranslation } from '../services/i18n';
-import { glassSurface } from '../theme/glass';
 import { useBackToLibrary } from '../hooks/useBackToLibrary';
 
 const PAGE_SIZE = 50;
@@ -1065,7 +1064,9 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 9,
     borderRadius: 999,
-    ...glassSurface(999, { shadow: false }),
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     alignItems: 'center',
   },
   periodChipText: {
@@ -1087,7 +1088,10 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     flexBasis: '30%',
     minWidth: 96,
-    ...glassSurface(14, { card: true, shadow: false }),
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
     paddingVertical: 14,
     paddingHorizontal: 12,
     gap: 4,
@@ -1165,8 +1169,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   chartCard: {
-    // Cam kart: gradyan dolgu + parlak üst kenar.
-    ...glassSurface(16, { card: true, shadow: false }),
+    // Cam kart: saydam dolgu + ince saydam kenarlık.
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
     padding: 12,
     marginBottom: 14,
   },

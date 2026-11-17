@@ -3,7 +3,6 @@ import {
   StyleSheet,
   Text,
   View,
-  TouchableOpacity,
   GestureResponderEvent,
   Modal,
   Pressable,
@@ -20,6 +19,7 @@ import {
   type StyleProp,
   type TextStyle,
 } from 'react-native';
+import { TouchableOpacity } from './ui/TouchableOpacity';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library/legacy';
@@ -47,7 +47,6 @@ import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
 import { GlassBackdrop, RadialBlurFocus } from './ui/GlassBackdrop';
-import { glassSurface } from '../theme/glass';
 import { withAlpha } from './ui/GradientSurface';
 import { rememberArtistImage } from '../services/artistImages';
 import { normalizeArtistKey } from '../services/artistMatch';
@@ -4550,14 +4549,12 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
         />
       ) : null}
       {/* Cam katman: kapağı bulanıklaştırıp koyu perdeyle okunabilirlik verir.
-          Perde artık daha saydam: oynatıcı "camın arkasındaki kapak" gibi
-          görünüyor, düz siyah bir zemin gibi değil. */}
-      <GlassBackdrop intensity={60} overlayColor="rgba(10, 10, 14, 0.55)" />
+          Perde saydam tutulur: oynatıcı "camın arkasındaki kapak" gibi
+          görünür, düz siyah bir zemin gibi değil. */}
+      <GlassBackdrop intensity={45} overlayColor="rgba(10, 10, 14, 0.58)" />
       {/*
-        Merkezden yayılan bulanıklık: ana oynatıcı alanında (kapak/parça
-        bilgisi) biraz daha güçlü, köşelere doğru azalan bir bulanıklık. Bu
-        katman taban cam katmanının üzerine biner; kenarları radial gradyanla
-        gizlendiği için keskin bir daire görünmez.
+        Kapağın arkasından başlayıp kenarlara doğru azalan bulanıklık: odak
+        bölgesinde (kapak/parça bilgisi) en güçlü, dışa doğru yumuşakça söner.
       */}
       <RadialBlurFocus intensity={55} />
       {/* Subtle Ambient Color Glow from Cover Art */}
@@ -6236,7 +6233,9 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    ...glassSurface(19),
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   headerTitleBox: {
     alignItems: 'center',
@@ -6842,11 +6841,15 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
-    // Nötr durumda buton tamamen saydam: arkasında hiçbir yüzey yok,
-    // yalnızca simge görünür. Cam yüzey sadece seçiliyken devreye girer.
-    backgroundColor: 'transparent',
+    // Cam buton: saydam dolgu + ince saydam kenarlık (RunMusic cam dili).
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
-  appleUtilBtnActive: glassSurface(22, { active: true }),
+  appleUtilBtnActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    borderColor: 'rgba(255, 255, 255, 0.32)',
+  },
   appleCenterUtilRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -6859,10 +6862,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
-    // Aynı kural orta gruptaki loop / connecto / uyku zamanlayıcısı için.
+    // Nötr durumda tamamen saydam: arkasında hiçbir yüzey yok, yalnızca
+    // simge görünür. Yüzey yalnızca seçiliyken devreye girer. Kenarlık her
+    // durumda ayrılmış (renksiz) ki seçimde buton boyutu kaymasın.
     backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
-  appleSubUtilBtnActive: glassSurface(20, { active: true }),
+  appleSubUtilBtnActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.32)',
+  },
   connectClientsBadgeWrapper: {
     position: 'absolute',
     top: 1,

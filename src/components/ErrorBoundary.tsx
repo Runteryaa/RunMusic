@@ -1,5 +1,6 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { TouchableOpacity } from './ui/TouchableOpacity';
 import { Ionicons } from '@expo/vector-icons';
 import { t } from '../services/i18n';
 import { reportError } from '../services/crashReporting';

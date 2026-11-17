@@ -3,11 +3,11 @@ import {
   Modal,
   View,
   Text,
-  TouchableOpacity,
   ScrollView,
   StyleSheet,
   Pressable,
 } from 'react-native';
+import { TouchableOpacity } from './ui/TouchableOpacity';
 import { Ionicons } from '@expo/vector-icons';
 import { useAlertStore } from '../store/useAlertStore';
 import { useThemeStore } from '../store/useThemeStore';

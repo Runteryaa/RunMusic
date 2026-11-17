@@ -4,7 +4,6 @@ import {
   StyleSheet,
   Text,
   View,
-  TouchableOpacity,
   ActivityIndicator,
   Alert,
   RefreshControl,
@@ -13,6 +12,7 @@ import {
   Pressable,
   BackHandler,
 } from 'react-native';
+import { TouchableOpacity } from '../components/ui/TouchableOpacity';
 import { FlashList } from '@shopify/flash-list';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import * as FileSystem from 'expo-file-system';
@@ -54,7 +54,6 @@ import {
   mergeCompletedDownloadsIntoAssets,
   syncCompletedDownloadsWithLibrary,
 } from '../services/downloadManager';
-import { glassSurface } from '../theme/glass';
 
 interface SortItem {
   id: SortOption;
@@ -1510,11 +1509,13 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    // Cam buton: ortak cam dili (gradyan + parlak kenar + gölge).
-    ...glassSurface(19),
+    // Cam buton: saydam dolgu + ince saydam kenarlik.
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   searchBarContainer: {
     flexDirection: 'row',
@@ -1531,9 +1532,12 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    ...glassSurface(14, { card: true, shadow: false }),
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 14,
     paddingHorizontal: 12,
     height: 42,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   searchInnerIcon: {
     marginRight: 8,
