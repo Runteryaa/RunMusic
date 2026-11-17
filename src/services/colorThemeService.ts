@@ -282,6 +282,22 @@ export function extractThemeFromSeed(_seed?: string): ThemeColors {
  * 4. Asla rastgele renk üretmez; kapağın gerçek renklerini korur.
  */
 export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors> {
+  return (await extractThemeFromImageUriOrNull(uri)) ?? DEFAULT_THEME;
+}
+
+/**
+ * `extractThemeFromImageUri` ile aynı çıkarımı yapar, ancak **başarısızlığı
+ * gizlemez**: kapaktan renk çıkarılamazsa `null` döner.
+ *
+ * NEDEN: açılışta kapak dosyası henüz hazır olmayabiliyor. Eski davranışta bu
+ * durumda sessizce `DEFAULT_THEME` (mavi) dönüyordu; çağıran taraf da "tema
+ * uygulandı" sanıp bir daha denemiyordu. Bu yüzden uygulama, şarkı değiştirilene
+ * kadar kapaktan renk üretmiyordu. Bu sürüm, çağıranın ayırt edip yeniden
+ * denemesine izin verir.
+ */
+export async function extractThemeFromImageUriOrNull(
+  uri: string
+): Promise<ThemeColors | null> {
   if (!uri || typeof uri !== 'string') {
     return DEFAULT_THEME;
   }
@@ -369,5 +385,5 @@ export async function extractThemeFromImageUri(uri: string): Promise<ThemeColors
     // Devam et
   }
 
-  return DEFAULT_THEME;
+  return null;
 }

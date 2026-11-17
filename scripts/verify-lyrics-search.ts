@@ -113,6 +113,42 @@ const refHits = searchLyricsCache(refCache, [TRACK], 'aradığım');
 check('ref üzerinden eşleşir', refHits.length === 1, String(refHits.length));
 check('ref sonucu ayrıntı taşır', !!refHits[0]?.details.includes('Aradığım dize'));
 
+section('7) Ayrıntı her zaman önizlemeden uzundur');
+
+/*
+ * "Genişlet" düğmesi yalnızca `details` önizlemeden farklıysa görünür. Tek
+ * satırlık sözlerde bağlam penceresi de tek satır kalıyordu ve düğme hiç
+ * çıkmıyordu; kutu genişletilemez görünüyordu.
+ */
+const singleCache: Record<string, LyricsCacheEntry> = {
+  a1: entry(`${'kelime '.repeat(40)}hedef ve devamı`),
+};
+const singleHits = searchLyricsCache(singleCache, [TRACK], 'hedef');
+check('tek satırlık sözde sonuç bulunur', singleHits.length === 1, String(singleHits.length));
+check(
+  'tek satırlık uzun sözde ayrıntı önizlemeden uzundur',
+  (singleHits[0]?.details.length ?? 0) > (singleHits[0]?.snippet.length ?? 0),
+  `${singleHits[0]?.details.length} / ${singleHits[0]?.snippet.length}`
+);
+
+for (const [index, hit] of hits.entries()) {
+  check(
+    `sonuç ${index + 1}: ayrıntı önizlemeden uzun`,
+    hit.details.length > hit.snippet.length,
+    `${hit.details.length} / ${hit.snippet.length}`
+  );
+}
+
+section('8) Genişletilmiş ayrıntı sınırı');
+
+const hugeLine = Array.from({ length: 200 }, (_, i) => `satır ${i} hedef`).join('\n');
+const hugeHits = searchLyricsCache({ a1: entry(hugeLine) }, [TRACK], 'hedef');
+check(
+  'ayrıntı en fazla 600 karakter',
+  (hugeHits[0]?.details.length ?? 0) <= 600,
+  String(hugeHits[0]?.details.length)
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 section('Sonuç');

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import {
   ThemeColors,
   DEFAULT_THEME,
-  extractThemeFromImageUri,
+  extractThemeFromImageUriOrNull,
   createThemeFromHex,
   createThemeFromRgb,
   hexToRgb,
@@ -12,7 +12,13 @@ import { useStore } from './useStore';
 interface ThemeState {
   theme: ThemeColors;
   currentArtworkUri: string | null;
-  updateThemeFromArtwork: (uri: string | null | undefined) => Promise<void>;
+  /**
+   * Kapaktan tema üretir. **Kapaktan renk gerçekten uygulandıysa `true`**,
+   * kapak okunamadığı için hazır temaya düşüldüyse `false` döner. Çağıran taraf
+   * (açılış senkronizasyonu) `false` gördüğünde yeniden denemelidir: açılışta
+   * kapak dosyası henüz hazır olmayabilir.
+   */
+  updateThemeFromArtwork: (uri: string | null | undefined) => Promise<boolean>;
   applyPresetTheme: (colorHex: string) => void;
   resetTheme: () => void;
 }
@@ -113,42 +119,44 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
           450
         );
       }
-      return;
+      return true;
     }
 
     if (get().currentArtworkUri === uri) {
-      return;
+      return true;
     }
 
     set({ currentArtworkUri: uri });
 
-    try {
-      const extractedTheme = await extractThemeFromImageUri(uri);
-      // Şarkı veya tercih değişmediyse aktif olana uygula
-      const currentPrefs = useStore.getState().preferences;
-      const isDynamicActive = Boolean((currentPrefs?.isDynamicColorUnlocked || currentPrefs?.isDevModeActive) && currentPrefs?.dynamicColorFromArtwork);
-      if (
-        get().currentArtworkUri === uri &&
-        isDynamicActive
-      ) {
-        animateThemeTransition(
-          get().theme,
-          extractedTheme,
-          (intermediateTheme) => set({ theme: intermediateTheme }),
-          () => set({ theme: extractedTheme }),
-          450
-        );
+    const extractedTheme = await extractThemeFromImageUriOrNull(uri);
+
+    /*
+     * Kapak okunamadı (açılışta dosya henüz oluşmamış olabilir). Eski kod bu
+     * durumda sessizce varsayılan mavi temaya düşüyordu ve çağıran "uygulandı"
+     * sanıp bir daha denemiyordu — bu yüzden tema şarkı değiştirilene kadar
+     * kapaktan üretilmiyordu. Artık `null` bayrağı temizleyip `false` dönüyoruz;
+     * çağıran taraf yeniden deneme planlar.
+     */
+    if (!extractedTheme) {
+      if (get().currentArtworkUri === uri) {
+        set({ currentArtworkUri: null });
       }
-    } catch {
-      // Hata durumunda seçili hazır temayı koru
+      return false;
+    }
+
+    // Şarkı veya tercih değişmediyse aktif olana uygula
+    const currentPrefs = useStore.getState().preferences;
+    const isDynamicActive = Boolean((currentPrefs?.isDynamicColorUnlocked || currentPrefs?.isDevModeActive) && currentPrefs?.dynamicColorFromArtwork);
+    if (get().currentArtworkUri === uri && isDynamicActive) {
       animateThemeTransition(
         get().theme,
-        fallbackTheme,
+        extractedTheme,
         (intermediateTheme) => set({ theme: intermediateTheme }),
-        () => set({ theme: fallbackTheme }),
+        () => set({ theme: extractedTheme }),
         450
       );
     }
+    return true;
   },
 
   applyPresetTheme: (colorHex: string) => {

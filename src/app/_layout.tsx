@@ -24,6 +24,7 @@ import { useStartupUpdateCheck } from '../hooks/useStartupUpdateCheck';
 import { useScrobbler } from '../hooks/useScrobbler';
 import { useMemoryDiagnostics } from '../hooks/useMemoryDiagnostics';
 import { useIsAppActive } from '../hooks/useIsAppActive';
+import { useResilientActiveTrack } from '../hooks/useResilientActiveTrack';
 import { initSleepTimerService } from '../store/useSleepTimerStore';
 import { useTranslation, t } from '../services/i18n';
 import { initAdService } from '../services/adService';
@@ -127,7 +128,12 @@ function PlayerSideEffects() {
  * the active track.
  */
 function ActiveTrackArtworkSync() {
-  const activeTrack = useActiveTrack();
+  /*
+   * `useActiveTrack` yerine dayanıklı sürüm: soğuk açılışta oynatıcı henüz
+   * kurulmamışken ilk okuma reddedilir ve kanca bir daha güncellenmez. Kapak
+   * çözülemediği için de "kapaktan renk" açılışta hiç çalışmıyordu.
+   */
+  const activeTrack = useResilientActiveTrack();
   const activeTrackId = activeTrack?.id;
   const isRemoteMode = useRemoteConnectStore((s) => s.mode === 'client');
 
@@ -145,7 +151,9 @@ function ActiveTrackArtworkSync() {
  * mounted screen to re-render.
  */
 function ActiveTrackThemeSync() {
-  const activeTrack = useActiveTrack();
+  // Dayanıklı etkin parça: soğuk açılışta `useActiveTrack` boş kalabildiği için
+  // tema hiç uygulanmıyordu (şarkı değişene kadar).
+  const activeTrack = useResilientActiveTrack();
   const updateThemeFromArtwork = useThemeStore((s) => s.updateThemeFromArtwork);
   const dynamicColorFromArtwork = useStore((s) => s.preferences.dynamicColorFromArtwork);
   const presetThemeColor = useStore((s) => s.preferences.presetThemeColor);
@@ -167,15 +175,19 @@ function ActiveTrackThemeSync() {
    * oluyor. Tema her kapak güncellemesinde uygulanınca oynatıcı aynı parça
    * için birden fazla kez renk değiştiriyordu.
    *
-   * Çözüm: tema her parça için **bir kez** uygulanır (`appliedTrackRef`).
-   * Parça değişmeden gelen yeni kapak yalnızca önbelleğe yazılır. Böylece
-   * uygulama açılışında da kapak hazır olduğu anda tema bir kez uygulanır;
-   * önceki sürümde açılış "geç kapak" sayılıp tema hiç uygulanmıyordu.
-   * Kullanıcı tema tercihini değiştirirse tema hemen yeniden uygulanır.
+   * Çözüm: tema her parça için **bir kez** uygulanır — ama yalnızca renk
+   * gerçekten kapaktan üretildiğinde (`appliedTrackRef` yalnızca başarıda
+   * yazılır). Açılışta kapak dosyası henüz hazır değilse çıkarım başarısız
+   * olur; bu durumda kısa aralıklarla yeniden denenir. Önceki sürüm başarısız
+   * denemeyi de "uygulandı" sayıp kilitlediği için tema şarkı değiştirilene
+   * kadar kapaktan üretilmiyordu.
    */
   const appliedTrackRef = useRef<string | null>(null);
   const preferenceKey = `${dynamicColorFromArtwork ? 'auto' : 'fixed'}|${presetThemeColor ?? ''}`;
   const lastPreferenceRef = useRef(preferenceKey);
+  /** Başarısız kapak okumasından sonra yeniden deneme sayacı. */
+  const [retryTick, setRetryTick] = useState(0);
+  const retryCountRef = useRef(0);
 
   useEffect(() => {
     // Tercih de bağımlılık: kullanıcı "kapaktan renk türet"i açıp kapatınca
@@ -185,6 +197,7 @@ function ActiveTrackThemeSync() {
 
     if (!dynamicColorFromArtwork) {
       appliedTrackRef.current = null;
+      retryCountRef.current = 0;
       updateThemeFromArtwork(null);
       return;
     }
@@ -193,14 +206,36 @@ function ActiveTrackThemeSync() {
     const trackKey = activeTrackId ?? '';
     if (!preferenceChanged && appliedTrackRef.current === trackKey) return;
 
-    appliedTrackRef.current = trackKey;
-    updateThemeFromArtwork(effectiveArtworkUri);
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    void updateThemeFromArtwork(effectiveArtworkUri).then((applied) => {
+      if (cancelled) return;
+      if (applied) {
+        appliedTrackRef.current = trackKey;
+        retryCountRef.current = 0;
+        return;
+      }
+      // Kapak henüz okunamadı: artan aralıklarla (en fazla 4 kez) yeniden dene.
+      if (retryCountRef.current >= 4) return;
+      const delay = 700 * Math.pow(1.8, retryCountRef.current);
+      retryCountRef.current += 1;
+      retryTimer = setTimeout(() => {
+        if (!cancelled) setRetryTick((value) => value + 1);
+      }, delay);
+    });
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [
     effectiveArtworkUri,
     activeTrackId,
     updateThemeFromArtwork,
     dynamicColorFromArtwork,
     preferenceKey,
+    retryTick,
   ]);
 
   return null;

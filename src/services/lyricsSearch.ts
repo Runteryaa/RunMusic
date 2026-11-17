@@ -43,11 +43,25 @@ function clip(text: string, limit = MAX_SNIPPET_LENGTH): string {
 /**
  * Eşleşen satırı komşularıyla birlikte döner: kullanıcı genişlettiğinde
  * sözün bağlamını görür. Boş satırlar korunmaz, toplam uzunluk sınırlanır.
+ *
+ * Dönen metin **her zaman** önizlemeden uzundur; aksi hâlde "Genişlet" düğmesi
+ * hiç görünmez ve sonuç, genişletilemez kısa bir kutu gibi kalır. Sırasıyla:
+ * 1. Eşleşen satır + komşuları (bağlam),
+ * 2. bağlam yeterli değilse eşleşen satırın kırpılmamış tamamı
+ *    (satır 90 karakterden uzunsa önizleme kırpılmış olur),
+ * 3. o da yetmezse sözün tamamı (sınırlı uzunlukta).
  */
-function buildDetails(lines: string[], matchIndex: number): string {
+function buildDetails(lines: string[], matchIndex: number, preview: string): string {
   const start = Math.max(0, matchIndex - DETAIL_CONTEXT_LINES);
   const end = Math.min(lines.length, matchIndex + DETAIL_CONTEXT_LINES + 1);
-  return clip(lines.slice(start, end).join('\n'), MAX_DETAILS_LENGTH);
+  const context = clip(lines.slice(start, end).join('\n'), MAX_DETAILS_LENGTH);
+  if (context.length > preview.length) return context;
+
+  const fullLine = clip(lines[matchIndex] ?? '', MAX_DETAILS_LENGTH);
+  if (fullLine.length > preview.length) return fullLine;
+
+  const wholeSong = clip(lines.join('\n'), MAX_DETAILS_LENGTH);
+  return wholeSong.length > preview.length ? wholeSong : context;
 }
 
 function resolveEntry(
@@ -121,9 +135,10 @@ export function searchLyricsCache(
         return terms.every((term) => normalizedLine.includes(term));
       });
       if (matchIndex >= 0) {
+        const snippet = clip(lines[matchIndex]);
         found = {
-          snippet: clip(lines[matchIndex]),
-          details: buildDetails(lines, matchIndex),
+          snippet,
+          details: buildDetails(lines, matchIndex, snippet),
         };
         canonicalKey = resolved.canonicalKey;
         break;
