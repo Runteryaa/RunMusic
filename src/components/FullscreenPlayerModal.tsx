@@ -46,7 +46,7 @@ import { RUNMUSIC_TCP_PORT, type DiscoveredHost, type RemoteTrackSummary } from 
 import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
-import { GlassBackdrop } from './ui/GlassBackdrop';
+import { GlassBackdrop, RadialBlurFocus } from './ui/GlassBackdrop';
 import { withAlpha } from './ui/GradientSurface';
 import { rememberArtistImage } from '../services/artistImages';
 import { normalizeArtistKey } from '../services/artistMatch';
@@ -4548,6 +4548,13 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       ) : null}
       {/* Cam katman: kapağı bulanıklaştırıp koyu perdeyle okunabilirlik verir. */}
       <GlassBackdrop intensity={85} overlayColor="rgba(10, 10, 14, 0.82)" />
+      {/*
+        Merkezden yayılan bulanıklık: ana oynatıcı alanında (kapak/parça
+        bilgisi) daha güçlü, köşelere doğru azalan bir bulanıklık. Bu katman
+        taban cam katmanının üzerine biner; kenarları radial gradyanla
+        gizlendiği için keskin bir daire görünmez.
+      */}
+      <RadialBlurFocus intensity={100} />
       {/* Subtle Ambient Color Glow from Cover Art */}
       <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.glowColor, opacity: 0.14 }]} />
       {/*

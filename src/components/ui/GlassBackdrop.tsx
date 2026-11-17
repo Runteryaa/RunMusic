@@ -42,3 +42,55 @@ export function GlassBackdrop({
     </View>
   );
 }
+
+/**
+ * Merkezden yayılan bulanıklık (oynatıcı arka planı).
+ *
+ * NEDEN AYRI KATMAN: `BlurView` tek başına tüm ekranı eşit bulanıklaştırır.
+ * İstenen görünüm, oynatıcının ana alanında (kapak/parça bilgisi) daha güçlü
+ * bulanıklık ve köşelere doğru azalan bir etki. Android'de maske API'si
+ * olmadığı için çözüm dairesel bir ikinci blur katmanı: geniş bir elipsin
+ * içine yüksek yoğunluklu blur konur, elipsin kenarı da aynı arka plan rengine
+ * doğru saydamlaşan radial gradyanla gizlenir. Böylece geçiş keskin bir daire
+ * olarak görünmez, yumuşak bir odak oluşur.
+ */
+export interface RadialBlurFocusProps {
+  /** Odak bölgesindeki bulanıklık şiddeti (taban katmandan yüksek olmalı). */
+  intensity?: number;
+  style?: StyleProp<ViewStyle>;
+}
+
+export function RadialBlurFocus({ intensity = 100, style }: RadialBlurFocusProps) {
+  return (
+    <View pointerEvents="none" style={[styles.focusCircle, style]}>
+      <BlurView
+        style={StyleSheet.absoluteFill}
+        intensity={intensity}
+        tint="dark"
+        blurMethod="dimezisBlurViewSdk31Plus"
+      />
+      {/* Elips kenarını gizleyen yumuşak geçiş: ortada saydam, uçta koyu. */}
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            experimental_backgroundImage:
+              'radial-gradient(circle at 50% 50%, rgba(10, 10, 14, 0) 52%, rgba(10, 10, 14, 0.55) 82%, rgba(8, 8, 11, 0.85) 100%)',
+          },
+        ]}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  focusCircle: {
+    position: 'absolute',
+    left: '-18%',
+    right: '-18%',
+    top: '4%',
+    bottom: '24%',
+    borderRadius: 9999,
+    overflow: 'hidden',
+  },
+});
