@@ -1,6 +1,8 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { useDownloadStore } from '../store/useDownloadStore';
+import { isNetworkAvailable } from './networkAwareFetch';
+import { waitUntilOnline } from './networkStatus';
 import { useStore } from '../store/useStore';
 import { saveCachedLibrary } from './libraryStorage';
 import { t } from './i18n';
@@ -208,6 +210,14 @@ async function executeDownload(task: DownloadTask): Promise<void> {
   if (isTaskCancelled(task.id)) return;
 
   try {
+    // Çevrimdışıyken indirme başlatılmaz: kuyruğa alınır ve bağlantı geri
+    // gelince kaldığı yerden devam eder. Boşa giden istek/ağ hatası olmaz.
+    if (!isNetworkAvailable()) {
+      useDownloadStore.getState().updateTask(task.id, { status: 'queued' });
+      await waitUntilOnline();
+      if (isTaskCancelled(task.id)) return;
+    }
+
     const dirInfo = await FileSystem.getInfoAsync(downloadDir);
     if (!dirInfo.exists) {
       await FileSystem.makeDirectoryAsync(downloadDir, { intermediates: true });

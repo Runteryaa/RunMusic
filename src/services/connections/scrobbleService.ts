@@ -20,6 +20,7 @@ import {
   submitPlayingNow,
 } from './listenbrainz';
 import { useConnectionsStore } from '../../store/useConnectionsStore';
+import { isNetworkAvailable } from '../networkAwareFetch';
 import { ConnectionError, type ScrobbleEntry, type ScrobbleTarget, type ScrobbleTrack } from './types';
 
 /**
@@ -43,6 +44,8 @@ function currentCredentials() {
 
 /** "Şimdi çalıyor" bildirimi — kuyruğa girmez, hata sessizce yutulur. */
 export async function broadcastNowPlaying(track: ScrobbleTrack): Promise<void> {
+  if (!isNetworkAvailable()) return;
+
   const { state, lastfm } = currentCredentials();
 
   const tasks: Promise<unknown>[] = [];
@@ -126,6 +129,8 @@ function isPermanentFailure(target: ScrobbleTarget, error: unknown): boolean {
  * sessizce döner.
  */
 export async function flushScrobbles(): Promise<void> {
+  // Çevrimdışıyken kuyruk korunur; bağlantı gelince useScrobbler flush eder.
+  if (!isNetworkAvailable()) return;
   if (flushInFlight) return flushInFlight;
 
   flushInFlight = (async () => {

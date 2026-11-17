@@ -19,6 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { normalizeArtistKey } from './artistMatch';
 import { cleanTrackTitle } from './displayNames';
 import { splitArtistNames } from './wrappedStats';
+import { isNetworkAvailable } from './networkAwareFetch';
 import {
   GENIUS_SUGGEST_LIMIT,
   geniusArtistImageOf,
@@ -150,6 +151,10 @@ async function withRequestSlot<T>(task: () => Promise<T>): Promise<T> {
  * `User-Agent`'ı olmadan Cloudflare tarafından 403 ile engellenebiliyor.
  */
 async function geniusJson<T>(url: string): Promise<T> {
+  // Çevrimdışıyken istek denemek boşa gider; çağıranlar bu hatayı "başarısız
+  // istek" olarak ele alıp önbelleğe YAZMAZ (fotoğraf gizli kalmaz).
+  if (!isNetworkAvailable()) throw new GeniusRequestError('OFFLINE');
+
   return withRequestSlot(async () => {
     const res = await fetch(url, {
       headers: {

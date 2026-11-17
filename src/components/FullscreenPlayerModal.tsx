@@ -50,6 +50,7 @@ import { rememberArtistImage } from '../services/artistImages';
 import { normalizeArtistKey } from '../services/artistMatch';
 import { splitArtistNames } from '../services/wrappedStats';
 import { router } from 'expo-router';
+import { isNetworkAvailable } from '../services/networkAwareFetch';
 
 import { useTranslation } from '../services/i18n';
 import { showRewardedAd } from '../services/adService';
@@ -3637,6 +3638,12 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
         }
         return;
       }
+    }
+
+    // Çevrimdışıyken ağ isteği atılmaz; kayıtlı söz yoksa kullanıcı bilgilendirilir.
+    if (!isNetworkAvailable()) {
+      alert(t('player.offline_lyrics'));
+      return;
     }
 
     setIsLoadingLyrics(true);

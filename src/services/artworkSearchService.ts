@@ -16,6 +16,7 @@
  */
 
 import { getSearchKeywords } from './lyricsService';
+import { isNetworkAvailable } from './networkAwareFetch';
 
 export interface OnlineArtworkResult {
   id: string;
@@ -110,6 +111,7 @@ export function buildArtworkQueries(title: string, artist: string): string[] {
  */
 async function fetchItunesQuery(query: string): Promise<OnlineArtworkResult[]> {
   if (!query) return [];
+  if (!isNetworkAvailable()) return [];
 
   const url = `https://itunes.apple.com/search?term=${encodeURIComponent(
     query
@@ -194,6 +196,9 @@ async function searchGeniusArtwork(
 ): Promise<OnlineArtworkResult[]> {
   const query = buildQuery(title, artist);
   if (!query) return [];
+  // Çevrimdışıyken Genius'a istek atmak yerine boş sonuç dön; kapak arama
+  // ekranı "sonuç yok" durumunu zaten gösteriyor.
+  if (!isNetworkAvailable()) return [];
 
   const url = `https://genius.com/api/search/multi?per_page=10&q=${encodeURIComponent(
     query

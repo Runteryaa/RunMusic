@@ -25,6 +25,7 @@ import { useIsAppActive } from '../hooks/useIsAppActive';
 import { initSleepTimerService } from '../store/useSleepTimerStore';
 import { useTranslation, t } from '../services/i18n';
 import { initAdService } from '../services/adService';
+import { startNetworkMonitoring } from '../services/networkStatus';
 import * as Font from 'expo-font';
 import { getCachedLibrary } from '../services/libraryStorage';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
@@ -46,6 +47,9 @@ try {
 }
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+// Ağ durumu tek dinleyiciden izlenir; çevrimdışıyken söz/kapak/sanatçı
+// istekleri atılmaz, bağlantı gelince scrobble kuyruğu boşaltılır.
+startNetworkMonitoring();
 // Splash kapandığı anda pencerenin arka planı da aynı renk olsun; aksi halde
 // Android'de kısa bir siyah kare görünebiliyor.
 SystemUI.setBackgroundColorAsync('#121212').catch(() => {});

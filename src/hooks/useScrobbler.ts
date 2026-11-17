@@ -6,6 +6,7 @@ import { useDownloadStore } from '../store/useDownloadStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { useConnectionsStore, hasActiveScrobbling } from '../store/useConnectionsStore';
 import { useResilientActiveTrack } from './useResilientActiveTrack';
+import { useIsOnline } from './useIsOnline';
 import { broadcastNowPlaying, flushScrobbles, queueScrobble } from '../services/connections/scrobbleService';
 import { scrobbleThresholdSeconds } from '../services/connections/scrobbleThreshold';
 import { cleanTrackFields } from '../services/displayNames';
@@ -39,6 +40,7 @@ export function useScrobbler(): void {
   const lastfmNowPlaying = useConnectionsStore((s) => s.lastfm.nowPlaying);
   const listenBrainzNowPlaying = useConnectionsStore((s) => s.listenbrainz.nowPlaying);
   const anyEnabled = lastfmEnabled || listenBrainzEnabled;
+  const isOnline = useIsOnline();
 
   /** Aynı parça için iki kez now-playing/scrobble göndermeyi engeller. */
   const announcedTrackRef = useRef<string | null>(null);
@@ -126,18 +128,27 @@ export function useScrobbler(): void {
   useEffect(() => {
     if (!anyEnabled) return;
 
-    void flushScrobbles();
+    if (isOnline) void flushScrobbles();
     const interval = setInterval(() => {
-      if (AppState.currentState === 'active') void flushScrobbles();
+      if (AppState.currentState === 'active' && isOnline) void flushScrobbles();
     }, 60_000);
 
     const subscription = AppState.addEventListener('change', (next) => {
-      if (next === 'active' && hasActiveScrobbling()) void flushScrobbles();
+      if (next === 'active' && isOnline && hasActiveScrobbling()) void flushScrobbles();
     });
 
     return () => {
       clearInterval(interval);
       subscription.remove();
     };
-  }, [anyEnabled]);
+  }, [anyEnabled, isOnline]);
+
+  // Ağ geri geldiğinde kuyruktaki birikmiş dinlemeleri hemen gönder.
+  const wasOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    if (isOnline && !wasOnlineRef.current && hasActiveScrobbling()) {
+      void flushScrobbles();
+    }
+    wasOnlineRef.current = isOnline;
+  }, [isOnline]);
 }
