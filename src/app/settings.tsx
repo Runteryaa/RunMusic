@@ -28,6 +28,7 @@ import { cleanDisplayTitle, type LyricsSourcePreference } from '../services/lyri
 import { getSortOptionLabel, type SortOption } from '../services/librarySort';
 import { PRESET_THEME_COLORS } from '../constants/theme';
 import { getPersistedSizeKB } from '../services/persistStorage';
+import { resetStats } from '../services/statsDatabase';
 import { clearUpNextQueue } from '../services/queueController';
 import { syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
 import { useTranslation, type AppLanguage } from '../services/i18n';
@@ -248,6 +249,34 @@ export default function SettingsScreen() {
               minSizeMB: null,
               maxSizeMB: null,
             });
+          },
+        },
+      ]
+    );
+  };
+
+  const handleResetStats = () => {
+    Alert.alert(
+      t('settings.alerts.reset_stats_title'),
+      t('settings.alerts.reset_stats_msg'),
+      [
+        { text: t('settings.alerts.cancel'), style: 'cancel' },
+        {
+          text: t('settings.alerts.reset'),
+          style: 'destructive',
+          onPress: async () => {
+            const ok = await resetStats();
+            if (ok) {
+              Alert.alert(
+                t('settings.alerts.reset_stats_title'),
+                t('settings.alerts.reset_stats_done')
+              );
+            } else {
+              Alert.alert(
+                t('settings.alerts.reset_stats_title'),
+                t('settings.alerts.reset_stats_failed')
+              );
+            }
           },
         },
       ]
@@ -1138,6 +1167,14 @@ export default function SettingsScreen() {
         />
         <ActionRow
           theme={theme}
+          label={t('settings.reset_stats')}
+          hint={t('settings.reset_stats_hint')}
+          icon="stats-chart-outline"
+          destructive
+          onPress={handleResetStats}
+        />
+        <ActionRow
+          theme={theme}
           label={t('settings.reset_settings')}
           hint={t('settings.reset_settings_hint')}
           icon="refresh-outline"
@@ -1571,10 +1608,12 @@ const styles = StyleSheet.create({
   smallBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#27272a',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 8,
+    borderRadius: 10,
     gap: 5,
   },
   deleteBtn: {

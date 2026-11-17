@@ -19,11 +19,14 @@ export const useOptimisticPlayerStore = create<OptimisticPlayerState>((set) => (
       clearTimer = null;
     }
     set({ optimisticTrack: track, optimisticArtworkUri: artworkUri });
-    // Safety auto-clear timeout: if real event doesn't fire within 2.5s, revert gracefully
+    // Güvenlik zaman aşımı: gerçek parça olayı gelmezse nazikçe geri dön.
+    // 6 sn: yavaş cihazlarda TrackPlayer olayı 2.5 sn'yi aşabiliyor ve erken
+    // temizlik, şarkı çalmaya başladıktan sonra arayüzün eski parçaya
+    // dönmesine (görünür "arayüz değişti" hatası) yol açıyordu.
     clearTimer = setTimeout(() => {
       set({ optimisticTrack: null, optimisticArtworkUri: null });
       clearTimer = null;
-    }, 2500);
+    }, 6000);
   },
   clearOptimisticTrack: () => {
     if (clearTimer) {

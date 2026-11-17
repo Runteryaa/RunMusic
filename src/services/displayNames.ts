@@ -28,6 +28,25 @@ const ARTIST_SUFFIX_PATTERNS: RegExp[] = [
 const ARTIST_NOISE_PARENS =
   /\s*[\(\[]\s*(official\s*(music\s*)?(video|audio|lyric\s*video)?|lyric\s*video|audio|video|hd|hq|4k|8k|remaster(ed)?(\s*\d{4})?|explicit|clean|topic)\s*[\)\]]/gi;
 
+/**
+ * Ada **yapışık** gelen kanal sonekleri.
+ *
+ * NEDEN: Etiketlerde sanatçı alanı YouTube kanal adından geliyor
+ * ("MODELOfficial", "MODEL Official Music"). Önceden yalnızca " - Official"
+ * gibi ayraçlı biçim kırpılıyordu, bu yüzden "MODELOfficial" ayrı bir sanatçı
+ * olarak listeleniyor ve gerçek "MODEL" parçalarından kopuyordu.
+ *
+ * Yalnızca adın sonunda ve en az 4 karakterlik bir taban kaldığında uygulanır;
+ * böylece "Official" adlı bir grubun kendisi bozulmaz.
+ */
+const GLUED_ARTIST_SUFFIXES: RegExp[] = [
+  /(\S{4,})\s*official\s*(?:music|channel|artist)?\s*$/i,
+  /(\S{4,})\s*(?:music|topic)\s*channel\s*$/i,
+];
+
+/** HTML varlığı olarak gelmiş "&" işaretleri. */
+const HTML_AMPERSAND = /&(?:amp|#0*38|#x0*26);/gi;
+
 /** "Bilinmeyen Sanatçı" / "Unknown Artist" gibi yer tutucular. */
 export function isPlaceholderArtist(value?: string | null): boolean {
   const lower = (value ?? '').trim().toLowerCase();
@@ -54,11 +73,19 @@ export function cleanArtistName(raw?: string | null): string {
   value = value.replace(AUDIO_EXTENSION, '').trim();
   value = value.replace(ARTIST_NOISE_PARENS, ' ');
 
+  // HTML varlığı olarak gelmiş "&" işaretleri virgüle döner: "A &amp; B"
+  // gerçekten iki sanatçıdır ve bölünmesi gerekir. Düz "&" korunur çünkü
+  // grup isimlerinin parçası olabiliyor ("Mumford & Sons").
+  value = value.replace(HTML_AMPERSAND, ', ').replace(/\s*,\s*/g, ', ');
+
   // Sonekleri birkaç kez uygula: "Artist - Topic - Official" gibi zincirler.
   for (let i = 0; i < 3; i++) {
     const before = value;
     for (const pattern of ARTIST_SUFFIX_PATTERNS) {
       value = value.replace(pattern, '');
+    }
+    for (const pattern of GLUED_ARTIST_SUFFIXES) {
+      value = value.replace(pattern, '$1');
     }
     value = value.trim();
     if (value === before) break;

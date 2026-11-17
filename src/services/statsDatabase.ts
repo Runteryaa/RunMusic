@@ -1,5 +1,9 @@
 import * as SQLite from 'expo-sqlite';
 
+import { renameArtistInField } from './artistRename';
+import { cleanTrackFields } from './displayNames';
+import { bumpStatsEpoch } from './statsEpoch';
+
 const DB_NAME = 'runmusic_stats.db';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -202,7 +206,7 @@ export async function getMostPlayed(
   timeframe?: 'month'
 ): Promise<MostPlayedItem[]> {
   try {
-    return await withStatsDB((database) => {
+    return await withStatsDB(async (database) => {
       let query =
         'SELECT track_id, COUNT(*) as play_count, MAX(title) as title, MAX(artist) as artist, MAX(artwork) as artwork FROM play_history';
       if (timeframe === 'month') {
@@ -211,7 +215,13 @@ export async function getMostPlayed(
       }
       query += ' GROUP BY track_id ORDER BY play_count DESC LIMIT ?';
 
-      return database.getAllAsync<MostPlayedItem>(query, limit);
+      const rows = await database.getAllAsync<MostPlayedItem>(query, limit);
+      // Ham etiketler gösterime sızmaz: "MODELOfficial" → "MODEL",
+      // "Song (Official Video)" → "Song".
+      return rows.map((row) => {
+        const fields = cleanTrackFields(row.title, row.artist);
+        return { ...row, title: fields.title, artist: fields.artist };
+      });
     });
   } catch (error) {
     console.warn('Failed to get most played:', error);
@@ -389,5 +399,73 @@ export async function getTotalListeningTime(): Promise<number> {
   } catch (error) {
     console.warn('Failed to get total listening time:', error);
     return 0;
+  }
+}
+
+/**
+ * Geçmişteki tüm kayıtlarda sanatçı adını değiştirir (sanatçı sayfası).
+ *
+ * Satırlar tek tek okunur çünkü sanatçı alanı ortak çalışma listesi olabilir
+ * ("Mavi Solman, UZI"). Değişen satır sayısı döner; `0` ise hata değil, sadece
+ * bu adda kayıt yok demektir.
+ */
+export async function renameArtistInHistory(oldName: string, newName: string): Promise<number> {
+  try {
+    return await withStatsDB(async (database) => {
+      const rows = await database.getAllAsync<{ id: number; artist: string | null }>(
+        'SELECT id, artist FROM play_history'
+      );
+
+      let changed = 0;
+      const updates: { id: number; artist: string }[] = [];
+      for (const row of rows) {
+        const next = renameArtistInField(row.artist, oldName, newName);
+        if (next == null) continue;
+        updates.push({ id: row.id, artist: next });
+      }
+
+      if (updates.length > 0) {
+        await database.withTransactionAsync(async () => {
+          for (const update of updates) {
+            await database.runAsync(
+              'UPDATE play_history SET artist = ? WHERE id = ?',
+              update.artist,
+              update.id
+            );
+            changed++;
+          }
+        });
+      }
+
+      return changed;
+    });
+  } catch (error) {
+    console.warn('Failed to rename artist in history:', error);
+    return 0;
+  }
+}
+
+/**
+ * Tüm istatistikleri sıfırlar (Ayarlar → Veri ve Bakım).
+ *
+ * Dinleme geçmişi, toplam süre sayacı ve uygulama içi sayaçlar silinir.
+ * Kütüphane, metadata ve söz önbelleği **korunur** — bunlar istatistik değil,
+ * kullanıcı verisidir. Silme başarısız olursa `false` döner ve ayarlar ekranı
+ * kullanıcıya hata gösterir.
+ */
+export async function resetStats(): Promise<boolean> {
+  try {
+    await withStatsDB(async (database) => {
+      await database.execAsync(`
+        DELETE FROM play_history;
+        DELETE FROM app_stats;
+      `);
+    });
+    // İstatistik ekranının kısa süreli önbelleği eski sayıları göstermesin.
+    bumpStatsEpoch();
+    return true;
+  } catch (error) {
+    console.warn('Failed to reset stats:', error);
+    return false;
   }
 }

@@ -52,6 +52,20 @@ check(
 check('boşluklar sadeleşir', cleanArtistName('  Daft   Punk  ') === 'Daft Punk');
 check('dosya uzantısı kaldırılır', cleanArtistName('Daft Punk.mp3') === 'Daft Punk');
 
+section('Yapışık kanal sonekleri');
+check('"MODELOfficial" -> "MODEL"', cleanArtistName('MODELOfficial') === 'MODEL');
+check('"MODEL Official" -> "MODEL"', cleanArtistName('MODEL Official') === 'MODEL');
+check('"MODEL Official Music" -> "MODEL"', cleanArtistName('MODEL Official Music') === 'MODEL');
+check('"MODELOfficialMusic" -> "MODEL"', cleanArtistName('MODELOfficialMusic') === 'MODEL');
+check('"Official" tek başına korunur', cleanArtistName('Official') === 'Official');
+check('"Music Channel" tek başına korunur', cleanArtistName('Music Channel') === 'Music Channel');
+check('"Mumford & Sons" korunur', cleanArtistName('Mumford & Sons') === 'Mumford & Sons');
+
+section('HTML &');
+check('"&amp;" virgüle döner', cleanArtistName('A &amp; B') === 'A, B');
+check('"&#38;" virgüle döner', cleanArtistName('A &#38; B') === 'A, B');
+check('"&#x26;" virgüle döner', cleanArtistName('A &#x26; B') === 'A, B');
+
 section('Yer tutucular');
 check('Unknown Artist', isPlaceholderArtist('Unknown Artist'));
 check('Bilinmeyen Sanatçı', isPlaceholderArtist('Bilinmeyen Sanatçı'));

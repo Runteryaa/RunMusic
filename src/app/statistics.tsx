@@ -21,6 +21,7 @@ import {
   PlayHistoryItem,
   MostPlayedItem,
 } from '../services/statsDatabase';
+import { getStatsEpoch } from '../services/statsEpoch';
 import {
   buildWrappedStats,
   formatWrappedDuration,
@@ -61,7 +62,7 @@ const EMPTY_DETAIL: WrappedStats = buildWrappedStats([]);
 const DETAIL_CACHE_TTL_MS = 60_000;
 const DETAIL_CACHE = new Map<
   WrappedPeriod,
-  { at: number; stats: WrappedStats; rows: WrappedPlayRow[] }
+  { at: number; epoch: number; stats: WrappedStats; rows: WrappedPlayRow[] }
 >();
 
 const PERSONA_TITLE_KEYS: Record<string, string> = {
@@ -188,7 +189,11 @@ export default function StatisticsScreen() {
   const loadDetail = useCallback(
     async (period: WrappedPeriod) => {
       const cached = DETAIL_CACHE.get(period);
-      if (cached && Date.now() - cached.at < DETAIL_CACHE_TTL_MS) {
+      if (
+        cached &&
+        cached.epoch === getStatsEpoch() &&
+        Date.now() - cached.at < DETAIL_CACHE_TTL_MS
+      ) {
         setDetail(cached.stats);
         setDetailLoading(false);
         // Önbellekteki istatistik de olsa fotoğraflar yüklenmeli: aksi halde
@@ -207,7 +212,12 @@ export default function StatisticsScreen() {
           return { ...row, title: fields.title || row.title, artist: fields.artist };
         });
         const nextStats = buildWrappedStats(cleaned, { limit: DETAIL_LIMIT });
-        DETAIL_CACHE.set(period, { at: Date.now(), stats: nextStats, rows: cleaned });
+        DETAIL_CACHE.set(period, {
+          at: Date.now(),
+          epoch: getStatsEpoch(),
+          stats: nextStats,
+          rows: cleaned,
+        });
         setDetail(nextStats);
         loadPhotosFor(nextStats, cleaned);
       } catch (e) {
@@ -1055,8 +1065,8 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#27272a',
-    backgroundColor: '#18181b',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     alignItems: 'center',
   },
   periodChipText: {

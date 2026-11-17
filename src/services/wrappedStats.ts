@@ -9,8 +9,9 @@
  * (Last.fm / ListenBrainz) burada ne okunur ne yazılır.
  */
 
-export type WrappedPeriod = 'year' | 'last12m' | 'all' | 'custom';
+import { cleanTrackFields } from './displayNames';
 
+export type WrappedPeriod = 'year' | 'last12m' | 'all' | 'custom';
 /** Wrapped destesindeki slaytlar (kullanıcı bunları açıp kapatabilir). */
 export const WRAPPED_SLIDE_IDS = [
   'intro',
@@ -307,6 +308,9 @@ export function splitArtistNames(raw?: string | null): string[] {
   if (!value) return [];
 
   const normalized = value
+    // "&amp;" gibi HTML varlıkları virgüle çevrilir: tek alanda gelen ortak
+    // çalışma böylece iki ayrı sanatçı olarak sayılır. Düz "&" korunur.
+    .replace(/&(?:amp|#0*38|#x0*26);/gi, ', ')
     // "feat." / "ft." / "featuring" hem düz hem parantez içinde ayraç sayılır.
     .replace(/[([{]?\s*(?:feat\.?|ft\.?|featuring)\s+/gi, ', ')
     .replace(/;/g, ',');
@@ -374,8 +378,12 @@ export function buildWrappedStats(
     const seconds = recordedSeconds > 0 ? recordedSeconds : fallbackSeconds;
     totalSeconds += seconds;
 
-    const title = clean(row.title);
-    const artist = clean(row.artist);
+    // Ham etiketler istatistiklere sızmasın: "MODELOfficial" → "MODEL",
+    // "Song (Official Video)" → "Song". Kayıt anında da temizleniyor, ancak
+    // eski satırlar ham kalmış olabilir.
+    const fields = cleanTrackFields(row.title, row.artist);
+    const title = fields.title;
+    const artist = fields.artist;
     const trackKey = clean(row.track_id) || `${artist}|${title}`;
 
     const track = tracks.get(trackKey);

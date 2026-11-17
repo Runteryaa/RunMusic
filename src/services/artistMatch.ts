@@ -8,6 +8,7 @@
  * yeniden dışa aktarır (mevcut importlar bozulmaz).
  */
 
+import { cleanArtistName } from './displayNames';
 import { splitArtistNames } from './wrappedStats';
 
 /**
@@ -32,9 +33,15 @@ export function normalizeArtistKey(name?: string | null): string {
  *
  * Ortak çalışmalar ("UZI, MODD", "UZI feat. MODD") ayrıştırılır; sanatçı alanı
  * boşsa tek boş grup korunur (eski Wrapped davranışıyla aynı).
+ *
+ * Her ad `cleanArtistName`'den geçer: geçmişte kaydedilmiş ham etiketler
+ * ("MODELOfficial", "X - Topic") kütüphanedeki düzenlenmiş adla eşleşsin ve
+ * hayalet (ghost) sanatçı/parça oluşmasın.
  */
 export function artistNamesFromRow(raw?: string | null): string[] {
-  const names = splitArtistNames(raw);
+  const names = splitArtistNames(raw)
+    .map((name) => cleanArtistName(name) || name.trim())
+    .filter((name) => name.length > 0);
   return names.length > 0 ? names : [''];
 }
 

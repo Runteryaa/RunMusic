@@ -594,17 +594,21 @@ const styles = StyleSheet.create({
   controlsBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#18181b',
+    backgroundColor: 'transparent',
     paddingLeft: 6,
     zIndex: 10,
   },
   controlIconBtn: {
     width: 42,
     height: 42,
-    borderRadius: 15,
+    borderRadius: 21,
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 4,
+    // Cam görünüm: saydam beyaz dolgu + ince saydam kenarlık.
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.16)',
   },
   remoteBadge: {
     flexDirection: 'row',

@@ -798,8 +798,9 @@ export default function LibraryScreen() {
         if (!targetArtwork) {
           getArtworkAsync(selectedAsset.uri, selectedAsset.id).then((art: string | null) => {
             if (art && isPlayRequestCurrent(requestId)) {
+              // Yalnızca önbelleğe yaz: geç gelen kapak, şarkı başladıktan
+              // sonra temayı (dolayısıyla arayüzü) değiştirmemeli.
               useStore.getState().setArtwork(selectedAsset.id, art);
-              useThemeStore.getState().updateThemeFromArtwork(art);
             }
           });
         }
@@ -823,8 +824,8 @@ export default function LibraryScreen() {
       if (!targetArtwork) {
         getArtworkAsync(selectedAsset.uri, selectedAsset.id).then((art: string | null) => {
           if (art && isPlayRequestCurrent(requestId)) {
+            // Geç gelen kapak sadece önbelleğe yazılır; tema/arayüz değişmez.
             useStore.getState().setArtwork(selectedAsset.id, art);
-            useThemeStore.getState().updateThemeFromArtwork(art);
           }
         });
       }

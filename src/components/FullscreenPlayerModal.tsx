@@ -47,6 +47,7 @@ import { TrackArtwork } from './TrackArtwork';
 import { EditTrackModal } from './EditTrackModal';
 import { MarqueeText } from './ui/MarqueeText';
 import { GlassBackdrop } from './ui/GlassBackdrop';
+import { withAlpha } from './ui/GradientSurface';
 import { rememberArtistImage } from '../services/artistImages';
 import { normalizeArtistKey } from '../services/artistMatch';
 import { splitArtistNames } from '../services/wrappedStats';
@@ -4549,6 +4550,24 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       <GlassBackdrop intensity={85} overlayColor="rgba(10, 10, 14, 0.82)" />
       {/* Subtle Ambient Color Glow from Cover Art */}
       <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.glowColor, opacity: 0.14 }]} />
+      {/*
+        Ana oynatıcı alanından dışa yayılan odak: merkezde (kapak/parça bilgisi
+        bölgesi) renk ve ışık yoğun, köşelere gidildikçe hem renk hem ışık
+        azalıp koyulaşır. Böylece ekranın ortası "bulanık/parlak", köşeleri
+        sakin kalır — istenen yumuşak geçiş tek bir radial gradyanla çizilir.
+      */}
+      <View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            experimental_backgroundImage: `radial-gradient(circle at 50% 42%, ${withAlpha(
+              theme.primary,
+              0.38
+            )} 0%, ${withAlpha(theme.glowColor, 0.2)} 32%, rgba(10, 10, 14, 0.34) 68%, rgba(4, 4, 6, 0.7) 100%)`,
+          },
+        ]}
+      />
 
       {/* TOP HEADER & GRABBER (Morph animasyonu ile yukarıdan süzülür) */}
       <Animated.View style={headerMorphStyle}>
@@ -5665,11 +5684,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
             <TouchableOpacity
               style={[
                 styles.appleUtilBtn,
-                isLyricsMode && {
-                  backgroundColor: theme.surface,
-                  borderWidth: 1,
-                  borderColor: theme.border,
-                },
+                isLyricsMode && styles.appleUtilBtnActive,
               ]}
               activeOpacity={0.7}
               hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
@@ -5711,10 +5726,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
               <TouchableOpacity
                 style={[
                   styles.appleSubUtilBtn,
-                  isConnectMode && {
-                    backgroundColor: theme.surface,
-                    borderRadius: 20,
-                  },
+                  isConnectMode && styles.appleSubUtilBtnActive,
                 ]}
                 onPress={toggleConnectMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -5743,10 +5755,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
               <TouchableOpacity
                 style={[
                   styles.appleSubUtilBtn,
-                  isSleepTimerMode && {
-                    backgroundColor: theme.surface,
-                    borderRadius: 20,
-                  },
+                  isSleepTimerMode && styles.appleSubUtilBtnActive,
                 ]}
                 onPress={toggleSleepTimerMode}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -5768,11 +5777,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
             <TouchableOpacity
               style={[
                 styles.appleUtilBtn,
-                isQueueMode && {
-                  backgroundColor: theme.surface,
-                  borderWidth: 1,
-                  borderColor: theme.border,
-                },
+                isQueueMode && styles.appleUtilBtnActive,
               ]}
               activeOpacity={0.7}
               hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
@@ -6210,7 +6215,14 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   headerIconBtn: {
-    padding: 6,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   headerTitleBox: {
     alignItems: 'center',
@@ -6816,9 +6828,14 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
+    // Cam buton: saydam dolgu + ince saydam kenarlık (RunMusic cam dili).
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   appleUtilBtnActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    borderColor: 'rgba(255, 255, 255, 0.32)',
   },
   appleCenterUtilRow: {
     flexDirection: 'row',
@@ -6826,8 +6843,19 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   appleSubUtilBtn: {
-    padding: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
     position: 'relative',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  appleSubUtilBtnActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    borderColor: 'rgba(255, 255, 255, 0.32)',
   },
   connectClientsBadgeWrapper: {
     position: 'absolute',

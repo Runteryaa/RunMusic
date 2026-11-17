@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -14,14 +15,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useActiveTrack } from 'react-native-track-player';
 
 import { GradientSurface, withAlpha } from '../components/ui/GradientSurface';
-import { useStore } from '../store/useStore';
+import { ArtistRenameModal } from '../components/ArtistRenameModal';
+import { useStore, type TrackMetadata } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { AdBanner } from '../components/AdBanner';
 import {
   getHistoryInRangeForArtists,
+  renameArtistInHistory,
   type PlayHistoryItem,
 } from '../services/statsDatabase';
+import { renameArtistInField } from '../services/artistRename';
 import {
   buildArtistProfileFromRows,
   buildArtistIndex,
@@ -171,6 +175,9 @@ export default function ArtistScreen() {
   const [profile, setProfile] = useState<ArtistProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [artistImage, setArtistImage] = useState<string | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renamedTo, setRenamedTo] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
 
   // Ekran kapandıktan sonra gelen sonuçların state yazmasını engeller
   // (hızlı geri dönüşlerde gereksiz iş yapılmaz).
@@ -271,6 +278,7 @@ export default function ArtistScreen() {
 
   /** Başlıkta gösterilecek isim: geçmiş → kütüphane → ham parametre. */
   const displayName = useMemo(() => {
+    if (renamedTo) return renamedTo;
     if (profile?.displayName) return profile.displayName;
     for (const track of artistTracks) {
       const match = artistNamesFromRow(track.artist).find(
@@ -279,10 +287,84 @@ export default function ArtistScreen() {
       if (match?.trim()) return match.trim();
     }
     return artistName;
-  }, [profile, artistTracks, artistKey, artistName]);
+  }, [renamedTo, profile, artistTracks, artistKey, artistName]);
 
   const stats = profile?.stats;
   const artistHistoryCount = stats?.totalPlays ?? 0;
+
+  /**
+   * Sanatçı adını değiştirir / birleştirir.
+   *
+   * 1. Kütüphanedeki tüm eşleşen parçaların `metadataMap` sanatçı alanı yeni
+   *    ada çevrilir (ortak çalışmalardaki diğer isimler korunur).
+   * 2. Geçmiş (istatistik) satırları SQLite'ta aynı kuralla güncellenir.
+   * 3. Ekran yeni ada geçer; aynı adda sanatçı varsa indeks ikisini tek
+   *    grupta topladığı için birleşme kendiliğinden olur.
+   */
+  const handleRenameArtist = useCallback(
+    async (nextName: string) => {
+      const trimmed = (nextName ?? '').trim();
+      if (!trimmed || renaming) return;
+      const replacement = cleanArtistName(trimmed) || trimmed;
+      if (normalizeArtistKey(replacement) === artistKey) {
+        setRenameOpen(false);
+        return;
+      }
+
+      setRenaming(true);
+      try {
+        const store = useStore.getState();
+        const currentMetadata = store.metadataMap;
+        const index = getCachedArtistIndex(store.library, currentMetadata);
+        const targetIds = new Set(getArtistTracks(index, artistKey).map((track) => track.id));
+
+        const batch: Record<string, TrackMetadata> = {};
+        for (const asset of store.library) {
+          const metaKey = currentMetadata[asset.id]
+            ? asset.id
+            : currentMetadata[asset.uri]
+              ? asset.uri
+              : asset.id;
+          const existing = currentMetadata[metaKey] ?? {};
+          const info = resolveLibraryInfo(asset, currentMetadata);
+          const matches =
+            targetIds.has(asset.id) ||
+            artistNamesFromRow(info.artist).some(
+              (name) => normalizeArtistKey(name) === artistKey
+            );
+          if (!matches) continue;
+
+          const nextArtist = renameArtistInField(info.artist, displayName, replacement);
+          if (nextArtist == null) continue;
+
+          batch[metaKey] = {
+            ...existing,
+            // Başlık metadata'da yoksa görünen (temizlenmiş) başlık sabitlenir;
+            // aksi halde yeniden adlandırma sonrası isim kaybolabiliyordu.
+            title: existing.title || info.title || undefined,
+            artist: nextArtist,
+          };
+        }
+
+        if (Object.keys(batch).length > 0) {
+          useStore.getState().setBatchTrackMetadata(batch);
+        }
+        await renameArtistInHistory(displayName, replacement);
+        // Artist image cache is keyed by name; the new name loads its own photo.
+        setArtistImage(null);
+        setRenamedTo(replacement);
+        setRenameOpen(false);
+        router.setParams({ name: replacement });
+        Alert.alert(t('artist.rename_title'), t('artist.rename_done'));
+      } catch (error) {
+        console.warn('Artist rename failed:', error);
+        Alert.alert(t('artist.rename_title'), t('artist.rename_failed'));
+      } finally {
+        setRenaming(false);
+      }
+    },
+    [artistKey, displayName, renaming, router, t]
+  );
 
   const queueFrom = useCallback(
     (tracks: ArtistTrack[], startId: string, shuffle = false) =>
@@ -604,7 +686,24 @@ export default function ArtistScreen() {
         <Text style={styles.headerTitle} numberOfLines={1}>
           {t('artist.title')}
         </Text>
+        <TouchableOpacity
+          style={styles.renameBtn}
+          onPress={() => setRenameOpen(true)}
+          disabled={renaming}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel={t('artist.rename')}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="pencil" size={18} color={theme.primary} />
+        </TouchableOpacity>
       </View>
+
+      <ArtistRenameModal
+        visible={renameOpen}
+        initialValue={displayName || artistName}
+        onCancel={() => setRenameOpen(false)}
+        onSubmit={(name) => void handleRenameArtist(name)}
+      />
 
       <FlashList
         data={sortedTracks}
@@ -639,7 +738,25 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   backBtn: {
-    marginRight: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  renameBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   headerTitle: {
     fontSize: 18,

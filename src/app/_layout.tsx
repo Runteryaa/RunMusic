@@ -153,15 +153,61 @@ function ActiveTrackThemeSync() {
   const remoteArtworkUri = useRemoteConnectStore((s) => s.remoteState.artworkUri);
   const effectiveArtworkUri = isRemoteMode ? remoteArtworkUri : artworkUri;
 
+  /*
+   * "Şarkı başladıktan sonra arayüz değişiyor" hatasının kaynağı: kapak
+   * görseli çoğu zaman parça değiştikten sonra (dosyadan çıkarılarak) hazır
+   * oluyor. Tema o geç gelen kapağa göre uygulanınca oynatıcı, şarkı çalmaya
+   * başladıktan sonra ikinci kez renk değiştiriyordu.
+   *
+   * Çözüm: tema parça değişiminde **bir kez** uygulanır. Değişimden sonra
+   * gelen geç kapak yalnızca önbelleğe yazılır, arayüzü değiştirmez. Kullanıcı
+   * tema tercihini değiştirirse (aç/kapa veya hazır renk) sınır beklemeden
+   * hemen uygulanır.
+   */
+  const trackSwitchAtRef = useRef(0);
+  const appliedKeyRef = useRef<string | null>(null);
+  const preferenceKey = `${dynamicColorFromArtwork ? 'auto' : 'fixed'}|${presetThemeColor ?? ''}`;
+  const lastPreferenceRef = useRef(preferenceKey);
+  /** Parça değişiminden sonra bu süre içinde gelen kapak temayı uygulayabilir. */
+  const LATE_ARTWORK_WINDOW_MS = 700;
+
+  useEffect(() => {
+    trackSwitchAtRef.current = Date.now();
+    appliedKeyRef.current = null;
+  }, [activeTrackId]);
+
   useEffect(() => {
     // Tercih de bağımlılık: kullanıcı "kapaktan renk türet"i açıp kapatınca
     // veya sabit tema rengini değiştirince tema hemen güncellenir.
-    if (dynamicColorFromArtwork && effectiveArtworkUri) {
-      updateThemeFromArtwork(effectiveArtworkUri);
-    } else if (!dynamicColorFromArtwork) {
+    const preferenceChanged = lastPreferenceRef.current !== preferenceKey;
+    lastPreferenceRef.current = preferenceKey;
+
+    if (!dynamicColorFromArtwork) {
+      appliedKeyRef.current = null;
       updateThemeFromArtwork(null);
+      return;
     }
-  }, [effectiveArtworkUri, activeTrackId, updateThemeFromArtwork, dynamicColorFromArtwork, presetThemeColor]);
+    if (!effectiveArtworkUri) return;
+
+    const key = `${preferenceKey}|${activeTrackId ?? ''}|${effectiveArtworkUri}`;
+    if (appliedKeyRef.current === key) return;
+
+    const isLate = Date.now() - trackSwitchAtRef.current > LATE_ARTWORK_WINDOW_MS;
+    if (isLate && !preferenceChanged) {
+      // Geç gelen kapak: tema bir daha değişmesin.
+      appliedKeyRef.current = key;
+      return;
+    }
+
+    appliedKeyRef.current = key;
+    updateThemeFromArtwork(effectiveArtworkUri);
+  }, [
+    effectiveArtworkUri,
+    activeTrackId,
+    updateThemeFromArtwork,
+    dynamicColorFromArtwork,
+    preferenceKey,
+  ]);
 
   return null;
 }
