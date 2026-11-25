@@ -112,6 +112,7 @@ import Reanimated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useIsAppActive } from '../hooks/useIsAppActive';
+import { useIsOnline } from '../hooks/useIsOnline';
 import { useResilientActiveTrack } from '../hooks/useResilientActiveTrack';
 import { useComponentDiagnostics } from '../hooks/useComponentDiagnostics';
 import { LyricSharePreviewModal, MAX_SHARE_LINES, type LyricShareLine } from './LyricShareModal';
@@ -219,21 +220,28 @@ function formatTime(secs: number): string {
 // Apple Music tarzı söz paneli yardımcıları
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Satırların yeni aktif satıra geçiş süresi (BitChord: LYRIC_SETTLE_MS). */
-const LYRIC_SETTLE_MS = 560;
+/**
+ * Satırların yeni aktif satıra geçiş süresi.
+ *
+ * Yeni satır **hızlı** parlamalı: 560 ms'lik tek süre, satır başladıktan sonra
+ * eski satırın bir süre daha parlak kalmasına ve yeni satırın geç geldiği
+ * izlenimine yol açıyordu. Aktifleşme kısa, pasifleşme biraz daha uzun.
+ */
+const LYRIC_SETTLE_ACTIVE_MS = 200;
+const LYRIC_SETTLE_INACTIVE_MS = 340;
 /** Kaydırma, satır gelmeden bu kadar önce başlar. */
 const LYRIC_SCROLL_LEAD_SECONDS = 0.8;
 /**
- * Satır geçişi, konum örneklerinin 250 ms'lik aralığından dolayı en fazla çeyrek
- * saniye gecikebiliyordu; bu da yeni satırın ilk hecelerinin bir anda yanmasına
- * yol açıyordu. Küçük bir ön alma ile satır tam zamanında geçer.
+ * Satır geçişi, konum örneklerinin aralığından dolayı gecikebiliyordu; bu da
+ * yeni satırın ilk hecelerinin bir anda yanmasına yol açıyordu. Örnekleme
+ * aralığını (200 ms) telafi edecek kadar ön alma ile satır tam zamanında geçer.
  */
-const LYRIC_LINE_LEAD_SECONDS = 0.12;
+const LYRIC_LINE_LEAD_SECONDS = 0.2;
 /**
- * Süpürme saatinin ön alması. Konum saniyede 4 kez geldiği için saat, örnek
+ * Süpürme saatinin ön alması. Konum saniyede 5 kez geldiği için saat, örnek
  * anından bir sonraki örneğe kadar ilerletilir; hedef budur (saniye).
  */
-const LYRIC_CLOCK_LOOKAHEAD = 0.25;
+const LYRIC_CLOCK_LOOKAHEAD = 0.2;
 /**
  * Bölünen satırların hedef doluluğu: her satır ekranın yaklaşık üçte ikisini
  * kullanır. Tam genişliğe sıkıştırmak yerine dengeli/kısa satırlar okunurluğu
@@ -312,7 +320,7 @@ const LYRIC_BG_GLOW_SHADOW_RADIUS = 10;
  * yansıyordu; harfler sesin bir tık gerisinden yanıyordu. Bu sabit saati
  * örneklenen konumun bu kadar önüne taşır ve farkı kapatır.
  */
-const LYRIC_CLOCK_LEAD = 0.1;
+const LYRIC_CLOCK_LEAD = 0.14;
 /**
  * 0→1 arası yumuşak geçiş (smoothstep). Lineer rampalar (harf yanması, kelime
  * kalkışı) sert görünüyordu; bu eğri başta ve sonda hızı sıfıra indirir.
@@ -899,16 +907,20 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
   const focus = useSharedValue(isActive || isSelectionMode ? 1 : 0);
 
   useEffect(() => {
+    // Aktifleşme hızlı, pasifleşme biraz daha yumuşak: yeni satır söylenmeye
+    // başladığı anda parlak olmalı.
+    const duration =
+      isActive || isSelectionMode ? LYRIC_SETTLE_ACTIVE_MS : LYRIC_SETTLE_INACTIVE_MS;
     alpha.value = withTiming(targetAlpha, {
-      duration: LYRIC_SETTLE_MS,
+      duration,
       easing: LYRIC_EASING,
     });
     scale.value = withTiming(isActive || isSelectionMode ? 1 : 0.985, {
-      duration: LYRIC_SETTLE_MS,
+      duration,
       easing: LYRIC_EASING,
     });
     focus.value = withTiming(isActive || isSelectionMode ? 1 : 0, {
-      duration: LYRIC_SETTLE_MS,
+      duration,
       easing: LYRIC_EASING,
     });
   }, [alpha, scale, focus, targetAlpha, isActive, isSelectionMode]);
@@ -1215,6 +1227,7 @@ function LyricsPanel({
   onToggleShareLine: (key: string) => void;
 }) {
   const isAppActive = useIsAppActive();
+  const isOnline = useIsOnline();
   const [isAutoScrollPaused, setIsAutoScrollPaused] = useState(false);
   const [isOffsetOpen, setIsOffsetOpen] = useState(false);
   /**
@@ -1242,7 +1255,10 @@ function LyricsPanel({
   );
 
   const progress = useActiveProgress(
-    isFullscreenPlayerOpen && isLyricsMode && !isOffsetOpen
+    isFullscreenPlayerOpen && isLyricsMode && !isOffsetOpen,
+    // Söz senkronu için 200 ms: satır/kelime geçişi örnekleme yüzünden geç
+    // kalmasın. Yalnızca söz paneli görünürken abone olunur.
+    200
   );
 
   const lyricsFlatListRef = useRef<FlatList<LyricDisplayRow>>(null);
@@ -1326,9 +1342,14 @@ function LyricsPanel({
     }
 
     const from = lyricClock.value;
-    // Kopukluk (seek/şarkı değişimi) veya saat geride kaldı: anında düzelt.
-    const drifted = !Number.isFinite(from) || Math.abs(from - desired) > 0.35;
-    if (drifted || from < desired - 0.02) lyricClock.value = desired;
+    /*
+     * `0.35` çok gevşekti: JS birkaç tur geciktiğinde saat sessizce geride
+     * kalıyor, kelime senkronu saniyenin bir kısmı boyunca geç yanıyordu.
+     * Artık 0.18 saniyeden fazla sapma anında düzeltilir; hedefin gerisinde
+     * kalınca da bekletmeden ileri sarılır.
+     */
+    const drifted = !Number.isFinite(from) || Math.abs(from - desired) > 0.18;
+    if (drifted || from < desired - 0.01) lyricClock.value = desired;
 
     lyricClock.value = withTiming(desired + LYRIC_CLOCK_LOOKAHEAD, {
       duration: LYRIC_CLOCK_LOOKAHEAD * 1000,
@@ -1927,7 +1948,7 @@ function LyricsPanel({
           <Ionicons name="mic-off-outline" size={38} color="#52525b" />
           <Text style={styles.lyricsEmptyTitle}>{t('player.no_lyrics_found')}</Text>
           <Text style={styles.lyricsEmptySubtitle}>
-            {t('player.no_lyrics_subtitle')}
+            {isOnline ? t('player.no_lyrics_subtitle') : t('player.offline_lyrics')}
           </Text>
           <TouchableOpacity
             style={[styles.lyricsEmptySearchBtn, { backgroundColor: theme.primary }]}
@@ -3711,9 +3732,11 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       }
     }
 
-    // Çevrimdışıyken ağ isteği atılmaz; kayıtlı söz yoksa kullanıcı bilgilendirilir.
+    // Çevrimdışıyken ağ isteği atılmaz. Otomatik denemede **sessiz** kalınır:
+    // her oynatıcı açılışında uyarı göstermek rahatsız ediciydi. Yalnızca
+    // kullanıcı söz aramayı elle başlattığında bilgi verilir.
     if (!isNetworkAvailable()) {
-      alert(t('player.offline_lyrics'));
+      if (force) alert(t('player.offline_lyrics'));
       return;
     }
 

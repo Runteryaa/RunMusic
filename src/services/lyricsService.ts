@@ -1266,6 +1266,17 @@ function scoreLyricsResult(result: LyricsResult, title: string, artist: string):
   return scoreNamePair(result, title, artist);
 }
 
+/**
+ * Sonuçta gerçek zaman bilgisi var mı? Düz metin sözlerde (yalnızca
+ * `plainLyrics`) satır geçişi olmadığı için "senkron kaynak" sayılmaz.
+ */
+function hasTimedLyrics(result: LyricsResult): boolean {
+  if (result.hasWordSync) return true;
+  if (typeof result.syncedLyrics === 'string' && result.syncedLyrics.trim().length > 0) return true;
+  if (typeof result.ttml === 'string' && result.ttml.trim().length > 0) return true;
+  return Array.isArray(result.parsedLines) && result.parsedLines.length > 0;
+}
+
 /** lrc.red isabetinden tam `LyricsResult` üretir; belge kullanılabilir değilse null. */
 function buildLrcRedResult(hit: LrcRedHit, ttml: string): LyricsResult | null {
   const parsedLines = parseTtml(ttml);
@@ -1428,13 +1439,28 @@ export async function fetchLyricsOnline(
   }
 
   const synced = await searchSyncedSources(title, artist, preference, duration);
-  if (synced && synced.score >= LYRICS_STRONG_MATCH) return synced.result;
+  const syncedHasTiming = !!synced && hasTimedLyrics(synced.result);
+  if (synced && syncedHasTiming && synced.score >= LYRICS_STRONG_MATCH) return synced.result;
 
   // Senkron kaynaklar zayıf/boş: Genius düz metni son çare.
   const geniusRes = await searchGenius(title, artist);
   if (geniusRes) {
-    if (!synced) return geniusRes;
     const geniusScore = scoreLyricsResult(geniusRes, title, artist);
+
+    /*
+     * Düz metin sözlerde varsayılan kaynak Genius'tur.
+     *
+     * LRCLIB bazen yalnızca zamanlamasız metin döndürüyor; bu durumda
+     * zamanlaması olmayan bir sonuç için iki kaynağı karşılaştırmanın anlamı
+     * yok. Genius'un düz metin kalitesi daha yüksek olduğu için (bölüm
+     * başlıkları, satır düzeni) eşleşme makul olduğu sürece Genius kullanılır.
+     */
+    if (synced && !syncedHasTiming) {
+      if (!geniusRes || geniusScore >= LYRICS_WEAK_MATCH) return geniusRes;
+      return synced.result;
+    }
+
+    if (!synced) return geniusRes;
     const clearlyBetter = geniusScore >= synced.score + LYRICS_MATCH_MARGIN;
     if (clearlyBetter && (synced.score < LYRICS_WEAK_MATCH || geniusScore >= LYRICS_EXACT_MATCH)) {
       return geniusRes;

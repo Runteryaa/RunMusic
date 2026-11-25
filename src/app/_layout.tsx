@@ -136,11 +136,19 @@ function ActiveTrackArtworkSync() {
   const activeTrack = useResilientActiveTrack();
   const activeTrackId = activeTrack?.id;
   const isRemoteMode = useRemoteConnectStore((s) => s.mode === 'client');
+  // Etiketler tarama sonrası gelebilir: bildirimdeki sanatçı/başlık da o anda
+  // güncellensin. Yalnızca bu iki alan abone edilir, tüm store değil.
+  const storeArtist = useStore((s) =>
+    activeTrackId ? s.metadataMap[activeTrackId]?.artist : undefined
+  );
+  const storeTitle = useStore((s) =>
+    activeTrackId ? s.metadataMap[activeTrackId]?.title : undefined
+  );
 
   useEffect(() => {
     if (isRemoteMode || !activeTrack || activeTrackId?.startsWith('remote_')) return;
     ensureActiveTrackArtwork(activeTrack).catch(() => {});
-  }, [activeTrack, activeTrackId, isRemoteMode]);
+  }, [activeTrack, activeTrackId, isRemoteMode, storeArtist, storeTitle]);
 
   return null;
 }

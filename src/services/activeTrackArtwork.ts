@@ -2,6 +2,7 @@ import TrackPlayer, { type Track } from 'react-native-track-player';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 import { useStore } from '../store/useStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
+import { resolveDisplayMetadata } from './displayMetadata';
 
 /**
  * Active-track artwork resolution.
@@ -45,10 +46,21 @@ function findKnownArtwork(track: Track, key: string): string | undefined {
   );
 }
 
-async function applyArtwork(
+/**
+ * Etkin parçanın bildirim/kilit ekranı üst verisini tazeler.
+ *
+ * NEDEN: kuyruk, dosya taraması sırasında (etiketler henüz yüklenmemişken)
+ * "Unknown Artist" ile kuruluyor. Arayüz `metadataMap`/başlıktan sanatçı
+ * çıkarımıyla doğru ismi gösterirken Android bildirimi ve widget ham kuyruk
+ * kaydını kullandığı için "unknown artist" yazıyordu. Burada görünen meta
+ * çözümlenip native parçaya yazılır; kapak biliniyorsa o da eklenir.
+ *
+ * Kapak henüz çözülmemişse mevcut kapak korunur (null ile silinmez).
+ */
+async function applyTrackMetadata(
   track: Track,
   key: string,
-  artwork: string,
+  artwork: string | null,
   indexHint?: number | null
 ): Promise<void> {
   let index = typeof indexHint === 'number' && indexHint >= 0 ? indexHint : null;
@@ -63,16 +75,20 @@ async function applyArtwork(
   const activeKey = resolveTrackKey(activeTrack);
   if (activeKey && activeKey !== key) return;
 
-  if (typeof activeTrack.artwork === 'string' && activeTrack.artwork === artwork) {
-    return;
-  }
+  const display = resolveDisplayMetadata(activeTrack);
+  const nextArtwork = artwork ?? (typeof activeTrack.artwork === 'string' ? activeTrack.artwork : null);
+
+  const titleChanged = display.title && display.title !== activeTrack.title;
+  const artistChanged = display.artist && display.artist !== activeTrack.artist;
+  const artworkChanged = !!nextArtwork && nextArtwork !== activeTrack.artwork;
+  if (!titleChanged && !artistChanged && !artworkChanged) return;
 
   await TrackPlayer.updateMetadataForTrack(index, {
-    title: activeTrack.title,
-    artist: activeTrack.artist,
+    title: display.title || activeTrack.title,
+    artist: display.artist || activeTrack.artist,
     album: activeTrack.album,
     duration: activeTrack.duration,
-    artwork,
+    ...(nextArtwork ? { artwork: nextArtwork } : null),
   }).catch(() => {});
 }
 
@@ -96,12 +112,18 @@ export async function ensureActiveTrackArtwork(
 
   const knownArtwork = findKnownArtwork(track, key);
   if (knownArtwork) {
-    await applyArtwork(track, key, knownArtwork, indexHint);
+    await applyTrackMetadata(track, key, knownArtwork, indexHint);
     return knownArtwork;
   }
 
   const url = String(track.url ?? '').trim();
-  if (!url) return null;
+  if (!url) {
+    // Kapak yok ama isim yine de düzeltilmeli (bildirim/widget "unknown artist"
+    // göstermesin). Sonsuz döngü olmaması için yalnızca bir kez denenir:
+    // `applyTrackMetadata` değişiklik yoksa native çağrı yapmaz.
+    await applyTrackMetadata(track, key, null, indexHint);
+    return null;
+  }
 
   if (inFlightKey === key && inFlightPromise) {
     return inFlightPromise;
@@ -114,7 +136,7 @@ export async function ensureActiveTrackArtwork(
       if (!resolved) return null;
 
       useStore.getState().setArtwork(key, resolved);
-      await applyArtwork(track, key, resolved, indexHint);
+      await applyTrackMetadata(track, key, resolved, indexHint);
       return resolved;
     } catch {
       return null;

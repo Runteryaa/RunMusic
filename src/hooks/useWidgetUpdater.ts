@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
-import { useActiveTrack, useIsPlaying } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { resolveDisplayMetadata } from '../services/displayMetadata';
+import { useResilientActiveTrack } from './useResilientActiveTrack';
+import { useResilientIsPlaying } from './useResilientIsPlaying';
 
 let MusicWidgetModule: any = null;
 try {
@@ -13,8 +14,13 @@ try {
 }
 
 export function useWidgetUpdater() {
-  const activeTrack = useActiveTrack();
-  const { playing } = useIsPlaying();
+  /*
+   * Dayanıklı kancalar: widget kök düzende her zaman bağlı. Soğuk açılışta
+   * `useActiveTrack` ilk okuması oynatıcı kurulmadan reddedilirse kanca boş
+   * kalıyor ve widget şarkı değişene kadar "unknown artist" gösteriyordu.
+   */
+  const activeTrack = useResilientActiveTrack();
+  const playing = useResilientIsPlaying();
   const activeTrackId = activeTrack?.id;
   const storeArtwork = useStore((s) =>
     activeTrackId ? s.metadataMap[activeTrackId]?.artwork || s.artworkMap[activeTrackId] : undefined

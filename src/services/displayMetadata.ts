@@ -1,5 +1,6 @@
 import { useStore, type TrackMetadata } from '../store/useStore';
-import { cleanTrackFields, isPlaceholderArtist } from './displayNames';
+import { cleanArtistName, cleanTrackFields, isPlaceholderArtist } from './displayNames';
+import { getSearchKeywords } from './lyricsService';
 import { t } from './i18n';
 
 /**
@@ -38,6 +39,11 @@ function pickMetadata(
  * Bir parçanın ekranda gösterilecek başlığını, sanatçısını ve kapağını çözer.
  * Saf fonksiyondur; mağaza erişimi varsayılan olarak `useStore` üzerinden
  * yapılır (senkron, servis katmanından güvenle çağrılabilir).
+ *
+ * Sanatçı etiketi boşsa ("Unknown Artist"/"Local Audio") başlıktaki
+ * "Sanatçı - Şarkı" kalıbından sanatçı çıkarılır. MiniPlayer bu çıkarımı zaten
+ * yapıyordu; bildirim ve ana ekran widget'ı yapmadığı için aynı parça oynatıcıda
+ * sanatçıyla, bildirimde "unknown artist" ile görünüyordu.
  */
 export function resolveDisplayMetadata(
   track:
@@ -68,7 +74,16 @@ export function resolveDisplayMetadata(
   const rawArtist = meta?.artist || track.artist || '';
   const rawTitle = (meta?.title?.trim() || track.title || '').trim();
 
-  const fields = cleanTrackFields(rawTitle, rawArtist);
+  let fields = cleanTrackFields(rawTitle, rawArtist);
+  if (isPlaceholderArtist(fields.artist)) {
+    const keywords = getSearchKeywords(rawTitle, '');
+    const keywordArtist = cleanArtistName(keywords.expectedArtist);
+    if (!isPlaceholderArtist(keywordArtist)) {
+      // Başlık da sanatçı önekinden arındırılsın: "Sanatçı - Şarkı" → "Şarkı".
+      fields = cleanTrackFields(keywords.expectedTrack || rawTitle, keywordArtist);
+    }
+  }
+
   const title = fields.title || rawTitle || t('common.unknown_track');
   const artist = isPlaceholderArtist(fields.artist) ? '' : fields.artist;
 

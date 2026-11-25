@@ -78,6 +78,18 @@ const lrclibHit = {
   hasWordSync: false,
 };
 
+const lrclibPlainHit = {
+  id: 2,
+  trackName: 'Song',
+  artistName: 'Artist',
+  albumName: 'Album',
+  duration: 200,
+  syncedLyrics: null,
+  plainLyrics: 'hello world plain',
+  lyricsfile: null,
+  hasWordSync: false,
+};
+
 const lrcStudioHit = {
   isrc: STUDIO_ISRC,
   title: 'Song',
@@ -327,6 +339,19 @@ async function main(): Promise<void> {
     check('başlık tanınır', isGeniusSectionHeader('[Verse 2: Artist]'));
     check('sanatçı notu düşer', getGeniusSectionLabel('[Verse 2: Artist]') === 'Verse 2', getGeniusSectionLabel('[Verse 2: Artist]'));
     check('normal satır başlık sayılmaz', !isGeniusSectionHeader('Hello world'));
+  }
+
+  section('12) Düz metin sözlerde varsayılan kaynak Genius');
+
+  {
+    /*
+     * lrc.red/LRCLIB yalnızca zamanlamasız metin döndürüyorsa "senkron kaynak"
+     * sayılmaz; düz metin için Genius tercih edilir (kullanıcı isteği #7).
+     */
+    reset({ lrclib: [lrclibPlainHit] });
+    const res = await fetchLyricsOnline('Song', 'Artist', undefined, 200);
+    check('düz sözlerde sonuç Genius kaynaklı', res?.source === 'genius', String(res?.source));
+    check('zamanlama yok', !res?.syncedLyrics && (res?.parsedLines.length ?? 0) === 0);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
