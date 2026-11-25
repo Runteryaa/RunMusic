@@ -531,7 +531,9 @@ export default function StatisticsScreen() {
           </View>
         )}
         <View style={styles.trackInfo}>
-          <Text style={styles.trackTitle} numberOfLines={1}>{item.label || '—'}</Text>
+          <Text style={styles.trackTitle} numberOfLines={1}>
+            {item.label || t('common.unknown_artist')}
+          </Text>
           <Text style={styles.trackSubtitle} numberOfLines={1}>
             {formatWrappedDuration(item.seconds, durationLabels)}
           </Text>

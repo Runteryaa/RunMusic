@@ -16,12 +16,14 @@ import { useActiveTrack } from 'react-native-track-player';
 
 import { GradientSurface, withAlpha } from '../components/ui/GradientSurface';
 import { ArtistRenameModal } from '../components/ArtistRenameModal';
+import { EditTrackModal, type EditTrackTarget } from '../components/EditTrackModal';
 import { useStore, type TrackMetadata } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { AdBanner } from '../components/AdBanner';
 import {
   getHistoryInRangeForArtists,
+  getHistoryInRangeForUnassignedArtist,
   renameArtistInHistory,
   type PlayHistoryItem,
 } from '../services/statsDatabase';
@@ -31,6 +33,7 @@ import {
   buildArtistIndex,
   collectArtistNameVariants,
   getArtistTracks,
+  getUnassignedTracks,
   sortTracksByPlays,
   type ArtistLibraryEntry,
   type ArtistProfile,
@@ -61,6 +64,8 @@ const TOP_TRACK_COUNT = 5;
  */
 const TRACK_INFO_CACHE = new Map<string, { title: string; artist: string }>();
 const MAX_TRACK_INFO_CACHE = 4000;
+/** Kararlı boş dizi: bileşen her render'da yeni referans üretmesin. */
+const EMPTY_TRACKS: ArtistTrack[] = [];
 
 type MetadataLike = { title?: string; artist?: string; album?: string; artwork?: string };
 
@@ -119,17 +124,16 @@ let indexCache: {
   library: unknown;
   metadataMap: unknown;
   index: Map<string, ArtistLibraryEntry>;
+  /** İndeksin kaynağı; "sanatçısı boş" parçalar için de kullanılır. */
+  inputs: ArtistTrack[];
 } | null = null;
 
-function getCachedArtistIndex(
+/** Kütüphane varlıklarını görünen başlık/sanatçıyla parça girdilerine çevirir. */
+function buildArtistInputs(
   library: { id: string; uri: string; filename: string; modificationTime?: number; duration?: number }[],
   metadataMap: Record<string, MetadataLike>
-): Map<string, ArtistLibraryEntry> {
-  if (indexCache && indexCache.library === library && indexCache.metadataMap === metadataMap) {
-    return indexCache.index;
-  }
-
-  const inputs: ArtistTrack[] = library.map((asset) => {
+): ArtistTrack[] {
+  return library.map((asset) => {
     const info = resolveLibraryInfo(asset, metadataMap);
     return {
       id: asset.id,
@@ -141,10 +145,27 @@ function getCachedArtistIndex(
       duration: asset.duration || 0,
     };
   });
+}
 
+function getCachedArtistWorkspace(
+  library: { id: string; uri: string; filename: string; modificationTime?: number; duration?: number }[],
+  metadataMap: Record<string, MetadataLike>
+) {
+  if (indexCache && indexCache.library === library && indexCache.metadataMap === metadataMap) {
+    return indexCache;
+  }
+
+  const inputs = buildArtistInputs(library, metadataMap);
   const index = buildArtistIndex(inputs);
-  indexCache = { library, metadataMap, index };
-  return index;
+  indexCache = { library, metadataMap, index, inputs };
+  return indexCache;
+}
+
+function getCachedArtistIndex(
+  library: { id: string; uri: string; filename: string; modificationTime?: number; duration?: number }[],
+  metadataMap: Record<string, MetadataLike>
+): Map<string, ArtistLibraryEntry> {
+  return getCachedArtistWorkspace(library, metadataMap).index;
 }
 
 /** `199` → `3:19` (satır sonundaki süre). */
@@ -166,6 +187,8 @@ export default function ArtistScreen() {
 
   const artistName = Array.isArray(params.name) ? params.name[0] : params.name || '';
   const artistKey = normalizeArtistKey(artistName);
+  /** Boş sanatçı: istatistiklerdeki "-" grubu; düzeltilecek parçalar listelenir. */
+  const isUnassignedArtist = artistKey.length === 0;
 
   const library = useStore((s) => s.library);
   const metadataMap = useStore((s) => s.metadataMap);
@@ -186,6 +209,16 @@ export default function ArtistScreen() {
     value: ArtistProfile;
   } | null>(null);
   const profile = profileState?.key === artistKey ? profileState.value : null;
+  /**
+   * "Bilinmeyen sanatçı" sayfasında geçmişte görülen parçalar.
+   *
+   * Kütüphane kaydı artık sanatçı içerse bile eski dinleme satırları boş
+   * kalmış olabilir; bu parçalar da listede görünür ki kayıtları düzeltilebilsin.
+   */
+  const [unassignedHistoryState, setUnassignedHistoryState] = useState<{
+    key: string;
+    tracks: ArtistTrack[];
+  } | null>(null);
   /** Yüklenmiş (sanatçı + dönem) anahtarı; eşleşmiyorsa yükleme sürüyor. */
   const [loadedKey, setLoadedKey] = useState('');
   const [artistImageState, setArtistImageState] = useState<{
@@ -196,9 +229,15 @@ export default function ArtistScreen() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [renamedTo, setRenamedTo] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
+  /** "Bilinmeyen sanatçı" listesinden açılan parça düzenleme modalı. */
+  const [trackToEdit, setTrackToEdit] = useState<EditTrackTarget | null>(null);
+  /** Metadata düzenlemesinden sonra geçmiş sorgusunu yeniden çalıştırır. */
+  const [statsRevision, setStatsRevision] = useState(0);
 
   const loadKey = `${artistKey}|${period}`;
   const loading = loadedKey !== loadKey;
+  const unassignedHistoryTracks =
+    unassignedHistoryState?.key === loadKey ? unassignedHistoryState.tracks : EMPTY_TRACKS;
 
   // Ekran kapandıktan sonra gelen sonuçların state yazmasını engeller
   // (hızlı geri dönüşlerde gereksiz iş yapılmaz).
@@ -221,9 +260,10 @@ export default function ArtistScreen() {
 
   /** Cihazdaki sanatçı parçaları (indeks önbellekli). */
   const artistTracks = useMemo<ArtistTrack[]>(() => {
-    const index = getCachedArtistIndex(library, metadataMap);
-    return getArtistTracks(index, artistKey);
-  }, [library, metadataMap, artistKey]);
+    const workspace = getCachedArtistWorkspace(library, metadataMap);
+    if (isUnassignedArtist) return getUnassignedTracks(workspace.inputs);
+    return getArtistTracks(workspace.index, artistKey);
+  }, [library, metadataMap, artistKey, isUnassignedArtist]);
 
   /**
    * İstatistikler artık SQL'de ön süzülür: yalnızca bu sanatçının satırları
@@ -238,25 +278,64 @@ export default function ArtistScreen() {
       const key = `${artistKey}|${nextPeriod}`;
       try {
         const range = resolveWrappedWindow(nextPeriod, Date.now());
-        const names = [
-          artistName,
-          ...collectArtistNameVariants(artistTracks, artistKey),
-        ].filter(Boolean);
-
-        const rows = await getHistoryInRangeForArtists(range.startSql, range.endSql, names);
-
-        // SQL ön süzmesi alt dize eşleşmesidir; kesin eşleşme JS'te doğrulanır.
         const cleaned: PlayHistoryItem[] = [];
-        for (const row of rows) {
-          const matches = artistNamesFromRow(row.artist).some(
-            (name) => normalizeArtistKey(name) === artistKey
+        let historyTracks: ArtistTrack[] | null = null;
+
+        if (isUnassignedArtist) {
+          // Sanatçısı boş parçalar tek grup altında toplanır; sayılar
+          // istatistik ekranındaki boş etiketli "sanatçı" ile birebir aynıdır.
+          const rows = await getHistoryInRangeForUnassignedArtist(
+            range.startSql,
+            range.endSql
           );
-          if (!matches) continue;
-          const fields = cleanTrackFields(row.title, row.artist);
-          cleaned.push({ ...row, title: fields.title || row.title, artist: fields.artist });
+          const historyEntries: ArtistTrack[] = [];
+          const seen = new Set<string>();
+          const assetById = new Map(library.map((asset) => [asset.id, asset]));
+          const assetByUri = new Map(library.map((asset) => [asset.uri, asset]));
+
+          for (const row of rows) {
+            const fields = cleanTrackFields(row.title, row.artist);
+            cleaned.push({ ...row, title: fields.title || row.title, artist: '' });
+
+            const id = String(row.track_id ?? '').trim();
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+
+            const asset = assetById.get(id) ?? assetByUri.get(id);
+            const info = asset ? resolveLibraryInfo(asset, metadataMap) : null;
+            const assetMeta = asset ? metadataMap[asset.id] ?? metadataMap[asset.uri] : undefined;
+            historyEntries.push({
+              id,
+              uri: asset?.uri || id,
+              title: info?.title || fields.title || row.title || '',
+              artist: info?.artist || '',
+              album: assetMeta?.album || undefined,
+              artwork: row.artwork || assetMeta?.artwork || undefined,
+              duration: asset?.duration || 0,
+            });
+          }
+          historyTracks = historyEntries;
+        } else {
+          const names = [
+            artistName,
+            ...collectArtistNameVariants(artistTracks, artistKey),
+          ].filter(Boolean);
+
+          const rows = await getHistoryInRangeForArtists(range.startSql, range.endSql, names);
+
+          // SQL ön süzmesi alt dize eşleşmesidir; kesin eşleşme JS'te doğrulanır.
+          for (const row of rows) {
+            const matches = artistNamesFromRow(row.artist).some(
+              (name) => normalizeArtistKey(name) === artistKey
+            );
+            if (!matches) continue;
+            const fields = cleanTrackFields(row.title, row.artist);
+            cleaned.push({ ...row, title: fields.title || row.title, artist: fields.artist });
+          }
         }
 
         if (!mountedRef.current || requestId !== requestRef.current) return;
+        if (historyTracks) setUnassignedHistoryState({ key, tracks: historyTracks });
         setProfileState({
           key: artistKey,
           value: buildArtistProfileFromRows(cleaned, artistKey, { limit: TOP_TRACK_COUNT }),
@@ -270,12 +349,12 @@ export default function ArtistScreen() {
         if (mountedRef.current && requestId === requestRef.current) setLoadedKey(key);
       }
     },
-    [artistKey, artistName, artistTracks]
+    [artistKey, artistName, artistTracks, isUnassignedArtist, library, metadataMap]
   );
 
   useEffect(() => {
     void loadProfile(period);
-  }, [period, loadProfile]);
+  }, [period, loadProfile, statsRevision]);
 
   /**
    * Fotoğraf: sanatçı sayfası açılır açılmaz (istatistiklerden bağımsız)
@@ -284,7 +363,7 @@ export default function ArtistScreen() {
    */
   useEffect(() => {
     let cancelled = false;
-    if (!artistName) return;
+    if (!artistName || isUnassignedArtist) return;
     const titles = artistTracks.slice(0, 12).map((track) => track.title).filter(Boolean);
     void loadArtistImages([artistName], { [artistKey]: titles })
       .then((images) => {
@@ -294,12 +373,34 @@ export default function ArtistScreen() {
     return () => {
       cancelled = true;
     };
-  }, [artistName, artistKey, artistTracks]);
+  }, [artistName, artistKey, artistTracks, isUnassignedArtist]);
 
   const sortedTracks = useMemo(() => {
     const playCounts = profile?.playCounts ?? new Map<string, number>();
-    return sortTracksByPlays(artistTracks, playCounts);
-  }, [artistTracks, profile]);
+    if (!isUnassignedArtist) return sortTracksByPlays(artistTracks, playCounts);
+
+    /*
+     * Kütüphanede sanatçısı boş olanlar + geçmişte sanatçısız kalmış parçalar.
+     * Aynı parça iki kaynakta da varsa kütüphane girdisi esas alınır (dosya
+     * yolu ve albüm bilgisi oradan gelir), geçmişten yalnızca eksik alanlar
+     * tamamlanır.
+     */
+    const merged = new Map<string, ArtistTrack>();
+    for (const track of unassignedHistoryTracks) merged.set(track.id, track);
+    for (const track of artistTracks) {
+      const previous = merged.get(track.id);
+      merged.set(track.id, {
+        ...previous,
+        ...track,
+        uri: track.uri || previous?.uri || '',
+        title: track.title || previous?.title || '',
+        album: track.album || previous?.album,
+        artwork: track.artwork || previous?.artwork,
+        duration: track.duration || previous?.duration || 0,
+      });
+    }
+    return sortTracksByPlays([...merged.values()], playCounts);
+  }, [artistTracks, profile, isUnassignedArtist, unassignedHistoryTracks]);
 
   /** Başlıkta gösterilecek isim: geçmiş → kütüphane → ham parametre. */
   const displayName = useMemo(() => {
@@ -331,7 +432,7 @@ export default function ArtistScreen() {
   const handleRenameArtist = useCallback(
     async (nextName: string) => {
       const trimmed = (nextName ?? '').trim();
-      if (!trimmed || renaming) return;
+      if (!trimmed || renaming || isUnassignedArtist) return;
       const replacement = cleanArtistName(trimmed) || trimmed;
       if (normalizeArtistKey(replacement) === artistKey) {
         setRenameOpen(false);
@@ -390,7 +491,7 @@ export default function ArtistScreen() {
         setRenaming(false);
       }
     },
-    [artistKey, displayName, renaming, router, t]
+    [artistKey, displayName, renaming, router, t, isUnassignedArtist]
   );
 
   const queueFrom = useCallback(
@@ -433,6 +534,18 @@ export default function ArtistScreen() {
     },
     [sortedTracks, queueFrom]
   );
+
+  /** Sanatçısı boş parçayı düzenleme modalında açar. */
+  const editTrack = useCallback((track: ArtistTrack) => {
+    setTrackToEdit({
+      id: track.id,
+      uri: track.uri,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      artwork: track.artwork ?? null,
+    });
+  }, []);
 
   const formatDay = (ms: number | null) => {
     if (!ms) return t('artist.never');
@@ -623,7 +736,9 @@ export default function ArtistScreen() {
                     style={styles.row}
                     activeOpacity={match ? 0.75 : 1}
                     onPress={() => {
-                      if (match) void playTrack(match);
+                      if (!match) return;
+                      if (isUnassignedArtist) editTrack(match);
+                      else void playTrack(match);
                     }}>
                     <Text style={[styles.rankIndex, index === 0 && { color: theme.primary }]}>
                       {index + 1}
@@ -654,6 +769,17 @@ export default function ArtistScreen() {
         </>
       )}
 
+      {isUnassignedArtist ? (
+        <View
+          style={[
+            styles.hintCard,
+            { borderColor: `${theme.primary}44`, backgroundColor: `${theme.primary}12` },
+          ]}>
+          <Ionicons name="pencil-outline" size={16} color={theme.primary} />
+          <Text style={styles.hintText}>{t('artist.unassigned_hint')}</Text>
+        </View>
+      ) : null}
+
       <Text style={styles.sectionTitle}>
         {t('artist.songs')}
         {artistTracks.length > 0 ? ` (${artistTracks.length})` : ''}
@@ -674,7 +800,10 @@ export default function ArtistScreen() {
           isCurrent && { borderColor: `${theme.primary}66`, backgroundColor: `${theme.primary}14` },
         ]}
         activeOpacity={0.75}
-        onPress={() => void playTrack(item)}>
+        onPress={() => {
+          if (isUnassignedArtist) editTrack(item);
+          else void playTrack(item);
+        }}>
         <TrackArtwork
           uri={item.artwork || metadataMap[item.id]?.artwork || artworkMap[item.id]}
           trackId={item.id}
@@ -692,7 +821,14 @@ export default function ArtistScreen() {
             {plays > 0 ? t('artist.plays_total', { count: plays }) : t('artist.not_played')}
           </Text>
         </View>
-        {isCurrent ? (
+        {isUnassignedArtist ? (
+          <View
+            style={[styles.editBadge, { backgroundColor: `${theme.primary}26` }]}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants">
+            <Ionicons name="pencil" size={16} color={theme.primary} />
+          </View>
+        ) : isCurrent ? (
           <Ionicons name="volume-medium" size={18} color={theme.primary} />
         ) : (
           <Text style={styles.trackDuration}>{formatTrackDuration(item.duration)}</Text>
@@ -713,16 +849,18 @@ export default function ArtistScreen() {
         <Text style={styles.headerTitle} numberOfLines={1}>
           {t('artist.title')}
         </Text>
-        <TouchableOpacity
-          style={styles.renameBtn}
-          onPress={() => setRenameOpen(true)}
-          disabled={renaming}
-          activeOpacity={0.75}
-          accessibilityRole="button"
-          accessibilityLabel={t('artist.rename')}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <Ionicons name="pencil" size={18} color={theme.primary} />
-        </TouchableOpacity>
+        {!isUnassignedArtist ? (
+          <TouchableOpacity
+            style={styles.renameBtn}
+            onPress={() => setRenameOpen(true)}
+            disabled={renaming}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel={t('artist.rename')}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Ionicons name="pencil" size={18} color={theme.primary} />
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <ArtistRenameModal
@@ -730,6 +868,13 @@ export default function ArtistScreen() {
         initialValue={displayName || artistName}
         onCancel={() => setRenameOpen(false)}
         onSubmit={(name) => void handleRenameArtist(name)}
+      />
+
+      <EditTrackModal
+        visible={trackToEdit != null}
+        track={trackToEdit}
+        onClose={() => setTrackToEdit(null)}
+        onSaved={() => setStatsRevision((value) => value + 1)}
       />
 
       <FlashList
@@ -1036,6 +1181,29 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#71717a',
     fontVariant: ['tabular-nums'],
+  },
+  hintCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 16,
+  },
+  hintText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#d4d4d8',
+  },
+  editBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   loadingBox: {
     paddingVertical: 30,

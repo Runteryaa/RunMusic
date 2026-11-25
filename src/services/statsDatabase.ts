@@ -435,6 +435,108 @@ export async function getTotalListeningTime(): Promise<number> {
   }
 }
 
+/** Geçmiş satırlarında güncellenebilecek görünen metadata alanları. */
+export interface TrackHistoryMetadataPatch {
+  title?: string | null;
+  artist?: string | null;
+  album?: string | null;
+  artwork?: string | null;
+}
+
+const TRACK_HISTORY_PATCH_COLUMNS = ['title', 'artist', 'album', 'artwork'] as const;
+
+/**
+ * Bir parçanın geçmiş kayıtlarını düzenlenmiş metadata ile eşitler.
+ *
+ * NEDEN: Kullanıcı bir parçanın sanatçısını düzeltince yalnızca kütüphane
+ * görünümü değişiyordu; dinleme geçmişi eski (veya boş) sanatçıda kalıyordu.
+ * Böylece istatistiklerde "-" / boş bir sanatçı grubu oluşuyor ve gerçek
+ * sanatçının dinleme sayısı eksik görünüyordu. Bu fonksiyon satırları
+ * `track_id` üzerinden bulup yeni başlık/sanatçı/albüm/kapakla günceller.
+ *
+ * `trackIds` hem varlık kimliği hem de dosya URL'i olabilir (eski sürümler
+ * geçmişe URL yazıyordu). Değişen satır sayısı döner.
+ */
+export async function updateTrackMetadataInHistory(
+  trackIds: (string | null | undefined)[],
+  patch: TrackHistoryMetadataPatch
+): Promise<number> {
+  const ids = [
+    ...new Set(
+      (Array.isArray(trackIds) ? trackIds : [trackIds])
+        .map((id) => String(id ?? '').trim())
+        .filter(Boolean)
+    ),
+  ];
+  const columns = TRACK_HISTORY_PATCH_COLUMNS.filter(
+    (column) => patch[column] !== undefined
+  );
+  if (ids.length === 0 || columns.length === 0) return 0;
+
+  const assignments = columns.map((column) => `${column} = ?`).join(', ');
+  const placeholders = ids.map(() => '?').join(', ');
+  const values = columns.map((column) => patch[column] ?? null);
+
+  try {
+    let changed = 0;
+    await withStatsDB(async (database) => {
+      const result = await database.runAsync(
+        `UPDATE play_history SET ${assignments} WHERE track_id IN (${placeholders})`,
+        ...values,
+        ...ids
+      );
+      changed = result.changes ?? 0;
+    });
+    // İstatistik ekranının kısa süreli önbelleği eski sanatçıyı göstermesin.
+    if (changed > 0) bumpStatsEpoch();
+    return changed;
+  } catch (error) {
+    console.warn('Failed to update track metadata in history:', error);
+    return 0;
+  }
+}
+
+/**
+ * Sanatçı bilgisi olmayan dinleme satırları.
+ *
+ * İstatistiklerde boş etiketli bir "sanatçı" grubu oluşuyordu; buna dokununca
+ * sanatçı sayfası hiçbir satır bulamıyordu. Bu sorgu o grubun gerçek
+ * kayıtlarını getirir. `recordPlay` bilinmeyen sanatçıyı `null` yazar; eski
+ * kayıtlarda boş metin, tire veya yer tutucu ad bulunabilir.
+ */
+const UNASSIGNED_ARTIST_CONDITION = `(
+  artist IS NULL
+  OR TRIM(artist) = ''
+  OR TRIM(artist) IN ('-', '–', '—')
+  OR LOWER(TRIM(artist)) IN (
+    'unknown artist',
+    'unknown',
+    'local audio',
+    'bilinmeyen sanatçı',
+    'bilinmeyen sanatci'
+  )
+)`;
+
+export async function getHistoryInRangeForUnassignedArtist(
+  startSql: string,
+  endSql: string
+): Promise<PlayHistoryItem[]> {
+  try {
+    return await withStatsDB((database) =>
+      database.getAllAsync<PlayHistoryItem>(
+        `SELECT ${HISTORY_COLUMNS} FROM play_history
+          WHERE played_at >= ? AND played_at < ? AND ${UNASSIGNED_ARTIST_CONDITION}
+          ORDER BY played_at ASC`,
+        startSql,
+        endSql
+      )
+    );
+  } catch (error) {
+    console.warn('Failed to get unassigned artist history:', error);
+    return [];
+  }
+}
+
 /**
  * Geçmişteki tüm kayıtlarda sanatçı adını değiştirir (sanatçı sayfası).
  *

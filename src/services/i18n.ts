@@ -580,6 +580,8 @@ export const translations = {
       rename_apply: 'Kaydet',
       rename_done: 'Sanatçı adı güncellendi.',
       rename_failed: 'Sanatçı adı güncellenemedi.',
+      unassigned_hint:
+        'Bu parçalarda sanatçı bilgisi yok. Bir parçaya dokunup sanatçısını yazdığında hem kütüphane kaydı hem de bu parçanın dinleme verisi yeni sanatçıya taşınır.',
     },
     themes: {
       blue: 'Okyanus Mavisi',
@@ -1389,6 +1391,8 @@ export const translations = {
       rename_apply: 'Save',
       rename_done: 'Artist name updated.',
       rename_failed: 'Could not rename the artist.',
+      unassigned_hint:
+        'These tracks have no artist information. Tap a track and enter its artist; both the library entry and its listening data move to the new artist.',
     },
     themes: {
       blue: 'Ocean Blue',

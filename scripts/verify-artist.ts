@@ -28,6 +28,7 @@ import {
   filterRowsForArtist,
   getArtistTracks,
   getArtistTotalPlays,
+  getUnassignedTracks,
   sortTracksByPlays,
   topArtistTracks,
   type ArtistTrack,
@@ -193,6 +194,41 @@ check('boş başlık ipucuna girmez', (buildArtistTitleHints([
 ])['uzi'] ?? []).length === 0);
 check('boş sanatçı anahtarı üretilmez', !('' in buildArtistTitleHints(hintRows)));
 check('boş geçmiş boş harita', Object.keys(buildArtistTitleHints([])).length === 0);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('Sanatçısı boş parçalar');
+
+const mixedTracks: ArtistTrack[] = [
+  track('u1', 'Adsız', ''),
+  track('u2', 'Yer Tutucu', 'Unknown Artist'),
+  track('u3', 'Gerçek', 'Duman'),
+  track('u4', 'Tire', '-'),
+  track('u5', 'Yerel', 'Local Audio'),
+];
+const unassigned = getUnassignedTracks(mixedTracks);
+check(
+  'boş ve yer tutucu sanatçılar seçilir',
+  ['u1', 'u2', 'u4', 'u5'].every((id) => unassigned.some((item) => item.id === id)),
+  unassigned.map((item) => item.id).join(',')
+);
+check(
+  'gerçek sanatçı seçilmez',
+  !unassigned.some((item) => item.id === 'u3'),
+  unassigned.map((item) => item.id).join(',')
+);
+
+const unknownProfile = buildArtistProfileFromRows(
+  [
+    { track_id: 'u1', played_at: '2026-01-01 10:00:00', duration_listened: 100, title: 'Adsız', artist: '' },
+    { track_id: 'u1', played_at: '2026-01-02 10:00:00', duration_listened: 100, title: 'Adsız', artist: '' },
+  ],
+  '',
+  { limit: 10 }
+);
+check('boş sanatçı profilinde dinlemeler sayılır', unknownProfile.stats.totalPlays === 2);
+check('boş sanatçı playCounts üretir', unknownProfile.playCounts.get('u1') === 2);
+check('boş sanatçı top parçası', unknownProfile.stats.topTracks[0]?.label === 'Adsız');
+check('boş sanatçı görünen adı yok', unknownProfile.displayName === '');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('Boş veri');

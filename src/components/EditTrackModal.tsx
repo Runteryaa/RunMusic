@@ -23,6 +23,8 @@ import {
   OnlineArtworkResult,
 } from '../services/artworkSearchService';
 import { cleanDisplayTitle } from '../services/lyricsService';
+import { updateTrackMetadataInHistory } from '../services/statsDatabase';
+import { isPlaceholderArtist } from '../services/displayNames';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
 import { useTranslation } from '../services/i18n';
 
@@ -83,7 +85,10 @@ export function EditTrackModal({
         const stored = metadataMap[track.id] || (track.uri ? metadataMap[track.uri] : undefined);
         const storedArt = artworkMap[track.id] || (track.uri ? artworkMap[track.uri] : undefined);
 
-        const initialArtist = stored?.artist ?? track.artist ?? '';
+        // "Unknown Artist" gibi yer tutucular düzenleme alanına yazılmaz:
+        // kullanıcı boş alanı gerçek sanatçı adıyla doldurur.
+        const rawArtist = stored?.artist ?? track.artist ?? '';
+        const initialArtist = isPlaceholderArtist(rawArtist) ? '' : rawArtist;
         const defaultTitle = cleanDisplayTitle(track.title ?? '', initialArtist);
         setTitle(stored?.title ?? defaultTitle);
         setArtist(initialArtist);
@@ -188,6 +193,13 @@ export function EditTrackModal({
                 useStore.getState().setArtwork(track.uri, originalArt);
               }
             }
+            // Sıfırlama da geçmişe yansır: dinleme kayıtları orijinal metadata'ya döner.
+            await updateTrackMetadataInHistory([track.id, track.uri], {
+              title: track.title,
+              artist: isPlaceholderArtist(track.artist) ? null : track.artist,
+              album: track.album || null,
+              artwork: originalArt || null,
+            });
             await syncLivePlayback(track.id, {
               title: track.title,
               artist: track.artist,
@@ -268,6 +280,21 @@ export function EditTrackModal({
     if (track.uri && track.uri !== track.id) {
       setTrackMetadata(track.uri, newMetadata);
     }
+
+    /*
+     * Dinleme geçmişi de yeni metadata'ya taşınır.
+     *
+     * Aksi halde kullanıcı sanatçıyı düzeltse bile istatistiklerde parça eski
+     * (veya boş) sanatçıda kalıyordu. Yer tutucu sanatçı geçmişe yazılmaz;
+     * `null` bırakılır ki "bilinmeyen sanatçı" grubu temiz kalsın.
+     */
+    await updateTrackMetadataInHistory([track.id, track.uri], {
+      title: finalTitle,
+      artist: isPlaceholderArtist(finalArtist) ? null : finalArtist,
+      album: finalAlbum || null,
+      artwork: artworkUri || null,
+    });
+
     await syncLivePlayback(track.id, newMetadata);
 
     onSaved?.();

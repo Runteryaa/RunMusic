@@ -13,7 +13,7 @@
  */
 
 import { normalizeArtistKey, artistNamesFromRow } from './artistMatch';
-import { cleanTrackFields } from './displayNames';
+import { cleanArtistName, cleanTrackFields } from './displayNames';
 import {
   buildWrappedStats,
   type WrappedPlayRow,
@@ -131,6 +131,17 @@ export function getArtistTracks(
   artistKey: string
 ): ArtistTrack[] {
   return index.get(normalizeArtistKey(artistKey))?.tracks ?? [];
+}
+
+/**
+ * Sanatçı alanı boş olan kütüphane parçaları.
+ *
+ * `buildArtistIndex` boş anahtarı bilerek indekse almaz (boş sanatçı hiçbir
+ * sanatçıya yazılmaz). "Bilinmeyen sanatçı" sayfası ise tam olarak bu parçaları
+ * listeleyip düzeltmeye izin verir; bu yüzden ayrı bir süzgeç gerekir.
+ */
+export function getUnassignedTracks(tracks: LibraryArtistInput[]): ArtistTrack[] {
+  return tracks.filter((track) => !cleanArtistName(track.artist));
 }
 
 /**
