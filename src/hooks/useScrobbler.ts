@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
-import { useProgress } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
@@ -11,6 +10,7 @@ import { broadcastNowPlaying, flushScrobbles, queueScrobble } from '../services/
 import { syncBackgroundScrobbleRegistration } from '../services/backgroundScrobble';
 import { scrobbleThresholdSeconds } from '../services/connections/scrobbleThreshold';
 import { cleanTrackFields } from '../services/displayNames';
+import { useSharedProgress } from './useSharedProgress';
 
 /**
  * Last.fm / ListenBrainz scrobble köprüsü.
@@ -25,7 +25,6 @@ import { cleanTrackFields } from '../services/displayNames';
  */
 export function useScrobbler(): void {
   const activeTrack = useResilientActiveTrack();
-  const progress = useProgress(1000);
 
   const isRemoteConnected = useRemoteConnectStore(
     (s) => s.mode === 'client' && s.connectionStatus === 'connected'
@@ -42,6 +41,13 @@ export function useScrobbler(): void {
   const listenBrainzNowPlaying = useConnectionsStore((s) => s.listenbrainz.nowPlaying);
   const anyEnabled = lastfmEnabled || listenBrainzEnabled;
   const isOnline = useIsOnline();
+
+  /*
+   * Eşik denetimi için 1 Hz yeterli; yoklama paylaşılan tek zamanlayıcıdan
+   * gelir. Scrobble bağlantısı yoksa hiç abone olunmaz — bu kanca her zaman
+   * bağlı olduğu için, kapalıyken gereksiz native çağrı üretmemesi önemli.
+   */
+  const progress = useSharedProgress(anyEnabled && !shouldSkip ? 1000 : 0);
 
   /** Aynı parça için iki kez now-playing/scrobble göndermeyi engeller. */
   const announcedTrackRef = useRef<string | null>(null);

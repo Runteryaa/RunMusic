@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
-import TrackPlayer, { useActiveTrack, useProgress, useIsPlaying } from 'react-native-track-player';
+import TrackPlayer, { useActiveTrack, useIsPlaying } from 'react-native-track-player';
 import { recordPlay, addListeningTime } from '../services/statsDatabase';
 import { cleanTrackFields } from '../services/displayNames';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
@@ -8,12 +8,13 @@ import { useStore } from '../store/useStore';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import { recordEvent } from '../services/memoryDiagnostics';
+import { useSharedProgress } from './useSharedProgress';
 
 export function usePlayTracker() {
   const activeTrack = useActiveTrack();
-  // Play tracking must keep 1 Hz resolution in the background as well; the
-  // history threshold and last-playback snapshot depend on it.
-  const progress = useProgress(1000);
+  // İstatistik eşiği ve son çalma kaydı 1 Hz yeterli; yoklama paylaşılan
+  // zamanlayıcıdan gelir (tek native çağrı, tüm tüketiciler paylaşır).
+  const progress = useSharedProgress(1000);
   const { playing: playingState } = useIsPlaying();
   const playing = Boolean(playingState);
 

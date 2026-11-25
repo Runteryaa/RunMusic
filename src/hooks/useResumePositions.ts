@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import TrackPlayer, { useActiveTrack, useProgress } from 'react-native-track-player';
+import TrackPlayer, { useActiveTrack } from 'react-native-track-player';
 import { useStore } from '../store/useStore';
 import { useRemoteConnectStore } from '../store/useRemoteConnectStore';
 import {
@@ -9,6 +9,7 @@ import {
   resumeKey,
   saveResumePosition,
 } from '../services/resumePositions';
+import { useSharedProgress } from './useSharedProgress';
 
 /**
  * Uzun parçalarda (10 dakikadan uzun) kaldığın yerden devam.
@@ -22,12 +23,20 @@ import {
  */
 export function useResumePositions() {
   const activeTrack = useActiveTrack();
-  const progress = useProgress(2000);
   const enabled = useStore((s) => s.preferences.resumeLongTracks);
   const isRemoteConnected = useRemoteConnectStore(
     (s) => s.mode === 'client' && s.connectionStatus === 'connected'
   );
   const isShadowTrack = String(activeTrack?.id ?? '').startsWith('remote_');
+
+  /*
+   * Konum yalnızca 10 saniyede bir diske yazıldığı için 2 Hz'e gerek yok:
+   * 5 saniyelik örnekleme yeterli. Devre dışıyken (ayar kapalı, uzak mod)
+   * paylaşılan yoklayıcıya hiç abone olunmaz.
+   */
+  const progress = useSharedProgress(
+    enabled && !isRemoteConnected && !isShadowTrack ? 5000 : 0
+  );
 
   /** Son geri yüklenen parça; aynı parça için ikinci kez atlanmaz. */
   const restoredKeyRef = useRef<string | null>(null);

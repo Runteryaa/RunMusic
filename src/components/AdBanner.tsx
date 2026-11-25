@@ -61,7 +61,13 @@ export function AdBanner({ style, size = BannerAdSize.ANCHORED_ADAPTIVE_BANNER }
     }
 
     measureVisibility();
-    const interval = setInterval(measureVisibility, 1000);
+    /*
+     * Görünürlük ölçümü 1 sn'de birdi: listede aynı anda birkaç reklam
+     * yerleşimi varken saniyede birkaç `measureInWindow` köprü çağrısı
+     * demekti. Kaydırma sırasında `onLayout` zaten ölçüm tetikliyor; bu
+     * yoklama yalnızca emniyet ağı, 2 saniye yeterli.
+     */
+    const interval = setInterval(measureVisibility, 2000);
     return () => clearInterval(interval);
   }, [canRender, measureVisibility]);
 

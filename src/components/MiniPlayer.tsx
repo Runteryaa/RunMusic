@@ -37,7 +37,11 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
  * re-rendering four times per second.
  */
 function MiniPlayerProgressBar({ active, color }: { active: boolean; color: string }) {
-  const progress = useActiveProgress(active);
+  /*
+   * İnce ilerleme çubuğu için 4 Hz gereksiz: 1 Hz hem akıcı görünür hem de
+   * mini oynatıcı açıkken paylaşılan yoklayıcının 4 Hz çalışmasını engeller.
+   */
+  const progress = useActiveProgress(active, 1000);
   const percent =
     progress.duration > 0
       ? Math.min(1, Math.max(0, progress.position / progress.duration))
