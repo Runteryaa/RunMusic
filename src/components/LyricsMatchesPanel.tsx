@@ -17,8 +17,10 @@ import type { LyricsSearchHit } from '../services/lyricsSearch';
  * içinde tutulur: düğmeye basıldığında yalnızca bu bileşen yeniden çizilir,
  * dolayısıyla genişletme her koşulda çalışır.
  *
- * Varsayılan görünüm kısadır (en fazla iki satır). "Genişlet" ile eşleşen
- * satır ve komşu satırlar açılır.
+ * Panel varsayılan olarak **kapalıdır**: yalnızca başlık çubuğu görünür,
+ * sağ kenarındaki küçük ok ile aşağı doğru açılır. Söz araması yapan her
+ * kullanıcıya sonuç listesini zorla göstermek kitaplık listesini
+ * kısaltıyordu.
  */
 
 interface LyricsMatchesPanelProps {
@@ -29,10 +31,12 @@ interface LyricsMatchesPanelProps {
 
 export function LyricsMatchesPanel({ hits, theme, onOpenTrack }: LyricsMatchesPanelProps) {
   const { t } = useTranslation();
-  /** Genişletilmiş parça kimlikleri. */
+  /** Panel başlık çubuğu açık mı? (Varsayılan: kapalı.) */
+  const [isOpen, setIsOpen] = useState(false);
+  /** Genişletilmiş parça kimlikleri (panel açıkken satır bazında). */
   const [expanded, setExpanded] = useState<string[]>([]);
 
-  const toggle = (trackId: string) => {
+  const toggleHit = (trackId: string) => {
     setExpanded((current) =>
       current.includes(trackId)
         ? current.filter((id) => id !== trackId)
@@ -42,53 +46,77 @@ export function LyricsMatchesPanel({ hits, theme, onOpenTrack }: LyricsMatchesPa
 
   return (
     <View style={[styles.panel, { borderColor: theme.border, backgroundColor: theme.surface }]}>
-      <Text style={styles.panelTitle}>{t('library.lyrics_matches')}</Text>
-      {hits.map((hit) => {
-        const isExpanded = expanded.includes(hit.track.id);
-        const hasMore = hit.details.trim() !== hit.snippet.trim();
-        return (
-          <View key={`lyrics-hit-${hit.track.id}`} style={styles.row}>
-            <TouchableOpacity
-              style={styles.main}
-              activeOpacity={0.75}
-              onPress={() => onOpenTrack(hit)}>
-              <Ionicons name="mic-outline" size={16} color={theme.primary} />
-              <View style={styles.textWrap}>
-                <Text style={styles.title} numberOfLines={1}>
-                  {hit.track.title}
-                  {hit.track.artist ? ` · ${hit.track.artist}` : ''}
-                </Text>
-                <Text
-                  style={[styles.snippet, isExpanded && styles.snippetExpanded]}
-                  numberOfLines={isExpanded ? undefined : 2}>
-                  {isExpanded ? hit.details : hit.snippet}
-                </Text>
+      <TouchableOpacity
+        style={styles.header}
+        activeOpacity={0.75}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: isOpen }}
+        accessibilityLabel={t('library.lyrics_matches')}
+        accessibilityHint={isOpen ? t('library.lyrics_collapse') : t('library.lyrics_expand')}
+        onPress={() => setIsOpen((value) => !value)}>
+        <Ionicons name="mic-outline" size={15} color={theme.primary} />
+        <Text style={styles.panelTitle} numberOfLines={1}>
+          {t('library.lyrics_matches')}
+        </Text>
+        <View style={[styles.countPill, { backgroundColor: `${theme.primary}26` }]}>
+          <Text style={[styles.countText, { color: theme.primary }]}>{hits.length}</Text>
+        </View>
+        <Ionicons
+          name={isOpen ? 'chevron-up' : 'chevron-down'}
+          size={16}
+          color={isOpen ? theme.primary : '#a1a1aa'}
+        />
+      </TouchableOpacity>
+
+      {isOpen ? (
+        <View style={styles.body}>
+          {hits.map((hit) => {
+            const isExpanded = expanded.includes(hit.track.id);
+            const hasMore = hit.details.trim() !== hit.snippet.trim();
+            return (
+              <View key={`lyrics-hit-${hit.track.id}`} style={styles.row}>
+                <TouchableOpacity
+                  style={styles.main}
+                  activeOpacity={0.75}
+                  onPress={() => onOpenTrack(hit)}>
+                  <View style={styles.textWrap}>
+                    <Text style={styles.title} numberOfLines={1}>
+                      {hit.track.title}
+                      {hit.track.artist ? ` · ${hit.track.artist}` : ''}
+                    </Text>
+                    <Text
+                      style={[styles.snippet, isExpanded && styles.snippetExpanded]}
+                      numberOfLines={isExpanded ? undefined : 2}>
+                      {isExpanded ? hit.details : hit.snippet}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                {hasMore ? (
+                  <TouchableOpacity
+                    style={styles.toggle}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: isExpanded }}
+                    accessibilityLabel={
+                      isExpanded ? t('library.lyrics_collapse') : t('library.lyrics_expand')
+                    }
+                    onPress={() => toggleHit(hit.track.id)}>
+                    <Text style={[styles.toggleText, { color: theme.primary }]}>
+                      {isExpanded ? t('library.lyrics_collapse') : t('library.lyrics_expand')}
+                    </Text>
+                    <Ionicons
+                      name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                      size={14}
+                      color={theme.primary}
+                    />
+                  </TouchableOpacity>
+                ) : null}
               </View>
-            </TouchableOpacity>
-            {hasMore ? (
-              <TouchableOpacity
-                style={styles.toggle}
-                activeOpacity={0.7}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityRole="button"
-                accessibilityState={{ expanded: isExpanded }}
-                accessibilityLabel={
-                  isExpanded ? t('library.lyrics_collapse') : t('library.lyrics_expand')
-                }
-                onPress={() => toggle(hit.track.id)}>
-                <Text style={[styles.toggleText, { color: theme.primary }]}>
-                  {isExpanded ? t('library.lyrics_collapse') : t('library.lyrics_expand')}
-                </Text>
-                <Ionicons
-                  name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                  size={14}
-                  color={theme.primary}
-                />
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        );
-      })}
+            );
+          })}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -97,16 +125,40 @@ const styles = StyleSheet.create({
   panel: {
     borderRadius: 14,
     borderWidth: 1,
-    padding: 12,
     marginBottom: 10,
+    overflow: 'hidden',
+  },
+  /** Başlık çubuğu: panel kapalıyken tek görünen kısım. */
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
   },
   panelTitle: {
+    flex: 1,
     fontSize: 12,
     fontWeight: '700',
-    color: '#a1a1aa',
+    color: '#d4d4d8',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginBottom: 6,
+  },
+  countPill: {
+    minWidth: 20,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  body: {
+    paddingHorizontal: 12,
+    paddingBottom: 6,
   },
   row: {
     flexDirection: 'row',
