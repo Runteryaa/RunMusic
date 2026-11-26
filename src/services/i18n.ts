@@ -110,7 +110,7 @@ export const translations = {
       default_sort_hint: 'Kitaplık her açıldığında bu sırayla listelenir.',
       default_playback_mode: 'Varsayılan oynatma modu',
       default_playback_mode_hint:
-        'Uygulama açıldığında bu mod geçerli olur. "Tümünü tekrarla" nötr görünür; diğer modlar oynatıcıda vurgulanır.',
+        'Uygulama açıldığında bu mod geçerli olur. Bu moddayken oynatıcıdaki düğme sade görünür; başka bir moda geçince vurgulanır.',
       restore_queue: 'Açılışta son kuyruğu geri yükle',
       restore_queue_hint: 'Kapalıysa yalnızca son çalan parça yüklenir.',
       clear_queue_on_select: 'Yeni Şarkıda Sırayı Sıfırla',
@@ -939,7 +939,7 @@ export const translations = {
       default_sort_hint: 'Library will be sorted in this order when opened.',
       default_playback_mode: 'Default playback mode',
       default_playback_mode_hint:
-        'This mode applies when the app starts. "Repeat all" appears neutral in the player; other modes are highlighted.',
+        'This mode applies when the app starts. While in this mode the player button stays plain; switching to another mode highlights it.',
       restore_queue: 'Restore last queue on launch',
       restore_queue_hint: 'If turned off, only the last played track will be loaded.',
       clear_queue_on_select: 'Reset Queue on New Track',

@@ -2316,12 +2316,16 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const isSmartShuffle = player.isRemote ? player.isSmartShuffle : storeIsSmartShuffle;
   const playbackMode = player.playbackMode;
   /**
-   * "Tümünü tekrarla" (loop queue) nötr moddur: düğmenin arkasında vurgu
-   * gösterilmez. Diğer üç mod (karışık, akıllı karışık, tek şarkı) seçili
-   * görünür. Bu davranış sabittir — varsayılan mod ayarı yalnızca açılışta
-   * hangi modun geçerli olacağını belirler, vurguyu değiştirmez.
+   * Vurgu (cam/glaş arka plan) yalnızca mod **varsayılandan farklıyken** görünür.
+   *
+   * Ayarlar'daki "Varsayılan oynatma modu" kullanıcının normal durumudur; o
+   * moddayken düğme sade (arka plansız) durur. Kullanıcı başka bir moda
+   * geçtiğinde düğme vurgulanır — böylece "şu an varsayılandan farklı bir şey
+   * açık" bilgisi tek bakışta okunur. Varsayılan `repeat-all` iken davranış
+   * öncekiyle aynıdır: yalnızca loop queue arka plansız görünür.
    */
-  const isPlaybackModeActive = playbackMode !== 'repeat-all';
+  const defaultPlaybackMode = useStore((s) => s.preferences.defaultPlaybackMode);
+  const isPlaybackModeActive = playbackMode !== defaultPlaybackMode;
   const playbackModeLabel =
     playbackMode === 'smart'
       ? t('player.playback_mode_smart')
@@ -5944,7 +5948,11 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                 accessibilityHint={t('player.playback_mode_hint')}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 {playbackMode === 'repeat-one' ? (
-                  <MaterialCommunityIcons name="repeat-once" size={20} color={theme.primary} />
+                  <MaterialCommunityIcons
+                    name="repeat-once"
+                    size={20}
+                    color={isPlaybackModeActive ? theme.primary : 'rgba(255, 255, 255, 0.55)'}
+                  />
                 ) : (
                   <Ionicons
                     name={

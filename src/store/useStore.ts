@@ -108,8 +108,8 @@ export interface AppPreferences {
   isDevModeActive: boolean;
   /**
    * Uygulama açılışında geçerli olacak oynatma modu. Oynatıcıdaki mod
-   * düğmesinde nötr (arka plansız) görünen mod her zaman `repeat-all`'dur;
-   * bu ayar yalnızca açılışta hangi modun kurulacağını belirler.
+   * düğmesinde **bu mod nötr** görünür (cam/glaş arka plan yok); kullanıcı
+   * başka bir moda geçtiğinde düğme vurgulanır.
    * Varsayılan: `repeat-all` (Tümünü tekrarla).
    */
   defaultPlaybackMode: DefaultPlaybackMode;
