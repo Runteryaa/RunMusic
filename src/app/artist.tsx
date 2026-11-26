@@ -268,6 +268,17 @@ export default function ArtistScreen() {
     return getArtistTracks(workspace.index, artistKey);
   }, [library, metadataMap, artistKey, isUnassignedArtist]);
 
+  /** Geçmiş satırlarını cihazdaki dosyaya eşlemek için kimlik/URL tablosu. */
+  const assetLookup = useMemo(() => {
+    const byId = new Map<string, (typeof library)[number]>();
+    const byUri = new Map<string, (typeof library)[number]>();
+    for (const asset of library) {
+      byId.set(asset.id, asset);
+      if (asset.uri) byUri.set(asset.uri, asset);
+    }
+    return { byId, byUri };
+  }, [library]);
+
   /**
    * İstatistikler artık SQL'de ön süzülür: yalnızca bu sanatçının satırları
    * çekilir. Önceden tüm geçmiş (`SELECT *`) köprüden geçip JS'te süzülüyordu;
@@ -293,8 +304,6 @@ export default function ArtistScreen() {
           );
           const historyEntries: ArtistTrack[] = [];
           const seen = new Set<string>();
-          const assetById = new Map(library.map((asset) => [asset.id, asset]));
-          const assetByUri = new Map(library.map((asset) => [asset.uri, asset]));
 
           for (const row of rows) {
             const fields = cleanTrackFields(row.title, row.artist);
@@ -304,7 +313,7 @@ export default function ArtistScreen() {
             if (!id || seen.has(id)) continue;
             seen.add(id);
 
-            const asset = assetById.get(id) ?? assetByUri.get(id);
+            const asset = assetLookup.byId.get(id) ?? assetLookup.byUri.get(id);
             const info = asset ? resolveLibraryInfo(asset, metadataMap) : null;
             const assetMeta = asset ? metadataMap[asset.id] ?? metadataMap[asset.uri] : undefined;
             historyEntries.push({
@@ -332,6 +341,28 @@ export default function ArtistScreen() {
               (name) => normalizeArtistKey(name) === artistKey
             );
             if (!matches) continue;
+
+            /*
+             * Geçmiş satırı, dosyanın **şu anki** sanatçısıyla çelişebilir:
+             * kullanıcı parçanın sanatçısını sonradan değiştirmişse (ve geçmiş
+             * güncellemesi o satıra ulaşamamışsa) parça hâlâ eski sanatçının
+             * sayfasında "hayalet" olarak görünüyordu — kapağı ve süresi yok,
+             * "Cihazda yok" yazıyor ama dosya cihazda olduğu için çalıyordu.
+             * Dosya bulunuyorsa ve sanatçısı artık bu sayfaya ait değilse satır
+             * atlanır. Sanatçı bilgisi boşsa eski kayda güvenilir (parça hâlâ
+             * düzeltilmemiş olabilir).
+             */
+            const id = String(row.track_id ?? '').trim();
+            const asset = id ? assetLookup.byId.get(id) ?? assetLookup.byUri.get(id) : undefined;
+            if (asset) {
+              const currentKeys = artistNamesFromRow(
+                resolveLibraryInfo(asset, metadataMap).artist
+              )
+                .map((name) => normalizeArtistKey(name))
+                .filter(Boolean);
+              if (currentKeys.length > 0 && !currentKeys.includes(artistKey)) continue;
+            }
+
             const fields = cleanTrackFields(row.title, row.artist);
             cleaned.push({ ...row, title: fields.title || row.title, artist: fields.artist });
           }
@@ -352,7 +383,7 @@ export default function ArtistScreen() {
         if (mountedRef.current && requestId === requestRef.current) setLoadedKey(key);
       }
     },
-    [artistKey, artistName, artistTracks, isUnassignedArtist, library, metadataMap]
+    [artistKey, artistName, artistTracks, isUnassignedArtist, assetLookup, metadataMap]
   );
 
   useEffect(() => {
@@ -844,12 +875,16 @@ export default function ArtistScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>{t('artist.top_tracks')}</Text>
               {topTracks.map((item, index) => {
+                // `resolvePlayable` cihazdaki dosyayı bulur; bulduysa parça
+                // gerçekten oynatılabilir (ana liste kapsamı dışında kalmış
+                // olabilir, ör. sanatçısı sonradan düzenlenmiş kayıtlar).
+                const resolved = resolvePlayable(item.key);
                 const match =
-                  resolvePlayable(item.key) ??
+                  resolved ??
                   sortedTracks.find(
                     (track) => track.id === item.key || track.uri === item.key
                   );
-                const playable = match ? isPlayableTrack(match) : false;
+                const playable = resolved ? true : match ? isPlayableTrack(match) : false;
                 return (
                   <TouchableOpacity
                     key={`top-${item.key}`}

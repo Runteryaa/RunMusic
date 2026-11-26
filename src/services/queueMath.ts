@@ -72,6 +72,30 @@ export function nextPlaybackMode(mode: PlaybackMode): PlaybackMode {
   return PLAYBACK_MODE_ORDER[(index + 1) % PLAYBACK_MODE_ORDER.length];
 }
 
+/**
+ * Bir oynatma modunun gerektirdiği bayraklar.
+ *
+ * `getPlaybackMode`'un tersi; "şu moda geç" diyen çağıranlar (varsayılan mod
+ * uygulaması, oynatıcı kurulumu) aynı eşlemeyi tekrar yazmasın diye ayrıldı.
+ */
+export function playbackModeTargets(mode: PlaybackMode): {
+  shuffle: boolean;
+  smartShuffle: boolean;
+  repeatOne: boolean;
+} {
+  switch (mode) {
+    case 'shuffle':
+      return { shuffle: true, smartShuffle: false, repeatOne: false };
+    case 'smart':
+      return { shuffle: true, smartShuffle: true, repeatOne: false };
+    case 'repeat-one':
+      return { shuffle: false, smartShuffle: false, repeatOne: true };
+    case 'repeat-all':
+    default:
+      return { shuffle: false, smartShuffle: false, repeatOne: false };
+  }
+}
+
 const UNKNOWN_ARTIST_KEY = '\u0000runmusic_unknown_artist';
 
 /** Sanatçı adını karşılaştırılabilir hale getirir; boş/yer tutucu adları gruplar. */

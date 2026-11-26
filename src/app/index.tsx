@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import {
   StyleSheet,
   Text,
@@ -49,6 +49,7 @@ import {
 } from '../services/queueController';
 import { compareAddedDate, type SortOption } from '../services/librarySort';
 import { normalizeSearchText } from '../services/searchUtils';
+import { artistNamesFromRow, normalizeArtistKey } from '../services/artistMatch';
 import { useTranslation } from '../services/i18n';
 import { searchLyricsCache, type LyricsSearchHit } from '../services/lyricsSearch';
 import {
@@ -899,6 +900,41 @@ export default function LibraryScreen() {
     .filter((item) => selectedIds.includes(item.asset.id))
     .map((item) => item.asset);
 
+  const router = useRouter();
+
+  /**
+   * Aramada sanatçı sonuçları.
+   *
+   * Kütüphane araması yalnızca parça satırlarını süzüyordu; bir sanatçı adı
+   * yazınca o sanatçının sayfasına gitmenin yolu yoktu. Burada kütüphanedeki
+   * sanatçılar (ortak çalışmalar dahil, normalize anahtara göre) toplanır ve
+   * sorguyla eşleşenler parça sayısına göre sıralanır.
+   */
+  const searchArtistResults = (() => {
+    if (!normalizedQuery) return [];
+    const groups = new Map<string, { key: string; name: string; tracks: number }>();
+    for (const item of fullSortedListWithInfo) {
+      for (const rawName of artistNamesFromRow(item.info.artist)) {
+        const name = rawName.trim();
+        const key = normalizeArtistKey(name);
+        if (!key) continue;
+        const existing = groups.get(key);
+        if (existing) existing.tracks += 1;
+        else groups.set(key, { key, name, tracks: 1 });
+      }
+    }
+    const results: { key: string; name: string; tracks: number }[] = [];
+    for (const group of groups.values()) {
+      const target = normalizeSearchText(group.name);
+      const matches =
+        target.includes(normalizedQuery) ||
+        (searchTerms.length > 1 && searchTerms.every((term) => target.includes(term)));
+      if (matches) results.push(group);
+    }
+    results.sort((a, b) => b.tracks - a.tracks || a.name.localeCompare(b.name));
+    return results.slice(0, 6);
+  })();
+
   const remoteDisplayedList = useMemo(() => {
     if (!searchQuery.trim()) return remoteLibrary;
     const q = normalizeSearchText(searchQuery);
@@ -1605,6 +1641,37 @@ export default function LibraryScreen() {
               </View>
             ) : null}
 
+            {!isShowingRemoteLibrary && !isSelectionMode && isSearchOpen && searchArtistResults.length > 0 ? (
+              <View style={[styles.artistResultsPanel, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+                <Text style={styles.artistResultsTitle}>{t('library.artists')}</Text>
+                {searchArtistResults.map((artist) => (
+                  <TouchableOpacity
+                    key={`artist-${artist.key}`}
+                    style={styles.artistResultRow}
+                    activeOpacity={0.75}
+                    onPress={() => {
+                      closeSearch();
+                      router.push({ pathname: '/artist', params: { name: artist.name } });
+                    }}>
+                    <View style={[styles.artistAvatar, { backgroundColor: `${theme.primary}26` }]}>
+                      <Text style={[styles.artistAvatarText, { color: theme.primary }]}>
+                        {artist.name.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.artistResultInfo}>
+                      <Text style={styles.artistResultName} numberOfLines={1}>
+                        {artist.name}
+                      </Text>
+                      <Text style={styles.artistResultMeta} numberOfLines={1}>
+                        {t('library.artist_track_count', { count: artist.tracks })}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color="#71717a" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
+
             {!isShowingRemoteLibrary && !isSelectionMode && isSearchOpen && lyricsHits.length > 0 ? (
               <LyricsMatchesPanel
                 hits={lyricsHits}
@@ -1934,6 +2001,52 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 12,
     marginBottom: 10,
+  },
+  /** Arama sırasında eşleşen sanatçılar paneli. */
+  artistResultsPanel: {
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  artistResultsTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#a1a1aa',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  artistResultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 7,
+  },
+  artistAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  artistAvatarText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  artistResultInfo: {
+    flex: 1,
+  },
+  artistResultName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  artistResultMeta: {
+    fontSize: 12,
+    color: '#a1a1aa',
+    marginTop: 1,
   },
   searchPanelHeader: {
     flexDirection: 'row',

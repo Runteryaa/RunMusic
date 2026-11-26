@@ -230,8 +230,6 @@ function formatTime(secs: number): string {
  */
 const LYRIC_SETTLE_ACTIVE_MS = 160;
 const LYRIC_SETTLE_INACTIVE_MS = 320;
-/** Kaydırma, satır gelmeden bu kadar önce başlar. */
-const LYRIC_SCROLL_LEAD_SECONDS = 0.8;
 /**
  * Söz panelinin tek ön alma süresi (saniye).
  *
@@ -246,6 +244,16 @@ const LYRIC_SCROLL_LEAD_SECONDS = 0.8;
  * React'in satırı çizmesi için gereken gecikmeyi telafi eder.
  */
 const LYRIC_SYNC_LEAD_SECONDS = 0.3;
+/**
+ * Otomatik kaydırmanın ön alması. **Satır odağı/renklenme ile aynı** olmalı.
+ *
+ * NEDEN: kaydırma 0.8 sn önce başlıyordu, oysa satır 0.3 sn önce aktifleşiyor.
+ * Aradaki yarım saniye boyunca satır ekranın ortasına gelmiş ama sönük duruyor,
+ * renklenme ancak sonradan başlıyordu ("satıra geçiyor ama renklenmiyor").
+ * Artık liste yeni satıra, o satır aktifleştiği **an** kaymaya başlar: kaydırma
+ * animasyonu sürerken ilk harf çoktan yanıyor olur.
+ */
+const LYRIC_SCROLL_LEAD_SECONDS = LYRIC_SYNC_LEAD_SECONDS;
 /**
  * Satır başlangıcı ile ilk kelimenin zamanı arasında kabul edilen en büyük fark
  * (saniye).
@@ -2307,7 +2315,12 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const isShuffle = player.isRemote ? player.isShuffle : storeIsShuffle;
   const isSmartShuffle = player.isRemote ? player.isSmartShuffle : storeIsSmartShuffle;
   const playbackMode = player.playbackMode;
-  /** 'repeat-all' varsayılan (nötr) kabul edilir; diğerleri seçili sayılır. */
+  /**
+   * "Tümünü tekrarla" (loop queue) nötr moddur: düğmenin arkasında vurgu
+   * gösterilmez. Diğer üç mod (karışık, akıllı karışık, tek şarkı) seçili
+   * görünür. Bu davranış sabittir — varsayılan mod ayarı yalnızca açılışta
+   * hangi modun geçerli olacağını belirler, vurguyu değiştirmez.
+   */
   const isPlaybackModeActive = playbackMode !== 'repeat-all';
   const playbackModeLabel =
     playbackMode === 'smart'

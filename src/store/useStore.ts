@@ -51,6 +51,21 @@ export type { LyricsSourcePreference };
 export type AppLanguage = 'system' | 'en' | 'tr';
 
 /**
+ * Varsayılan oynatma modu seçenekleri.
+ *
+ * `queueMath.PlaybackMode` ile aynı kümedir; store native'siz kalsın diye burada
+ * ayrıca tanımlanır (tip yalnızca dört sabit metinden oluşur).
+ */
+export type DefaultPlaybackMode = 'repeat-all' | 'shuffle' | 'smart' | 'repeat-one';
+
+export const DEFAULT_PLAYBACK_MODES: readonly DefaultPlaybackMode[] = [
+  'repeat-all',
+  'shuffle',
+  'smart',
+  'repeat-one',
+];
+
+/**
  * Kullanıcı tercihleri (Ayarlar ekranı).
  *
  * `settings`'ten ayrı tutulur: `settings` kitaplık TARAMASINI filtreler,
@@ -91,6 +106,13 @@ export interface AppPreferences {
   hasDismissedDynamicColorBanner: boolean;
   /** Gizli geliştirici modu: Tüm reklamları kapatır ve kilitleri kaldırır. */
   isDevModeActive: boolean;
+  /**
+   * Uygulama açılışında geçerli olacak oynatma modu. Oynatıcıdaki mod
+   * düğmesinde nötr (arka plansız) görünen mod her zaman `repeat-all`'dur;
+   * bu ayar yalnızca açılışta hangi modun kurulacağını belirler.
+   * Varsayılan: `repeat-all` (Tümünü tekrarla).
+   */
+  defaultPlaybackMode: DefaultPlaybackMode;
   /** Kütüphaneden doğrudan yeni bir şarkı seçildiğinde önceden sıraya eklenmiş şarkıları temizler (varsayılan: false). */
   clearQueueOnTrackSelect: boolean;
   /** Kayan kuyruk tampon hedefi (varsayılan: 20). */
@@ -135,6 +157,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   isDynamicColorUnlocked: false,
   hasDismissedDynamicColorBanner: false,
   isDevModeActive: false,
+  defaultPlaybackMode: 'repeat-all',
   clearQueueOnTrackSelect: false,
   queueBufferTarget: 20,
   queueReplenishThreshold: 10,
@@ -291,7 +314,7 @@ interface AppState {
  * kaydı bellekte korur; açılışta bir kez SQLite'a aktarılır ve ancak yazma
  * başarılı olduktan sonra AsyncStorage kaydından düşer.
  */
-const PERSIST_VERSION = 22;
+const PERSIST_VERSION = 23;
 
 export const useStore = create<AppState>()(
   persist(
@@ -752,6 +775,13 @@ export const useStore = create<AppState>()(
             // v19: Wrapped kişiselleştirmesi. Eski kayıtlarda yok; tüm
             // slaytlar açık ve kapak görünür olacak şekilde doldurulur.
             wrapped: normalizeWrappedPreferences(incomingPrefs.wrapped),
+            // v23: açılışta geçerli oynatma modu. Eski kayıtlarda yok;
+            // varsayılan "Tümünü tekrarla" (önceki davranışla aynı).
+            defaultPlaybackMode: DEFAULT_PLAYBACK_MODES.includes(
+              incomingPrefs.defaultPlaybackMode
+            )
+              ? incomingPrefs.defaultPlaybackMode
+              : DEFAULT_PREFERENCES.defaultPlaybackMode,
           },
           isSmartShuffle: Boolean(incoming.isSmartShuffle),
           lyricsCache: normalizeLyricsCache(incoming.lyricsCache),

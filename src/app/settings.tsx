@@ -19,17 +19,17 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Updates from 'expo-updates';
 import Constants from 'expo-constants';
 import { APP_VERSION, NATIVE_APP_VERSION, NATIVE_BUILD_VERSION, RUNTIME_VERSION } from '../constants/version';
-import { useStore, DEFAULT_PREFERENCES } from '../store/useStore';
+import { useStore, DEFAULT_PREFERENCES, type DefaultPlaybackMode } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { MemoryDiagnosticsCard } from '../components/MemoryDiagnosticsCard';
 import { saveCachedLibrary } from '../services/libraryStorage';
 import { cleanDisplayTitle, type LyricsSourcePreference } from '../services/lyricsService';
 import { getSortOptionLabel, type SortOption } from '../services/librarySort';
+import { applyPlaybackMode, clearUpNextQueue } from '../services/queueController';
 import { PRESET_THEME_COLORS } from '../constants/theme';
 import { getPersistedSizeKB } from '../services/persistStorage';
 import { resetStats } from '../services/statsDatabase';
-import { clearUpNextQueue } from '../services/queueController';
 import { syncAppKilledPlaybackBehavior } from '../services/playerBootstrap';
 import { useTranslation, type AppLanguage } from '../services/i18n';
 import { useBackToLibrary } from '../hooks/useBackToLibrary';
@@ -127,6 +127,17 @@ export default function SettingsScreen() {
         label: getSortOptionLabel(o, resolvedLanguage),
       })),
     [resolvedLanguage]
+  );
+
+  /** Varsayılan oynatma modu seçenekleri (oynatıcıdaki 4 modun aynısı). */
+  const defaultPlaybackModeOptions = useMemo(
+    () => [
+      { value: 'repeat-all' as const, label: t('player.playback_mode_repeat_all') },
+      { value: 'shuffle' as const, label: t('player.playback_mode_shuffle') },
+      { value: 'smart' as const, label: t('player.playback_mode_smart') },
+      { value: 'repeat-one' as const, label: t('player.playback_mode_repeat_one') },
+    ],
+    [t]
   );
 
   const hiddenTrackItems = useMemo(() => {
@@ -735,6 +746,19 @@ export default function SettingsScreen() {
 
       {/* ── ÇALMA ─────────────────────────────────────────────────────────── */}
       <Section icon="musical-notes-outline" title={t('settings.playback_section')} theme={theme}>
+        <ChipsRow
+          theme={theme}
+          label={t('settings.default_playback_mode')}
+          hint={t('settings.default_playback_mode_hint')}
+          value={preferences.defaultPlaybackMode}
+          options={defaultPlaybackModeOptions}
+          onChange={(value) => {
+            const mode = value as DefaultPlaybackMode;
+            updatePreferences({ defaultPlaybackMode: mode });
+            // Seçim anında uygula: oynatıcıdaki vurgu ve kuyruk sırası hemen değişsin.
+            void applyPlaybackMode(mode);
+          }}
+        />
         <ChipsRow
           theme={theme}
           label={t('settings.default_sort')}

@@ -18,6 +18,7 @@ import {
   findNextPlayableIndex,
   getPlaybackMode,
   nextPlaybackMode,
+  playbackModeTargets,
   reorderQueueOnTrackSelect,
   shuffleArray,
   smartShuffleArray,
@@ -667,6 +668,20 @@ section('14c) Dört durumlu oynatma modu');
   check('döngü sırası: shuffle -> smart', nextPlaybackMode('shuffle') === 'smart');
   check('döngü sırası: smart -> repeat-one', nextPlaybackMode('smart') === 'repeat-one');
   check('döngü sırası: repeat-one -> repeat-all', nextPlaybackMode('repeat-one') === 'repeat-all');
+
+  // playbackModeTargets, getPlaybackMode'un tersi olmalı (varsayılan mod
+  // uygulaması ve açılış kurulumu bu eşlemeye dayanır).
+  for (const mode of ['repeat-all', 'shuffle', 'smart', 'repeat-one'] as const) {
+    const targets = playbackModeTargets(mode);
+    check(
+      `playbackModeTargets(${mode}) -> getPlaybackMode turu`,
+      getPlaybackMode({
+        isShuffle: targets.shuffle,
+        isSmartShuffle: targets.smartShuffle,
+        isRepeatOne: targets.repeatOne,
+      }) === mode
+    );
+  }
 }
 
 section('15) buildQueueRows — AKILLI KARIŞIK başlığı');

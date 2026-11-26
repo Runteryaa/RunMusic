@@ -18,6 +18,7 @@ import {
   setManualOnlyQueueMode,
 } from './queueController';
 import { initAudioEffects } from './audioEffectsService';
+import { playbackModeTargets } from './queueMath';
 import { ensureActiveTrackArtwork } from './activeTrackArtwork';
 import { resolveDisplayMetadata } from './displayMetadata';
 
@@ -185,14 +186,27 @@ export async function setupTrackPlayerIfNeeded(): Promise<boolean> {
       await TrackPlayer.updateOptions(getTrackPlayerOptions());
 
       const store = useStore.getState();
-      let savedRepeatMode = store.repeatMode;
-      // Dört durumlu modelde "tekrarsız" yok: karışık değilken varsayılan
-      // Tümünü Tekrarla'dır; karışıkken ise tekrar kapalı olmalıdır.
-      if (store.isShuffle) {
-        if (savedRepeatMode === RepeatMode.Track) savedRepeatMode = RepeatMode.Off;
-      } else if (savedRepeatMode !== RepeatMode.Track) {
-        savedRepeatMode = RepeatMode.Queue;
-      }
+      /*
+       * Varsayılan oynatma modu (Ayarlar → Varsayılan oynatma modu).
+       *
+       * Önceden mod, son oturumdan kalan `isShuffle`/`repeatMode` değerlerinden
+       * türetiliyordu. Artık kullanıcı açıkça seçebiliyor: açılışta bayraklar ve
+       * tekrar modu tek bir moda göre kurulur. Kuyruk henüz kurulmadığı için
+       * `setShuffle` (yeniden karıştırma) çağrılmaz; yalnızca store bayrakları
+       * yazılır, sıra kuyruk geri yüklendiğinde buna göre kurulur.
+       */
+      const defaultMode = store.preferences.defaultPlaybackMode;
+      const targets = playbackModeTargets(defaultMode);
+      const wantShuffle = targets.shuffle;
+      const wantSmartShuffle = targets.smartShuffle;
+      const savedRepeatMode = targets.repeatOne
+        ? RepeatMode.Track
+        : wantShuffle
+          ? RepeatMode.Off
+          : RepeatMode.Queue;
+
+      if (store.isShuffle !== wantShuffle) store.setIsShuffle(wantShuffle);
+      if (store.isSmartShuffle !== wantSmartShuffle) store.setIsSmartShuffle(wantSmartShuffle);
       if (savedRepeatMode !== store.repeatMode) {
         store.setRepeatMode(savedRepeatMode);
       }

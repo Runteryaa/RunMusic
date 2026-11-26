@@ -17,6 +17,8 @@ import {
   shuffleArray,
   smartShuffleArray,
   trackKey,
+  playbackModeTargets,
+  type PlaybackMode,
   type QueueSections,
 } from './queueMath';
 
@@ -1464,6 +1466,32 @@ export async function setShuffle(enabled: boolean, smart: boolean = false): Prom
 }
 
 let isCyclingPlaybackMode = false;
+
+/**
+ * Verilen oynatma modunu **hemen** uygular.
+ *
+ * Ayarlar'daki "Varsayılan oynatma modu" değiştirildiğinde çağrılır: kullanıcı
+ * seçimi yaptığı anda oynatıcı da o moda geçer (yeniden başlatmayı beklemez).
+ * `cyclePlaybackMode`'dan farkı hedef modun dışarıdan verilmesidir.
+ */
+export async function applyPlaybackMode(mode: PlaybackMode): Promise<void> {
+  const store = useStore.getState();
+  const targets = playbackModeTargets(mode);
+  const repeat = targets.repeatOne
+    ? RepeatMode.Track
+    : targets.shuffle
+      ? RepeatMode.Off
+      : RepeatMode.Queue;
+
+  // Kuyruğu karıştıran geçişlerde önce tekrar modu kurulur: `setShuffle`
+  // tekrar modunu mevcut değere göre yeniden hesapladığı için sıra önemli.
+  store.setRepeatMode(repeat);
+  await TrackPlayer.setRepeatMode(repeat);
+  if (store.isShuffle !== targets.shuffle || store.isSmartShuffle !== targets.smartShuffle) {
+    await setShuffle(targets.shuffle, targets.smartShuffle);
+  }
+  store.bumpQueueRevision();
+}
 
 /**
  * 4 Aşamalı Oynatma Modu Döngüsü:
