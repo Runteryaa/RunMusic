@@ -233,15 +233,29 @@ const LYRIC_SETTLE_INACTIVE_MS = 320;
 /** Kaydırma, satır gelmeden bu kadar önce başlar. */
 const LYRIC_SCROLL_LEAD_SECONDS = 0.8;
 /**
- * Satır geçişi, konum örneklerinin aralığından dolayı gecikebiliyordu; bu da
- * yeni satırın ilk hecelerinin bir anda yanmasına yol açıyordu. Örnekleme
- * aralığını (200 ms) telafi edecek kadar ön alma ile satır tam zamanında geçer.
+ * Söz panelinin tek ön alma süresi (saniye).
  *
- * 0.2 saniye hâlâ geç kalıyordu: konumun ses motorundan alınıp JS'e ulaşması
- * ve React'in satırı yeniden çizmesi ek gecikme ekliyor. 0.3 saniye bu
- * gecikmeyi kapatır; satır artık şarkı söylenmeye başlarken parlıyor.
+ * NEDEN TEK SABİT: satır odağı (hangi satır aktif) ve harf süpürmesi (renklenme)
+ * iki ayrı sabitle hesaplanıyordu. Satır öne alması 0.3, saat öne alması 0.22
+ * olduğu için satır aktifleştiği anda saat henüz satırın başına gelmemişti:
+ * odak alt satıra kayıyor, renklenme ~80 ms sonra başlıyordu. Kullanıcı bunu
+ * "satır geçiyor ama sonra renkleniyor" olarak görüyordu.
+ *
+ * Artık ikisi de bu sabiti kullanıyor; satır aktifleştiği **an** ilk harf
+ * yanmaya başlıyor. Değer, konumun ses motorundan alınıp JS'e ulaşması ve
+ * React'in satırı çizmesi için gereken gecikmeyi telafi eder.
  */
-const LYRIC_LINE_LEAD_SECONDS = 0.3;
+const LYRIC_SYNC_LEAD_SECONDS = 0.3;
+/**
+ * Satır başlangıcı ile ilk kelimenin zamanı arasında kabul edilen en büyük fark
+ * (saniye).
+ *
+ * TTML'de `<p begin>` bazen ilk heceden bir tık önce olur (satır hazırlığı,
+ * nefes). Bu fark renklenmenin satır odağından sonra başlamasına yol açıyordu.
+ * Bu sınırın altındaki farklar yok sayılır ve ilk kelime satır başlangıcına
+ * çekilir; daha büyük farklar gerçek enstrümantal giriş olabilir, korunur.
+ */
+const LYRIC_WORD_START_TOLERANCE = 0.35;
 /**
  * Süpürme saatinin ön alması. Konum saniyede 5 kez geldiği için saat, örnek
  * anından bir sonraki örneğe kadar ilerletilir; hedef budur (saniye).
@@ -317,15 +331,6 @@ const LYRIC_GLOW_SHADOW_RADIUS = 14;
 /** Arka vokal daha küçük puntoda: hâlesi de bir tık dar. */
 const LYRIC_BG_GLOW_SHADOW_COLOR = 'rgba(255, 255, 255, 0.45)';
 const LYRIC_BG_GLOW_SHADOW_RADIUS = 10;
-/**
- * Süpürme saatinin öne alması (saniye).
- *
- * Saat, konum örneklerine göre doğrusal ilerlediği için örneklemenin kendi
- * gecikmesi (konumun ses motorundan alınıp JS'e ulaşması) doğrudan renklenmeye
- * yansıyordu; harfler sesin bir tık gerisinden yanıyordu. Bu sabit saati
- * örneklenen konumun bu kadar önüne taşır ve farkı kapatır.
- */
-const LYRIC_CLOCK_LEAD = 0.22;
 /**
  * 0→1 arası yumuşak geçiş (smoothstep). Lineer rampalar (harf yanması, kelime
  * kalkışı) sert görünüyordu; bu eğri başta ve sonda hızı sıfıra indirir.
@@ -589,14 +594,30 @@ interface LyricWordNode {
  * Satırı kelimelere ayırır. Kelime zamanlaması varsa onu kullanır; yoksa
  * (yalnızca satır zamanı olan kaynaklar) satır metni boşluklardan bölünür —
  * böylece dengeli bölme her satırda, aktif olsun olmasın çalışır.
+ *
+ * @param lineTime Satırın kendi başlangıç zamanı. TTML'de `<p begin>` bazen ilk
+ *   heceden bir tık önce olabilir; bu durumda renklenme satır odağından sonra
+ *   başlıyor gibi görünüyordu. Aradaki fark küçükse ilk kelimenin başlangıcı
+ *   satır başlangıcına çekilir: odak kaydığı **an** renklenme de başlar.
  */
 function prepareWordNodes(
   text: string,
-  words: LyricLine['words'] | undefined
+  words: LyricLine['words'] | undefined,
+  lineTime?: number
 ): LyricWordNode[] {
   if (words && words.length > 0) {
     const items = prepareSweepWords(words);
     if (items.length > 0) {
+      const first = items[0];
+      if (
+        typeof lineTime === 'number' &&
+        Number.isFinite(lineTime) &&
+        first.start > lineTime &&
+        first.start - lineTime <= LYRIC_WORD_START_TOLERANCE
+      ) {
+        first.start = lineTime;
+        first.end = Math.max(first.end, lineTime + 0.05);
+      }
       return items.map((item) => ({
         key: item.key,
         text: item.text,
@@ -722,6 +743,7 @@ const LyricWordBox = React.memo(function LyricWordBox({
 function LyricWords({
   text,
   words,
+  lineTime,
   clock,
   isActive,
   gap,
@@ -736,6 +758,8 @@ function LyricWords({
 }: {
   text: string;
   words?: LyricLine['words'];
+  /** Satırın kendi başlangıç zamanı (ilk kelime hizalaması için). */
+  lineTime?: number;
   clock: { value: number };
   isActive: boolean;
   gap: number;
@@ -759,7 +783,10 @@ function LyricWords({
    */
   textShadowStyle: AnimatedStyle<TextStyle>;
 }) {
-  const nodes = useMemo(() => prepareWordNodes(text, words), [text, words]);
+  const nodes = useMemo(
+    () => prepareWordNodes(text, words, lineTime),
+    [text, words, lineTime]
+  );
 
   const [widths, setWidths] = useState<Record<string, number>>({});
   const [layout, setLayout] = useState<{ key: string; breaks: number[] | null } | null>(
@@ -992,6 +1019,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
         <LyricWords
           text={line.text}
           words={line.words}
+          lineTime={line.time}
           clock={clock}
           isActive={isActive}
           dimColor={SWEEP_DIM_COLOR}
@@ -1015,6 +1043,7 @@ const LyricLineRowView = React.memo(function LyricLineRowView({
             <LyricWords
               text={line.background.text}
               words={line.background.words}
+              lineTime={line.time}
               clock={clock}
               isActive={isActive}
               dimColor={SWEEP_BG_DIM_COLOR}
@@ -1318,14 +1347,15 @@ function LyricsPanel({
   /**
    * Hece süpürmesinin saati.
    *
-   * `useActiveProgress` konumu saniyede 4 kez (250 ms'de bir) verir; doğrudan
+   * `useActiveProgress` konumu saniyede 4 kez (200 ms'de bir) verir; doğrudan
    * kullansaydık harf aydınlanması çeyrek saniyelik adımlarla sıçrardı. Bunun
-   * yerine saat, `konum + ön alma` hedefine 250 ms'de varacak şekilde doğrusal
-   * ilerletilir (UI thread'inde 60 fps).
+   * yerine saat, `konum + ön alma` hedefine doğrusal ilerletilir (UI thread'inde
+   * 60 fps).
    *
-   * `LYRIC_CLOCK_LEAD` örnekleme gecikmesini telafi eder: konum ses motorundan
-   * alınıp JS'e ulaşana kadar geçen süre olmasaydı harfler sesin bir tık
-   * gerisinden yanardı.
+   * Satır odağı ile **aynı** ön alma (`LYRIC_SYNC_LEAD_SECONDS`) kullanılır:
+   * satır aktifleştiği anda saat, satırın başlangıç zamanına ulaşmış olur ve ilk
+   * harf beklemeden yanmaya başlar. İki farklı ön alma kullanmak, odağın alt
+   * satıra kayıp renklenmenin gecikmeli başlamasına yol açıyordu.
    *
    * En kritik kural: saat **asla gerçek konumdan kopuk kalmamalı**. Panel
    * açılışı, seek veya şarkı değişimi gibi büyük sıçramalarda saat eski yerde
@@ -1333,12 +1363,12 @@ function LyricsPanel({
    * aşarsa (ya da saat hedefin gerisine düşerse) saat anında hedefe oturtulur,
    * sonra normal ilerlemesine bırakılır.
    */
-  const lyricClock = useSharedValue(lyricPosition + LYRIC_CLOCK_LEAD);
+  const lyricClock = useSharedValue(lyricPosition + LYRIC_SYNC_LEAD_SECONDS);
 
   useEffect(() => {
     if (!Number.isFinite(lyricPosition)) return;
 
-    const desired = lyricPosition + LYRIC_CLOCK_LEAD;
+    const desired = lyricPosition + LYRIC_SYNC_LEAD_SECONDS;
 
     // Duraklatıldı: saati olduğu yere sabitle.
     if (!player.isPlaying) {
@@ -1370,7 +1400,7 @@ function LyricsPanel({
   );
 
   const { activeRowIndex, activeLineRowIndex } = useMemo(() => {
-    const position = lyricPosition + LYRIC_LINE_LEAD_SECONDS;
+    const position = lyricPosition + LYRIC_SYNC_LEAD_SECONDS;
     let row = -1;
     let lineRow = -1;
     for (let i = 0; i < displayRows.length; i++) {
@@ -1405,7 +1435,7 @@ function LyricsPanel({
    * geçişinin kasmasına yol açan gereksiz çizimleri önler.
    */
   const backgroundRevealedRow = useMemo(() => {
-    const position = lyricPosition + LYRIC_LINE_LEAD_SECONDS;
+    const position = lyricPosition + LYRIC_SYNC_LEAD_SECONDS;
     let revealed = -1;
     for (let i = 0; i < displayRows.length; i++) {
       const row = displayRows[i];
