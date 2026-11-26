@@ -19,6 +19,8 @@ import {
   getTotalHistoryCount,
   getHistoryInRange,
   getDailyPlayStats,
+  getPlayCountInRange,
+  getSkipCountInRange,
   PlayHistoryItem,
   MostPlayedItem,
 } from '../services/statsDatabase';
@@ -33,11 +35,13 @@ import {
   type MonthComparison,
 } from '../services/statsHeatmap';
 import { toSqlTimestamp } from '../services/wrappedStats';
+import { computeListeningStreak, computeSkipRate, localDayKey } from '../services/statsHabits';
 import { ActivityHeatmap } from '../components/ui/ActivityHeatmap';
 import { getStatsEpoch } from '../services/statsEpoch';
 import {
   buildWrappedStats,
   formatWrappedDuration,
+  parseSqlTimestamp,
   resolveWrappedPersona,
   resolveWrappedWindow,
   type WrappedPeriod,
@@ -155,6 +159,47 @@ export default function StatisticsScreen() {
   });
   const [heatmapLoading, setHeatmapLoading] = useState(true);
   const [monthComparison, setMonthComparison] = useState<MonthComparison | null>(null);
+
+  /**
+   * Dinleme alışkanlığı ek göstergeleri: seri ve atlama oranı.
+   *
+   * Seri, son 400 günün gün anahtarlarından hesaplanır (tüm geçmişi çekmek
+   * gereksiz: "bugünkü seri" ve "en uzun seri" için bir yıldan fazlası yeterli).
+   * Atlama oranı, seçili dönemin dinleme ve atlama sayılarıyla hesaplanır.
+   */
+  const [habits, setHabits] = useState<{
+    currentStreak: number;
+    plays: number;
+    skips: number;
+  } | null>(null);
+
+  const loadHabits = useCallback(async (period: WrappedPeriod) => {
+    try {
+      const now = Date.now();
+      const window = resolveWrappedWindow(period, now);
+      const streakStart = toSqlTimestamp(now - 400 * 24 * 60 * 60 * 1000);
+      const streakEnd = toSqlTimestamp(now + 60 * 1000);
+      const [plays, skips, streakRows] = await Promise.all([
+        getPlayCountInRange(window.startSql, window.endSql),
+        getSkipCountInRange(window.startSql, window.endSql),
+        getDailyPlayStats(streakStart, streakEnd),
+      ]);
+      const streak = computeListeningStreak(
+        streakRows
+          .map((row) => parseSqlTimestamp(row.played_at))
+          .filter((ms): ms is number => ms !== null)
+          .map((ms) => localDayKey(ms)),
+        now
+      );
+      setHabits({
+        currentStreak: streak.current,
+        plays,
+        skips,
+      });
+    } catch (e) {
+      console.warn('Habits fetch error:', e);
+    }
+  }, []);
 
   const loadHeatmap = useCallback(async (range: HeatmapRange) => {
     setHeatmapLoading(true);
@@ -292,7 +337,8 @@ export default function StatisticsScreen() {
     // Dönem değişince önceki dönemin fotoğrafları görünmesin.
     setArtistImages({});
     void loadDetail(detailPeriod);
-  }, [detailPeriod, loadDetail]);
+    void loadHabits(detailPeriod);
+  }, [detailPeriod, loadDetail, loadHabits]);
 
   const loadMoreHistory = useCallback(async () => {
     if (loadingMore || !hasMoreHistory) return;
@@ -321,16 +367,27 @@ export default function StatisticsScreen() {
     useCallback(() => {
       loadStats();
       void loadMonthSummary();
-    }, [loadStats, loadMonthSummary])
+      // Seri bugünün verisine bağlı; sayfaya dönüldüğünde tazelenir.
+      void loadHabits(detailPeriod);
+    }, [loadStats, loadMonthSummary, loadHabits, detailPeriod])
   );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     loadStats(true);
     void loadDetail(detailPeriod);
+    void loadHabits(detailPeriod);
     void loadHeatmap(heatmapRange);
     void loadMonthSummary();
-  }, [loadStats, loadDetail, detailPeriod, loadHeatmap, loadMonthSummary, heatmapRange]);
+  }, [
+    loadStats,
+    loadDetail,
+    loadHabits,
+    detailPeriod,
+    loadHeatmap,
+    loadMonthSummary,
+    heatmapRange,
+  ]);
 
   const formatDurationDetailed = (totalSeconds: number) => {
     const days = Math.floor(totalSeconds / 86400);
@@ -631,6 +688,24 @@ export default function StatisticsScreen() {
       value: String(detail.onePlayArtists),
     },
   ];
+
+  // Dinleme serisi ve atlama oranı: yalnızca veri geldiğinde gösterilir.
+  if (habits) {
+    habitRows.unshift({
+      label: t('stats.streak_current'),
+      value: t('wrapped.streak_days', { count: habits.currentStreak }),
+    });
+    const skipRate = computeSkipRate(habits.plays, habits.skips);
+    if (skipRate !== null) {
+      habitRows.push({
+        label: t('stats.skip_rate'),
+        value: t('stats.skip_rate_value', {
+          percent: Math.round(skipRate * 100),
+          skipped: habits.skips,
+        }),
+      });
+    }
+  }
   if (detail.busiestHour !== null) {
     habitRows.unshift({
       label: t('wrapped.time_busiest_hour'),

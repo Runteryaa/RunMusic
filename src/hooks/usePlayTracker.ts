@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
-import TrackPlayer, { useActiveTrack, useIsPlaying } from 'react-native-track-player';
-import { recordPlay, addListeningTime } from '../services/statsDatabase';
+import TrackPlayer, { Event, useActiveTrack, useIsPlaying } from 'react-native-track-player';
+import { recordPlay, recordSkip, addListeningTime } from '../services/statsDatabase';
+import { shouldCountSkip, skipThresholdSeconds } from '../services/skipDetection';
 import { cleanTrackFields } from '../services/displayNames';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import { useStore } from '../store/useStore';
@@ -67,7 +68,7 @@ export function usePlayTracker() {
     }
 
     // Şarkı henüz kaydedilmediyse ve dinleme eşiğini (30 sn veya kısa şarkılarda sürenin %50'sini) geçtiyse
-    const threshold = Math.min(30, (activeTrack.duration && activeTrack.duration > 0 ? activeTrack.duration * 0.5 : 30));
+    const threshold = skipThresholdSeconds(activeTrack.duration || 0);
     if (trackedSessionIdRef.current !== activeTrack.id && progress.position >= threshold) {
       const metadataMap = useStore.getState().metadataMap;
       const downloadTasks = useDownloadStore.getState().tasks;
@@ -157,6 +158,55 @@ export function usePlayTracker() {
     }, 15000);
 
     return () => clearInterval(interval);
+  }, [shouldSkipTracking]);
+
+  /**
+   * Atlama (skip) tespiti.
+   *
+   * "Başlatıldı ama dinlenmedi" bilgisi yalnızca burada elde edilebiliyor:
+   * `play_history` sadece eşiği geçen oturumları tutar, atlanan şarkı hiç
+   * yazılmaz.
+   *
+   * NEDEN NATIVE OLAY: parça değişiminin kesin konumu yalnızca
+   * `PlaybackActiveTrackChanged` olayında gelir (`lastPosition`). Konumu
+   * periyodik yoklamadan okumak, arka planda yoklama yavaşladığında veya parça
+   * doğal olarak bittiğinde yanlış "atlandı" kayıtları üretiyordu.
+   *
+   * Atlama SAYILMAYAN durumlar:
+   * - parça hiç başlamadıysa (konum ~0),
+   * - doğal olarak sonuna kadar çaldıysa (konum sonda),
+   * - dinleme eşiği geçildiyse (geçmişe kaydedilmişse).
+   */
+  useEffect(() => {
+    if (shouldSkipTracking) return;
+
+    let remove: (() => void) | null = null;
+    try {
+      const subscription = TrackPlayer.addEventListener(
+        Event.PlaybackActiveTrackChanged,
+        (event) => {
+          const last = event.lastTrack;
+          const lastId = last?.id != null ? String(last.id) : '';
+          if (!lastId) return;
+          if (event.track?.id != null && String(event.track.id) === lastId) return;
+          if (trackedSessionIdRef.current === lastId) return;
+
+          const duration = typeof last?.duration === 'number' ? last.duration : 0;
+          const position = Math.max(0, event.lastPosition || 0);
+          if (!shouldCountSkip(position, duration, trackedSessionIdRef.current === lastId)) return;
+
+          recordSkip(lastId, position, duration, {
+            title: last?.title ?? null,
+            artist: last?.artist ?? null,
+          });
+        }
+      );
+      remove = () => subscription.remove();
+    } catch {
+      // Olay kaydı başarısız olsa da dinleme kaydı çalışmaya devam eder.
+    }
+
+    return () => remove?.();
   }, [shouldSkipTracking]);
 
   // Çalma konumu ve parça durumunu periyodik ve duraklatmada kaydet

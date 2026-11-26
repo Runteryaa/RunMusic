@@ -42,6 +42,17 @@ async function openStatsDB(): Promise<SQLite.SQLiteDatabase> {
         value INTEGER NOT NULL
       );
       INSERT OR IGNORE INTO app_stats (key, value) VALUES ('total_listening_seconds', 0);
+
+      CREATE TABLE IF NOT EXISTS skip_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        skipped_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        track_id TEXT,
+        title TEXT,
+        artist TEXT,
+        position INTEGER NOT NULL DEFAULT 0,
+        duration INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_skipped_at ON skip_history(skipped_at);
     `);
 
     // Eski sürümlerden kalan veritabanları için eksik sütunları ekle.
@@ -154,6 +165,70 @@ export interface PlayHistoryItem {
   artist?: string | null;
   album?: string | null;
   artwork?: string | null;
+}
+
+/**
+ * Erken atlanan (eşiğe gelmeden bırakılan) bir başlatmayı kaydeder.
+ *
+ * NEDEN AYRI TABLO: `play_history` yalnızca dinleme eşiğini geçen oturumları
+ * tutar; atlanan şarkılar oraya hiç yazılmaz. Atlama oranı için bu "başlatıldı
+ * ama dinlenmedi" bilgisi gerekiyor. Yeni tablo olduğu için eski veritabanları
+ * `CREATE TABLE IF NOT EXISTS` ile sorunsuz yükseltilir.
+ */
+export async function recordSkip(
+  trackId: string | null | undefined,
+  position: number,
+  duration: number,
+  meta?: PlayMetadataPayload
+) {
+  try {
+    await withStatsDB((database) =>
+      database.runAsync(
+        'INSERT INTO skip_history (track_id, title, artist, position, duration) VALUES (?, ?, ?, ?, ?)',
+        String(trackId ?? ''),
+        meta?.title ?? null,
+        meta?.artist ?? null,
+        Math.max(0, Math.round(position || 0)),
+        Math.max(0, Math.round(duration || 0))
+      )
+    );
+  } catch (error) {
+    console.warn('Failed to record skip stat:', error);
+  }
+}
+
+/** Verilen aralıkta kaydedilen atlama sayısı. */
+export async function getSkipCountInRange(startSql: string, endSql: string): Promise<number> {
+  try {
+    return await withStatsDB(async (database) => {
+      const row = await database.getFirstAsync<{ cnt: number }>(
+        'SELECT COUNT(*) as cnt FROM skip_history WHERE skipped_at >= ? AND skipped_at < ?',
+        startSql,
+        endSql
+      );
+      return row?.cnt || 0;
+    });
+  } catch (error) {
+    console.warn('Failed to get skip count:', error);
+    return 0;
+  }
+}
+
+/** Verilen aralıktaki (eşiği geçen) dinleme sayısı. */
+export async function getPlayCountInRange(startSql: string, endSql: string): Promise<number> {
+  try {
+    return await withStatsDB(async (database) => {
+      const row = await database.getFirstAsync<{ cnt: number }>(
+        'SELECT COUNT(*) as cnt FROM play_history WHERE played_at >= ? AND played_at < ?',
+        startSql,
+        endSql
+      );
+      return row?.cnt || 0;
+    });
+  } catch (error) {
+    console.warn('Failed to get play count in range:', error);
+    return 0;
+  }
 }
 
 export async function getRecentHistory(
@@ -593,6 +668,7 @@ export async function resetStats(): Promise<boolean> {
     await withStatsDB(async (database) => {
       await database.execAsync(`
         DELETE FROM play_history;
+        DELETE FROM skip_history;
         DELETE FROM app_stats;
       `);
     });

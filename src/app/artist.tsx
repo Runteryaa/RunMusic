@@ -49,6 +49,7 @@ import { cleanTrackFields, cleanArtistName, isPlaceholderArtist } from '../servi
 import { getSearchKeywords } from '../services/lyricsService';
 import { loadArtistImages } from '../services/artistImages';
 import { startPlaybackFromLibrary } from '../services/queueController';
+import { usePlayerUIStore } from '../store/usePlayerUIStore';
 import { useTranslation } from '../services/i18n';
 import { useBackToLibrary } from '../hooks/useBackToLibrary';
 
@@ -184,6 +185,7 @@ export default function ArtistScreen() {
   const theme = useThemeStore((s) => s.theme);
   const { t, resolvedLanguage } = useTranslation();
   const activeTrack = useActiveTrack();
+  const openFullscreenPlayer = usePlayerUIStore((s) => s.openFullscreenPlayer);
 
   const artistName = Array.isArray(params.name) ? params.name[0] : params.name || '';
   const artistKey = normalizeArtistKey(artistName);
@@ -193,6 +195,7 @@ export default function ArtistScreen() {
   const library = useStore((s) => s.library);
   const metadataMap = useStore((s) => s.metadataMap);
   const artworkMap = useStore((s) => s.artworkMap);
+  const allAssets = useStore((s) => s.allAssets);
 
   const [period, setPeriod] = useState<WrappedPeriod>('all');
   /**
@@ -510,29 +513,143 @@ export default function ArtistScreen() {
       }),
     []
   );
+  /**
+   * Cihazdaki dosyalarla eşleşen oynatılabilir kuyruk.
+   *
+   * NEDEN: sanatçı listesi geçmişten gelen kayıtları da taşıyabiliyor (dosya
+   * silinmiş, yeniden adlandırılmış ya da taşınmış olabilir). Kuyruk doğrudan bu
+   * listeden kurulduğunda `TrackPlayer.setQueue` geçersiz bir URL yüzünden
+   * reddediliyor, hata yutulduğu için de dokunuş "hiçbir şey yapmıyor" gibi
+   * görünüyordu. Artık kuyruğa yalnızca gerçek dosyası olan parçalar giriyor.
+   */
+  const playableTracks = useMemo<ArtistTrack[]>(() => {
+    // Tarama henüz bitmediyse `allAssets` boş olabilir; o durumda kütüphane
+    // listesi aynı varlıkları taşır.
+    const sourceAssets = allAssets.length > 0 ? allAssets : library;
+    const byId = new Map<string, (typeof allAssets)[number]>();
+    const byUri = new Map<string, (typeof allAssets)[number]>();
+    for (const asset of sourceAssets) {
+      byId.set(asset.id, asset);
+      if (asset.uri) byUri.set(asset.uri, asset);
+    }
+
+    const result: ArtistTrack[] = [];
+    const seen = new Set<string>();
+    for (const track of sortedTracks) {
+      const asset = byId.get(track.id) ?? (track.uri ? byUri.get(track.uri) : undefined);
+      if (!asset?.uri || seen.has(asset.id)) continue;
+      seen.add(asset.id);
+      result.push({
+        ...track,
+        id: asset.id,
+        uri: asset.uri,
+        duration: asset.duration || track.duration,
+      });
+    }
+    return result;
+  }, [sortedTracks, allAssets, library]);
+
+  /** Satır başına arama maliyetini önlemek için oynatılabilir anahtarlar. */
+  const playableKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const track of playableTracks) {
+      keys.add(track.id);
+      if (track.uri) keys.add(track.uri);
+    }
+    return keys;
+  }, [playableTracks]);
+
+  const isPlayableTrack = useCallback(
+    (track: { id: string; uri: string }) =>
+      playableKeys.has(track.id) || (track.uri ? playableKeys.has(track.uri) : false),
+    [playableKeys]
+  );
+
+  const playableById = useMemo(
+    () => new Map(playableTracks.map((track) => [track.id, track])),
+    [playableTracks]
+  );
+
+  /** Geçmişteki bir kimliği/URL'i cihazdaki dosyayla eşler. */
+  const resolvePlayable = useCallback(
+    (idOrUri: string): ArtistTrack | null => {
+      if (!idOrUri) return null;
+      const direct = playableById.get(idOrUri);
+      if (direct) return direct;
+      const byUri = playableTracks.find((track) => track.uri === idOrUri);
+      if (byUri) return byUri;
+      const asset =
+        allAssets.find((candidate) => candidate.id === idOrUri) ??
+        allAssets.find((candidate) => candidate.uri === idOrUri);
+      if (!asset?.uri) return null;
+      const existing = playableById.get(asset.id);
+      if (existing) return existing;
+      // Dosya cihazda var ama sanatçı listesine girmemiş (ör. geçmişte başka
+      // yazımla kaydedilmiş): doğrudan varlıktan oynatılabilir kayıt üretilir.
+      const info = resolveLibraryInfo(asset, metadataMap);
+      return {
+        id: asset.id,
+        uri: asset.uri,
+        title: info.title,
+        artist: info.artist,
+        album: metadataMap[asset.id]?.album || undefined,
+        artwork: metadataMap[asset.id]?.artwork || undefined,
+        duration: asset.duration || 0,
+      };
+    },
+    [playableById, playableTracks, allAssets, metadataMap]
+  );
+
+  const missingTrackAlert = useCallback(() => {
+    Alert.alert(t('artist.track_unavailable_title'), t('artist.track_unavailable'));
+  }, [t]);
 
   const startPlayback = useCallback(
     async (shuffle: boolean) => {
-      if (sortedTracks.length === 0) return;
+      if (playableTracks.length === 0) {
+        missingTrackAlert();
+        return;
+      }
       try {
-        await queueFrom(sortedTracks, sortedTracks[0].id, shuffle);
+        await queueFrom(playableTracks, playableTracks[0].id, shuffle);
+        // Kütüphane ekranındaki davranışla aynı: çalma başlayınca tam ekran
+        // oynatıcı açılır. Bu olmadan ses başlasa bile sayfada görünür bir
+        // değişiklik olmuyor ve dokunuş "hiçbir şey yapmıyor" gibi algılanıyordu.
+        openFullscreenPlayer();
       } catch (e) {
         console.warn('Failed to play artist queue:', e);
+        missingTrackAlert();
       }
     },
-    [sortedTracks, queueFrom]
+    [playableTracks, queueFrom, missingTrackAlert, openFullscreenPlayer]
   );
 
+  /**
+   * Tek parçayı çalar.
+   *
+   * Kuyruk, seçilen parçadan başlayacak şekilde cihazdaki parçalarla kurulur;
+   * seçilen parça cihazda yoksa sessizce hiçbir şey yapmak yerine kullanıcıya
+   * sebep gösterilir.
+   */
   const playTrack = useCallback(
     async (track: ArtistTrack) => {
-      if (sortedTracks.length === 0) return;
+      const target = resolvePlayable(track.id) ?? resolvePlayable(track.uri);
+      if (!target) {
+        missingTrackAlert();
+        return;
+      }
       try {
-        await queueFrom(sortedTracks, track.id);
+        const queue = playableTracks.some((item) => item.id === target.id)
+          ? playableTracks
+          : [...playableTracks, target];
+        await queueFrom(queue, target.id);
+        openFullscreenPlayer();
       } catch (e) {
         console.warn('Failed to play artist track:', e);
+        missingTrackAlert();
       }
     },
-    [sortedTracks, queueFrom]
+    [playableTracks, queueFrom, resolvePlayable, missingTrackAlert, openFullscreenPlayer]
   );
 
   /** Sanatçısı boş parçayı düzenleme modalında açar. */
@@ -638,10 +755,10 @@ export default function ArtistScreen() {
         <TouchableOpacity
           style={[
             styles.playButton,
-            { backgroundColor: artistTracks.length > 0 ? theme.primary : '#27272a' },
+            { backgroundColor: playableTracks.length > 0 ? theme.primary : '#27272a' },
           ]}
           activeOpacity={0.85}
-          disabled={artistTracks.length === 0}
+          disabled={playableTracks.length === 0}
           onPress={() => void startPlayback(false)}>
           <Ionicons name="play" size={18} color="#ffffff" />
           <Text style={styles.playButtonText}>{t('artist.play')}</Text>
@@ -649,7 +766,7 @@ export default function ArtistScreen() {
         <TouchableOpacity
           style={[styles.shuffleButton, { borderColor: `${theme.primary}88` }]}
           activeOpacity={0.85}
-          disabled={artistTracks.length === 0}
+          disabled={playableTracks.length === 0}
           onPress={() => void startPlayback(true)}>
           <Ionicons name="shuffle" size={18} color={theme.primary} />
           <Text style={[styles.shuffleButtonText, { color: theme.primary }]}>
@@ -727,17 +844,24 @@ export default function ArtistScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>{t('artist.top_tracks')}</Text>
               {topTracks.map((item, index) => {
-                const match = sortedTracks.find(
-                  (track) => track.id === item.key || track.uri === item.key
-                );
+                const match =
+                  resolvePlayable(item.key) ??
+                  sortedTracks.find(
+                    (track) => track.id === item.key || track.uri === item.key
+                  );
+                const playable = match ? isPlayableTrack(match) : false;
                 return (
                   <TouchableOpacity
                     key={`top-${item.key}`}
                     style={styles.row}
-                    activeOpacity={match ? 0.75 : 1}
+                    activeOpacity={0.75}
                     onPress={() => {
-                      if (!match) return;
-                      if (isUnassignedArtist) editTrack(match);
+                      // Parça cihazda yoksa dokunuş sessizce yutulmaz; sebep gösterilir.
+                      if (!match) {
+                        missingTrackAlert();
+                        return;
+                      }
+                      if (isUnassignedArtist && !playable) editTrack(match);
                       else void playTrack(match);
                     }}>
                     <Text style={[styles.rankIndex, index === 0 && { color: theme.primary }]}>
@@ -751,11 +875,15 @@ export default function ArtistScreen() {
                       </View>
                     )}
                     <View style={styles.rowInfo}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>
+                      <Text
+                        style={[styles.rowTitle, !playable && styles.rowTitleMuted]}
+                        numberOfLines={1}>
                         {item.label || '—'}
                       </Text>
                       <Text style={styles.rowSubtitle} numberOfLines={1}>
-                        {formatWrappedDuration(item.seconds, durationLabels)}
+                        {playable
+                          ? formatWrappedDuration(item.seconds, durationLabels)
+                          : t('artist.not_on_device')}
                       </Text>
                     </View>
                     <Text style={[styles.rowRight, { color: theme.primary }]}>
@@ -792,7 +920,7 @@ export default function ArtistScreen() {
       activeTrack != null && (activeTrack.id === item.id || activeTrack.url === item.uri);
     const plays =
       profile?.playCounts.get(item.id) ?? (item.uri ? profile?.playCounts.get(item.uri) : 0) ?? 0;
-
+    const playable = isPlayableTrack(item);
     return (
       <TouchableOpacity
         style={[
@@ -801,9 +929,13 @@ export default function ArtistScreen() {
         ]}
         activeOpacity={0.75}
         onPress={() => {
-          if (isUnassignedArtist) editTrack(item);
+          // Sanatçısı boş parçalarda amaç genelde kaydı düzeltmek; ancak dosya
+          // cihazda varsa dokunuş yine de çalar. Düzenleme uzun basışta ve
+          // kalem rozetinde.
+          if (isUnassignedArtist && !playable) editTrack(item);
           else void playTrack(item);
-        }}>
+        }}
+        onLongPress={() => editTrack(item)}>
         <TrackArtwork
           uri={item.artwork || metadataMap[item.id]?.artwork || artworkMap[item.id]}
           trackId={item.id}
@@ -813,21 +945,32 @@ export default function ArtistScreen() {
           iconSize={20}
         />
         <View style={styles.rowInfo}>
-          <Text style={[styles.rowTitle, isCurrent && { color: theme.primary }]} numberOfLines={1}>
+          <Text
+            style={[
+              styles.rowTitle,
+              isCurrent && { color: theme.primary },
+              !playable && styles.rowTitleMuted,
+            ]}
+            numberOfLines={1}>
             {item.title || t('common.unknown_track')}
           </Text>
           <Text style={styles.rowSubtitle} numberOfLines={1}>
-            {item.album ? `${item.album} · ` : ''}
-            {plays > 0 ? t('artist.plays_total', { count: plays }) : t('artist.not_played')}
+            {!playable
+              ? t('artist.not_on_device')
+              : `${item.album ? `${item.album} · ` : ''}${
+                  plays > 0 ? t('artist.plays_total', { count: plays }) : t('artist.not_played')
+                }`}
           </Text>
         </View>
         {isUnassignedArtist ? (
-          <View
+          <TouchableOpacity
             style={[styles.editBadge, { backgroundColor: `${theme.primary}26` }]}
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants">
+            accessibilityRole="button"
+            accessibilityLabel={t('artist.rename')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            onPress={() => editTrack(item)}>
             <Ionicons name="pencil" size={16} color={theme.primary} />
-          </View>
+          </TouchableOpacity>
         ) : isCurrent ? (
           <Ionicons name="volume-medium" size={18} color={theme.primary} />
         ) : (
@@ -1156,6 +1299,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#ffffff',
     marginBottom: 3,
+  },
+  /** Cihazda bulunmayan (geçmişten kalan) parçalar soluk gösterilir. */
+  rowTitleMuted: {
+    color: '#a1a1aa',
   },
   rowSubtitle: {
     fontSize: 12,
