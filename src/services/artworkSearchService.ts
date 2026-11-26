@@ -1,7 +1,10 @@
 /**
  * Şarkı ve albüm kapağı arama servisi.
  *
- * İki kaynak birlikte taranır:
+ * Üç kaynak birlikte taranır:
+ * - lrc.red: söz arşivinin arama sonuçları her kayıt için **gerçek albüm
+ *   kapağını** (`cover`, ISRC anahtarlı) döndürür. Türkçe/yerel parçalarda en
+ *   isabetli kaynaktır; önce denenir.
  * - iTunes Search API: ücretsiz, API anahtarı gerektirmez, yüksek çözünürlüklü
  *   kapaklar sunar ama özellikle yerel/az bilinen parçalarda sık sık boş döner.
  * - Genius: anahtarsız arama; şarkı kaydında kapağı `song_art_image_url`
@@ -13,9 +16,16 @@
  *
  * Sonuçlar aranan sanatçı/parça adına benzerliğe göre sıralanır; böylece aynı
  * adı taşıyan alakasız şarkıların kapağı listenin başına geçmez.
+ *
+ * NEDEN ZAMAN AŞIMI: isteklerin hiçbirinde süre sınırı yoktu. Genius Cloudflare
+ * yüzünden askıda kalınca `Promise.all` hiç dönmüyor, "Kapak Bul" düğmesi
+ * sonsuza kadar yükleniyor gibi görünüyordu. Artık her istek ayrı zaman aşımına
+ * sahip ve kaynaklar `allSettled` ile birleştirilir: biri takılsa bile diğerleri
+ * sonuç döndürür.
  */
 
 import { getSearchKeywords } from './lyricsService';
+import { searchLrcRed } from './lrcRed';
 import { isNetworkAvailable } from './networkAwareFetch';
 
 export interface OnlineArtworkResult {
@@ -26,7 +36,26 @@ export interface OnlineArtworkResult {
   artworkUrl: string;
   thumbnailUrl: string;
   /** Sonucun hangi kaynaktan geldiği (sıralama ve hata ayıklama için). */
-  source: 'itunes' | 'genius';
+  source: 'lrc.red' | 'itunes' | 'genius';
+}
+
+/** Tek bir kapak isteğinin üst sınırı (ms). */
+const REQUEST_TIMEOUT_MS = 7000;
+
+/**
+ * Zaman aşımlı `fetch`.
+ *
+ * Kapak aramasında askıda kalan tek bir istek tüm sonucu geciktirmemeli;
+ * süre aşılınca istek iptal edilir ve kaynak sonuçsuz sayılır.
+ */
+async function fetchWithTimeout(url: string, headers: Record<string, string>): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { headers, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function normalizeForMatch(value?: string | null): string {
@@ -117,10 +146,9 @@ async function fetchItunesQuery(query: string): Promise<OnlineArtworkResult[]> {
     query
   )}&entity=song&limit=12`;
 
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': 'RunMusic/1.0',
-    },
+  const res = await fetchWithTimeout(url, {
+    'User-Agent': 'RunMusic/1.0',
+    Accept: 'application/json',
   });
 
   if (!res.ok) return [];
@@ -185,6 +213,45 @@ async function searchItunesArtwork(
 }
 
 /**
+ * lrc.red aramasından kapak üretir.
+ *
+ * lrc.red her arama isabeti için kaydın kendi albüm kapağını (`cover`, ISRC
+ * anahtarlı `.webp`) döndürür. Kapak `ISRC`ye bağlı olduğu için başka bir
+ * sürümün (live/remix) kapağına karışma riski yoktur; bu yüzden ilk kaynak.
+ */
+async function searchLrcRedArtwork(
+  title: string,
+  artist = ''
+): Promise<OnlineArtworkResult[]> {
+  if (!isNetworkAvailable()) return [];
+
+  const hits = await searchLrcRed(title, artist);
+  const seen = new Set<string>();
+  const results: OnlineArtworkResult[] = [];
+
+  for (const hit of hits) {
+    const cover = typeof hit.cover === 'string' ? hit.cover.trim() : '';
+    if (!cover) continue;
+    if (seen.has(cover)) continue;
+    seen.add(cover);
+
+    results.push({
+      id: `lrc-${hit.isrc}`,
+      trackName: hit.title || '',
+      artistName: hit.artist || '',
+      albumName: hit.album || undefined,
+      artworkUrl: cover,
+      thumbnailUrl: cover,
+      source: 'lrc.red',
+    });
+
+    if (results.length >= 8) break;
+  }
+
+  return results;
+}
+
+/**
  * Genius araması üzerinden kapak arar.
  *
  * Genius, şarkıların kapaklarını `song_art_image_url` alanında verir; bu yüzden
@@ -204,11 +271,11 @@ async function searchGeniusArtwork(
     query
   )}`;
 
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    },
+  const res = await fetchWithTimeout(url, {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    Accept: 'application/json',
+    'Accept-Language': 'tr,en;q=0.8',
   });
 
   if (!res.ok) return [];
@@ -218,12 +285,21 @@ async function searchGeniusArtwork(
   if (!Array.isArray(sections)) return [];
 
   const songSection = sections.find((section: any) => section?.type === 'song');
-  const hits = Array.isArray(songSection?.hits) ? songSection.hits : [];
+  const albumSection = sections.find((section: any) => section?.type === 'album');
+  const songHits = Array.isArray(songSection?.hits) ? songSection.hits : [];
+  const albumHits = Array.isArray(albumSection?.hits) ? albumSection.hits : [];
 
   const seenUrls = new Set<string>();
   const results: OnlineArtworkResult[] = [];
 
-  for (const hit of hits) {
+  const push = (entry: OnlineArtworkResult | null) => {
+    if (!entry) return;
+    if (seenUrls.has(entry.artworkUrl)) return;
+    seenUrls.add(entry.artworkUrl);
+    results.push(entry);
+  };
+
+  for (const hit of songHits) {
     const song = hit?.result;
     if (!song) continue;
 
@@ -232,21 +308,43 @@ async function searchGeniusArtwork(
       song.header_image_url ||
       song.song_art_image_thumbnail_url;
     if (!artworkUrl) continue;
-    if (seenUrls.has(artworkUrl)) continue;
-    seenUrls.add(artworkUrl);
 
     // `full_title` "Parça by Sanatçı" biçimindedir; eşleştirme puanını
     // bozmaması için yalnızca parça adı kullanılır.
     const fullTitle = typeof song.full_title === 'string' ? song.full_title : '';
     const trackName = song.title || fullTitle.split(' by ')[0] || '';
 
-    results.push({
+    push({
       id: `genius-${song.id ?? artworkUrl}`,
       trackName,
       artistName: song.primary_artist?.name || '',
       albumName: song.album?.name || undefined,
       artworkUrl,
       thumbnailUrl: song.song_art_image_thumbnail_url || artworkUrl,
+      source: 'genius',
+    });
+  }
+
+  /*
+   * Albüm sonuçları da taranır: şarkı kaydının kapağı yoksa (ya da düşük
+   * çözünürlüklüyse) albüm kapağı `cover_art_url` alanından alınır. Bu kayıtlar
+   * parça adıyla değil albüm adıyla eşleştiği için sıralamada doğal olarak
+   * aşağıda kalır; yine de seçenek olarak sunulur.
+   */
+  for (const hit of albumHits) {
+    const album = hit?.result;
+    if (!album) continue;
+
+    const artworkUrl: string | undefined = album.cover_art_url;
+    if (!artworkUrl) continue;
+
+    push({
+      id: `genius-album-${album.id ?? artworkUrl}`,
+      trackName: album.name || '',
+      artistName: album.artist?.name || album.primary_artist?.name || '',
+      albumName: album.name || undefined,
+      artworkUrl,
+      thumbnailUrl: album.cover_art_thumbnail_url || artworkUrl,
       source: 'genius',
     });
   }
@@ -265,6 +363,18 @@ async function searchGeniusArtwork(
 export const MIN_ARTWORK_SCORE = 0.2;
 export const MAX_ARTWORK_RESULTS = 12;
 
+/**
+ * Kaynak başına küçük puan avantajı.
+ *
+ * lrc.red kapağı ISRC'ye bağlı gerçek kayıt kapağıdır; eşit benzerlikte
+ * iTunes/Genius sonucunun (ör. cover sürümü) önüne geçmesi gerekir.
+ */
+const SOURCE_SCORE_BONUS: Record<OnlineArtworkResult['source'], number> = {
+  'lrc.red': 0.05,
+  itunes: 0,
+  genius: 0,
+};
+
 export function rankArtworkResults(
   results: OnlineArtworkResult[],
   expectedArtist: string,
@@ -280,11 +390,15 @@ export function rankArtworkResults(
     scored.push({
       item,
       index,
-      score: scoreArtworkResult(item, expectedArtist, expectedTrack),
+      score: Math.min(
+        1,
+        scoreArtworkResult(item, expectedArtist, expectedTrack) +
+          (SOURCE_SCORE_BONUS[item.source] ?? 0)
+      ),
     });
   });
 
-  // Skor eşitse kaynak sırası korunur (iTunes → Genius).
+  // Skor eşitse kaynak sırası korunur (lrc.red → iTunes → Genius).
   scored.sort((a, b) => b.score - a.score || a.index - b.index);
 
   const relevant = scored.filter((entry) => entry.score >= MIN_ARTWORK_SCORE);
@@ -295,21 +409,24 @@ export function rankArtworkResults(
 /**
  * Başlık ve sanatçıya göre internetten albüm kapaklarını arar.
  *
- * İki kaynak paralel taranır, sonuçlar tekrarsız birleştirilir ve aranan
- * sanatçı/parçaya uyum puanına göre sıralanır. Kaynaklardan biri (ör. Genius'un
- * Cloudflare koruması) hata verse bile diğeri sonucu doldurur.
+ * Üç kaynak paralel taranır, sonuçlar tekrarsız birleştirilir ve aranan
+ * sanatçı/parçaya uyum puanına göre sıralanır. `allSettled` kullanılır: bir
+ * kaynak hata verirse veya zaman aşımına uğrarsa diğerleri sonucu doldurur.
  */
 export async function searchOnlineArtwork(
   title: string,
   artist = ''
 ): Promise<OnlineArtworkResult[]> {
   try {
-    const [itunesResults, geniusResults] = await Promise.all([
-      searchItunesArtwork(title, artist).catch(() => [] as OnlineArtworkResult[]),
-      searchGeniusArtwork(title, artist).catch(() => [] as OnlineArtworkResult[]),
+    const settled = await Promise.allSettled([
+      searchLrcRedArtwork(title, artist),
+      searchItunesArtwork(title, artist),
+      searchGeniusArtwork(title, artist),
     ]);
 
-    const merged = [...itunesResults, ...geniusResults];
+    const merged = settled.flatMap((entry) =>
+      entry.status === 'fulfilled' ? entry.value : []
+    );
     if (merged.length === 0) return [];
 
     const { expectedArtist, expectedTrack } = getSearchKeywords(title, artist);

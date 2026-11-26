@@ -15,6 +15,7 @@ import { TouchableOpacity } from './ui/TouchableOpacity';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import TrackPlayer, { State } from 'react-native-track-player';
 import { useStore, TrackMetadata } from '../store/useStore';
 import { useThemeStore } from '../store/useThemeStore';
@@ -23,6 +24,7 @@ import {
   OnlineArtworkResult,
 } from '../services/artworkSearchService';
 import { cleanDisplayTitle } from '../services/lyricsService';
+import { isNetworkAvailable } from '../services/networkAwareFetch';
 import { updateTrackMetadataInHistory } from '../services/statsDatabase';
 import { isPlaceholderArtist } from '../services/displayNames';
 import { getArtworkAsync } from '../../modules/audio-artwork/src';
@@ -44,6 +46,38 @@ export interface EditTrackTarget {
   album?: string;
   artwork?: string | null;
   originalArtwork?: string | null;
+}
+
+/**
+ * İnternetten seçilen kapağı cihaza indirir.
+ *
+ * NEDEN: kapak yalnızca uzak URL olarak kaydedilirse cihaz çevrimdışıyken,
+ * bildirimde ve widget'ta kapak görünmüyordu; lrc.red bağlantısı değişirse de
+ * kapak kayboluyordu. Uygulamanın diğer yerleri (çıkarılan kapaklar, sanatçı
+ * fotoğrafları) yerel dosya yolu beklediği için kapak buraya kopyalanır.
+ * İndirme başarısız olursa uzak URL ile devam edilir — özellik sessizce
+ * bozulmaz.
+ */
+async function persistRemoteArtwork(url: string, trackId: string): Promise<string> {
+  if (!/^https?:\/\//i.test(url)) return url;
+  const baseDir = FileSystem.documentDirectory;
+  if (!baseDir) return url;
+
+  try {
+    const dir = `${baseDir}track-covers/`;
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
+    const rawExt = (url.split(/[?#]/)[0].split('.').pop() || 'jpg').toLowerCase();
+    const ext = /^[a-z0-9]{2,5}$/.test(rawExt) ? rawExt : 'jpg';
+    const safeId = trackId.replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 80) || 'cover';
+    const target = `${dir}${safeId}.${ext}`;
+    const result = await FileSystem.downloadAsync(url, target);
+    if (result.status >= 200 && result.status < 300 && result.uri) {
+      return result.uri;
+    }
+  } catch (error) {
+    console.warn('[EditTrackModal] kapak indirilemedi, uzak URL kullanılacak:', error);
+  }
+  return url;
 }
 
 interface EditTrackModalProps {
@@ -143,6 +177,13 @@ export function EditTrackModal({
 
     if (!qTitle) {
       Alert.alert(t('common.info'), t('edit_track.search_title_required'));
+      return;
+    }
+
+    // Çevrimdışıyken istek atmak yerine açıkça söyle: eskiden düğme yükleniyor
+    // gibi kalıyor, ardından "kapak bulunamadı" deniyordu.
+    if (!isNetworkAvailable()) {
+      Alert.alert(t('common.info'), t('edit_track.offline_cover_search'));
       return;
     }
 
@@ -269,11 +310,16 @@ export function EditTrackModal({
     const finalArtist = artist.trim() || track.artist;
     const finalAlbum = album.trim();
 
+    // Çevrimiçi seçilen kapak yerel dosyaya indirilir (çevrimdışı/bildirim için).
+    const finalArtwork = artworkUri
+      ? await persistRemoteArtwork(artworkUri, track.id)
+      : undefined;
+
     const newMetadata: TrackMetadata = {
       title: finalTitle,
       artist: finalArtist,
       album: finalAlbum || undefined,
-      artwork: artworkUri || undefined,
+      artwork: finalArtwork,
     };
 
     setTrackMetadata(track.id, newMetadata);
@@ -292,7 +338,7 @@ export function EditTrackModal({
       title: finalTitle,
       artist: isPlaceholderArtist(finalArtist) ? null : finalArtist,
       album: finalAlbum || null,
-      artwork: artworkUri || null,
+      artwork: finalArtwork || null,
     });
 
     await syncLivePlayback(track.id, newMetadata);
@@ -425,6 +471,9 @@ export function EditTrackModal({
                           style={styles.onlineResultArtist}
                           numberOfLines={1}>
                           {item.artistName}
+                        </Text>
+                        <Text style={styles.onlineResultSource}>
+                          {item.source === 'lrc.red' ? 'lrc.red' : item.source === 'itunes' ? 'iTunes' : 'Genius'}
                         </Text>
                       </TouchableOpacity>
                     ))}
@@ -629,6 +678,12 @@ const styles = StyleSheet.create({
   onlineResultArtist: {
     color: '#a1a1aa',
     fontSize: 10,
+    marginTop: 1,
+    textAlign: 'center',
+  },
+  onlineResultSource: {
+    color: '#71717a',
+    fontSize: 9,
     marginTop: 1,
     marginBottom: 4,
     textAlign: 'center',
