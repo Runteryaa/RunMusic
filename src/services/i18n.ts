@@ -441,6 +441,8 @@ export const translations = {
       offline_search_banner:
         'Çevrimdışı arama: sonuçlar yalnızca daha önce indirilmiş sözlerden gelir.',
       offline_no_cached_results: 'İndirilmiş sözlerde eşleşen sonuç bulunamadı.',
+      cached_search_banner:
+        'Ağdan sonuç alınamadı; sonuçlar kayıtlı sözlerden geliyor.',
       search_lyrics_btn: 'Ara',
       queue_title: 'Çalma Sırası',
       go_to_current: 'Çalana Git',
@@ -1255,6 +1257,8 @@ export const translations = {
       offline_search_banner:
         'Offline search: results come only from lyrics downloaded earlier.',
       offline_no_cached_results: 'No matching results in downloaded lyrics.',
+      cached_search_banner:
+        'Could not reach the network; results come from saved lyrics.',
       search_lyrics_btn: 'Search',
       queue_title: 'Queue',
       go_to_current: 'Go to Playing',

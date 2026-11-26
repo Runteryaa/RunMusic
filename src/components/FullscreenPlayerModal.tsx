@@ -2425,6 +2425,8 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
    * yazılmaz; modal kapandığında bellekten düşer.
    */
   const [offlineCandidates, setOfflineCandidates] = useState<Record<string, LyricsResult>>({});
+  /** Son arama kayıtlı sözlerden mi geldi? (Bilgi çubuğu bunu kullanır.) */
+  const [isCachedSearch, setIsCachedSearch] = useState(false);
   const [isSearchingCandidates, setIsSearchingCandidates] = useState(false);
   const [resolvingCandidateId, setResolvingCandidateId] = useState<string | null>(null);
   const [candidateFilter, setCandidateFilter] = useState<CandidateFilter>('all');
@@ -3860,8 +3862,10 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
    * Çevrimdışı arama: ağa çıkmadan yalnızca indirilmiş sözlerde arar.
    * Sonuçlar seçim anında yeniden ağ isteği üretmesin diye tam söz kayıtları
    * `offlineCandidates` eşlemesinde tutulur.
+   *
+   * @returns Bulunan kayıt sayısı (0 ise çağıran bilgilendirme gösterir).
    */
-  const applyOfflineCandidates = (query: string) => {
+  const applyOfflineCandidates = (query: string): number => {
     const matches = searchCachedLyricsCandidates(lyricsCache, query);
     const byId: Record<string, LyricsResult> = {};
     for (const match of matches) {
@@ -3869,30 +3873,47 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     }
     setOfflineCandidates(byId);
     setCandidatesList(matches.map((match) => match.candidate));
-    if (matches.length === 0) {
-      alert(t('player.offline_no_cached_results'));
-    }
+    setIsCachedSearch(matches.length > 0);
+    return matches.length;
   };
 
+  /**
+   * Söz aramalarında ağ durumuna **güvenilmez**.
+   *
+   * Android'in `isInternetReachable` bayrağı doğrulama sunucusuna ulaşamayınca
+   * internet varken bile `false` kalıyor; bu yüzden arama her zaman ağda
+   * denenir. Ağ gerçekten yoksa `searchAllCandidates` boş döner ve kayıtlı
+   * sözler gösterilir. Böylece "internet varken çevrimdışı" durumu oluşmaz.
+   */
   const handleManualSearch = async () => {
     if (!manualQuery.trim() || !activeTrack) return;
+    const query = manualQuery.trim();
+    const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
+
+    const searchCache = (): void => {
+      const count = applyOfflineCandidates(query);
+      if (count === 0) alert(t('player.offline_no_cached_results'));
+    };
 
     if (!isNetworkAvailable()) {
-      applyOfflineCandidates(manualQuery.trim());
+      searchCache();
       return;
     }
 
-    setOfflineCandidates({});
     setIsSearchingCandidates(true);
     try {
-      const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
-      const results = await searchAllCandidates(manualQuery.trim(), searchArtist);
-      setCandidatesList(results);
+      const results = await searchAllCandidates(query, searchArtist);
       if (results.length === 0) {
-        alert(t('player.no_lyrics_results'));
+        // Ağ hatası da buraya düşer (her sağlayıcı hatayı yutuyor).
+        searchCache();
+        return;
       }
+      setOfflineCandidates({});
+      setIsCachedSearch(false);
+      setCandidatesList(results);
     } catch (e) {
       console.warn('Manual lyrics search failed', e);
+      searchCache();
     } finally {
       setIsSearchingCandidates(false);
     }
@@ -3957,18 +3978,24 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     setIsManualSearchOpen(nextState);
     if (nextState) {
       const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
+      const queryToSearch = manualQuery.trim() || displayTitle;
       if (!isNetworkAvailable()) {
-        applyOfflineCandidates(manualQuery.trim() || displayTitle);
+        applyOfflineCandidates(queryToSearch);
         return;
       }
       setOfflineCandidates({});
+      setIsCachedSearch(false);
       if (currentLyrics?.candidates && currentLyrics.candidates.length > 0) {
         setCandidatesList(currentLyrics.candidates);
       } else if (!player.isRemote && localActiveTrack) {
-        const queryToSearch = manualQuery.trim() || displayTitle;
         setIsSearchingCandidates(true);
         searchAllCandidates(queryToSearch, searchArtist)
           .then((results) => {
+            // Ağ yoksa/başarısızsa sağlayıcılar boş döner: kayıtlı sözlere düş.
+            if (results.length === 0) {
+              applyOfflineCandidates(queryToSearch);
+              return;
+            }
             setCandidatesList(results);
             if (currentLyrics) {
               const altKeys = getLyricsCacheKeys({
@@ -3982,7 +4009,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
               setLyrics(saveId, { ...currentLyrics, candidates: results }, altKeys);
             }
           })
-          .catch(() => {})
+          .catch(() => applyOfflineCandidates(queryToSearch))
           .finally(() => setIsSearchingCandidates(false));
       }
     }
@@ -5980,7 +6007,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                 </TouchableOpacity>
               </View>
 
-              {!isOnline ? (
+              {!isOnline || isCachedSearch ? (
                 <View
                   style={[
                     styles.offlineSearchBanner,
@@ -5988,7 +6015,9 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                   ]}>
                   <Ionicons name="cloud-offline-outline" size={15} color="#f59e0b" />
                   <Text style={styles.offlineSearchBannerText}>
-                    {t('player.offline_search_banner')}
+                    {isOnline
+                      ? t('player.cached_search_banner')
+                      : t('player.offline_search_banner')}
                   </Text>
                 </View>
               ) : null}

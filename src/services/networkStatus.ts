@@ -1,6 +1,7 @@
 import * as Network from 'expo-network';
 
 import { setNetworkAvailabilityCheck } from './networkAwareFetch';
+import { resolveConnectionState } from './networkStateResolve';
 
 /**
  * Tek merkezden ağ durumu izleme.
@@ -14,7 +15,11 @@ import { setNetworkAvailabilityCheck } from './networkAwareFetch';
 export interface NetworkSnapshot {
   isConnected: boolean;
   isInternetReachable: boolean;
-  /** Son ölçümden beri ağ var mıydı? Yeniden bağlanma geçişini yakalamak için. */
+  /**
+   * İstek atılabilir mi? Yalnızca **bağlantı** durumuna bakar; Android'in
+   * doğrulama bayrağı (`isInternetReachable`) yanlış negatif verebildiği için
+   * burada kullanılmaz. Ayrıntı: `applyState`.
+   */
   isOnline: boolean;
 }
 
@@ -46,16 +51,25 @@ function publish(next: NetworkSnapshot): void {
 }
 
 function applyState(state: Network.NetworkState): void {
-  const isConnected = Boolean(state.isConnected);
-  // `isInternetReachable` bazı cihazlarda `undefined` döner; bağlantı varsa
-  // "erişilebilir" kabul edilir, aksi halde internet olmadan istek atılmaz.
-  const isInternetReachable =
-    state.isInternetReachable === undefined ? isConnected : Boolean(state.isInternetReachable);
-  publish({
-    isConnected,
-    isInternetReachable,
-    isOnline: isConnected && isInternetReachable,
-  });
+  /*
+   * BAĞLANTI ÖLÇÜTÜ (önemli):
+   *
+   * Android'de `isInternetReachable` yalnızca ağ `NET_CAPABILITY_VALIDATED`
+   * taşıyorsa true olur — yani cihaz Google'ın doğrulama sunucusuna ulaşabilmiş
+   * olmalı. Kurumsal/mobil ağlarda DNS filtresi, VPN, captive portal ya da
+   * doğrulama sunucusunun engellenmesi bu bayrağı `false` bırakırken internet
+   * sorunsuz çalışabiliyor. Bu bayrağı "çevrimdışı" saymak, ağ varken söz
+   * aramasını kilitleyip kullanıcıyı önbelleğe mahkûm ediyordu.
+   *
+   * Karar mantığı `resolveConnectionState` içinde (saf, doğrulanabilir).
+   */
+  publish(
+    resolveConnectionState({
+      type: state.type,
+      isConnected: state.isConnected,
+      isInternetReachable: state.isInternetReachable,
+    })
+  );
 }
 
 /** Ağ durumunu hemen sorgular ve önbelleğe alınmış anlık görüntüyü döndürür. */
