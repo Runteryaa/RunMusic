@@ -10,7 +10,7 @@
  *   node .tmp-verify/scripts/verify-lyrics-search.js
  */
 
-import { searchLyricsCache } from '../src/services/lyricsSearch';
+import { searchLyricsCache, searchCachedLyricsCandidates } from '../src/services/lyricsSearch';
 import type { LyricsCacheEntry } from '../src/services/persistSanitize';
 
 let failures = 0;
@@ -148,6 +148,31 @@ check(
   (hugeHits[0]?.details.length ?? 0) <= 600,
   String(hugeHits[0]?.details.length)
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+section('9) Çevrimdışı arama — önbellekteki sözlerden aday üretimi');
+
+const offlineByName = searchCachedLyricsCandidates(cache, 'parça');
+check('parça adıyla eşleşir', offlineByName.length === 1, String(offlineByName.length));
+check(
+  'adayda tam söz sonucu taşınır',
+  offlineByName[0]?.result.plainLyrics === LYRICS
+);
+check(
+  'aday kimliği önbellek kaydını işaretler',
+  offlineByName[0]?.candidate.id.startsWith('cache:'),
+  offlineByName[0]?.candidate.id
+);
+
+const offlineByText = searchCachedLyricsCandidates(cache, 'aradığım');
+check('söz satırıyla eşleşir', offlineByText.length === 1, String(offlineByText.length));
+
+const offlineRef = searchCachedLyricsCandidates(refCache, 'aradığım');
+check('ref kaydı çözülerek eşleşir', offlineRef.length === 1, String(offlineRef.length));
+
+check('eşleşmeyen sorgu boş döner', searchCachedLyricsCandidates(cache, 'zzzz').length === 0);
+check('tek karakterli sorgu aramaz', searchCachedLyricsCandidates(cache, 'a').length === 0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -77,6 +77,7 @@ import {
   type LyricDisplayRow,
 } from '../services/lyricsService';
 import { cleanArtistName } from '../services/displayNames';
+import { searchCachedLyricsCandidates } from '../services/lyricsSearch';
 import { saveLastPlayback, updateQueueSnapshotActiveIndex } from '../services/playbackStorage';
 import {
   buildQueueRows,
@@ -227,16 +228,20 @@ function formatTime(secs: number): string {
  * eski satırın bir süre daha parlak kalmasına ve yeni satırın geç geldiği
  * izlenimine yol açıyordu. Aktifleşme kısa, pasifleşme biraz daha uzun.
  */
-const LYRIC_SETTLE_ACTIVE_MS = 200;
-const LYRIC_SETTLE_INACTIVE_MS = 340;
+const LYRIC_SETTLE_ACTIVE_MS = 160;
+const LYRIC_SETTLE_INACTIVE_MS = 320;
 /** Kaydırma, satır gelmeden bu kadar önce başlar. */
 const LYRIC_SCROLL_LEAD_SECONDS = 0.8;
 /**
  * Satır geçişi, konum örneklerinin aralığından dolayı gecikebiliyordu; bu da
  * yeni satırın ilk hecelerinin bir anda yanmasına yol açıyordu. Örnekleme
  * aralığını (200 ms) telafi edecek kadar ön alma ile satır tam zamanında geçer.
+ *
+ * 0.2 saniye hâlâ geç kalıyordu: konumun ses motorundan alınıp JS'e ulaşması
+ * ve React'in satırı yeniden çizmesi ek gecikme ekliyor. 0.3 saniye bu
+ * gecikmeyi kapatır; satır artık şarkı söylenmeye başlarken parlıyor.
  */
-const LYRIC_LINE_LEAD_SECONDS = 0.2;
+const LYRIC_LINE_LEAD_SECONDS = 0.3;
 /**
  * Süpürme saatinin ön alması. Konum saniyede 5 kez geldiği için saat, örnek
  * anından bir sonraki örneğe kadar ilerletilir; hedef budur (saniye).
@@ -320,7 +325,7 @@ const LYRIC_BG_GLOW_SHADOW_RADIUS = 10;
  * yansıyordu; harfler sesin bir tık gerisinden yanıyordu. Bu sabit saati
  * örneklenen konumun bu kadar önüne taşır ve farkı kapatır.
  */
-const LYRIC_CLOCK_LEAD = 0.14;
+const LYRIC_CLOCK_LEAD = 0.22;
 /**
  * 0→1 arası yumuşak geçiş (smoothstep). Lineer rampalar (harf yanması, kelime
  * kalkışı) sert görünüyordu; bu eğri başta ve sonda hızı sıfıra indirir.
@@ -2042,6 +2047,7 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
   const isAppActive = useIsAppActive();
+  const isOnline = useIsOnline();
   const {
     isFullscreenPlayerOpen,
     closeFullscreenPlayer,
@@ -2411,6 +2417,14 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
   const [isManualSearchOpen, setIsManualSearchOpen] = useState(false);
   const [manualQuery, setManualQuery] = useState('');
   const [candidatesList, setCandidatesList] = useState<LyricsCandidate[]>([]);
+  /**
+   * Çevrimdışı aramada önbellekten çözülen tam söz sonuçları.
+   *
+   * Aday listesi yalnızca kimlik/başlık taşıdığı için seçim anında ağa
+   * çıkılmaması adına gerçek `LyricsResult` burada eşlenir. Kalıcı store'a
+   * yazılmaz; modal kapandığında bellekten düşer.
+   */
+  const [offlineCandidates, setOfflineCandidates] = useState<Record<string, LyricsResult>>({});
   const [isSearchingCandidates, setIsSearchingCandidates] = useState(false);
   const [resolvingCandidateId, setResolvingCandidateId] = useState<string | null>(null);
   const [candidateFilter, setCandidateFilter] = useState<CandidateFilter>('all');
@@ -3842,8 +3856,33 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     autoFetchLyrics,
   ]);
 
+  /**
+   * Çevrimdışı arama: ağa çıkmadan yalnızca indirilmiş sözlerde arar.
+   * Sonuçlar seçim anında yeniden ağ isteği üretmesin diye tam söz kayıtları
+   * `offlineCandidates` eşlemesinde tutulur.
+   */
+  const applyOfflineCandidates = (query: string) => {
+    const matches = searchCachedLyricsCandidates(lyricsCache, query);
+    const byId: Record<string, LyricsResult> = {};
+    for (const match of matches) {
+      byId[match.candidate.id] = match.result;
+    }
+    setOfflineCandidates(byId);
+    setCandidatesList(matches.map((match) => match.candidate));
+    if (matches.length === 0) {
+      alert(t('player.offline_no_cached_results'));
+    }
+  };
+
   const handleManualSearch = async () => {
     if (!manualQuery.trim() || !activeTrack) return;
+
+    if (!isNetworkAvailable()) {
+      applyOfflineCandidates(manualQuery.trim());
+      return;
+    }
+
+    setOfflineCandidates({});
     setIsSearchingCandidates(true);
     try {
       const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
@@ -3870,9 +3909,15 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
       return;
     }
     if (!localActiveTrack) return;
+    const offlineResult = offlineCandidates[candidate.id];
+    if (!offlineResult && !isNetworkAvailable()) {
+      alert(t('player.offline_lyrics'));
+      return;
+    }
     setResolvingCandidateId(candidate.id);
     try {
-      const resolved = await resolveCandidateToLyricsResult(candidate, candidatesList);
+      const resolved =
+        offlineResult ?? (await resolveCandidateToLyricsResult(candidate, candidatesList));
       if (!resolved) {
         // Kaynak erişilemezse eskiden hiçbir şey olmuyordu; kullanıcı
         // "yükleniyor" görüp sonuçsuz kalıyordu.
@@ -3912,6 +3957,11 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
     setIsManualSearchOpen(nextState);
     if (nextState) {
       const searchArtist = displayArtist !== 'Bilinmeyen Sanatçı' ? displayArtist : '';
+      if (!isNetworkAvailable()) {
+        applyOfflineCandidates(manualQuery.trim() || displayTitle);
+        return;
+      }
+      setOfflineCandidates({});
       if (currentLyrics?.candidates && currentLyrics.candidates.length > 0) {
         setCandidatesList(currentLyrics.candidates);
       } else if (!player.isRemote && localActiveTrack) {
@@ -5930,6 +5980,19 @@ function FullscreenPlayerModalImpl({ expandAnim }: { expandAnim?: Animated.Value
                 </TouchableOpacity>
               </View>
 
+              {!isOnline ? (
+                <View
+                  style={[
+                    styles.offlineSearchBanner,
+                    { borderColor: '#f59e0b55', backgroundColor: '#f59e0b1a' },
+                  ]}>
+                  <Ionicons name="cloud-offline-outline" size={15} color="#f59e0b" />
+                  <Text style={styles.offlineSearchBannerText}>
+                    {t('player.offline_search_banner')}
+                  </Text>
+                </View>
+              ) : null}
+
               <View style={styles.searchModalInputRow}>
                 <TextInput
                   style={styles.searchModalInput}
@@ -7184,6 +7247,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 16,
+  },
+  offlineSearchBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 12,
+  },
+  offlineSearchBannerText: {
+    flex: 1,
+    color: '#fbbf24',
+    fontSize: 12,
+    lineHeight: 16,
   },
   searchModalInput: {
     flex: 1,

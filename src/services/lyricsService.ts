@@ -1239,8 +1239,6 @@ export function normalizeLyricsSourcePreference(
 const LYRICS_STRONG_MATCH = 0.72;
 /** Bunun altındaki eşleşme "şüpheli" sayılır (ör. sanatçı hiç tutmuyor). */
 const LYRICS_WEAK_MATCH = 0.5;
-/** Neredeyse birebir eşleşme; zayıf sonucu her durumda geçer. */
-const LYRICS_EXACT_MATCH = 0.9;
 /** İki kaynak arasında bu kadar fark varsa daha iyi eşleşen kazanır. */
 const LYRICS_MATCH_MARGIN = 0.18;
 
@@ -1349,19 +1347,108 @@ async function resolveLrcRedCandidate(
   return plainResult ? { ...plainResult, candidates: allCandidates } : null;
 }
 
+/** Bir lrc.red adayı ve arşiv üst verisi. */
+interface LrcRedEntry {
+  hit: LrcRedHit;
+  score: number;
+  info: LrcRedInfo | null;
+}
+
+/** Sonuç hece (kelime) zamanlaması taşıyor mu? */
+function hasWordTiming(result: LyricsResult): boolean {
+  if (result.hasWordSync) return true;
+  return (
+    Array.isArray(result.parsedLines) &&
+    result.parsedLines.some((line) => !!line.words && line.words.length > 0)
+  );
+}
+
 /**
- * lrc.red ve LRCLIB'i paralel sorgular, tercihe göre en iyisini seçer.
+ * Söz sonucunun kalite kademesi (küçük = daha iyi).
  *
- * lrc.red'in TTML'i hece zamanlaması taşıdığı için güçlü eşleşmede önceliklidir;
- * ancak yanlış sürüme (live/remix) düşmemek için arama sonucu yeniden
- * puanlanır ve LRCLIB belirgin biçimde daha iyi eşleşiyorsa o kullanılır.
+ * Sabit sıra:
+ * 1. lrc.red hece senkronu
+ * 2. LRCLIB hece senkronu
+ * 3. lrc.red satır senkronu
+ * 4. LRCLIB satır senkronu
+ * 5. Genius düz metin
+ * 6. lrc.red düz metin
+ * 7. LRCLIB düz metin
+ *
+ * Aynı kademedeki iki sonuç eşleşme puanıyla ayrılır. Kaynak tercihi yalnızca
+ * lrc.red ↔ LRCLIB ikililerinin sırasını çevirebilir; Genius her zaman düz
+ * metinlerin en üstünde kalır, çünkü bölüm başlıkları ve satır düzeni daha
+ * okunaklıdır. `genius_first` ayrı ele alınır: yalnızca güçlü bir Genius
+ * eşleşmesi sıralamayı geçersiz kılar.
  */
-async function searchSyncedSources(
+function lyricsQualityRank(result: LyricsResult, lrclibFirst: boolean): number {
+  const isLrcRed = result.source === 'lrc.red';
+  const isLrclib = result.source === 'lrclib';
+
+  if (hasWordTiming(result)) {
+    if (isLrcRed) return lrclibFirst ? 2 : 1;
+    if (isLrclib) return lrclibFirst ? 1 : 2;
+    return 3;
+  }
+  if (hasTimedLyrics(result)) {
+    if (isLrcRed) return lrclibFirst ? 4 : 3;
+    if (isLrclib) return lrclibFirst ? 3 : 4;
+    return 4;
+  }
+  if (result.source === 'genius') return 5;
+  if (isLrcRed) return lrclibFirst ? 7 : 6;
+  if (isLrclib) return lrclibFirst ? 6 : 7;
+  return 5;
+}
+
+/** Kademe sırasına göre en iyi sonucu seçer; eşitlikte puan kazanır. */
+function pickBestRanked(
+  results: ResolvedLyrics[],
+  lrclibFirst: boolean
+): ResolvedLyrics | null {
+  let best: ResolvedLyrics | null = null;
+  let bestRank = Infinity;
+  for (const candidate of results) {
+    const rank = lyricsQualityRank(candidate.result, lrclibFirst);
+    if (rank < bestRank || (rank === bestRank && best !== null && candidate.score > best.score)) {
+      best = candidate;
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
+/** lrc.red adayından zamanlı (TTML) sonuç üretir; belge yoksa null. */
+async function loadLrcRedTimed(entry: LrcRedEntry): Promise<ResolvedLyrics | null> {
+  const ttml = await fetchLrcRedTtml(entry.hit.isrc);
+  if (!ttml) return null;
+  const result = buildLrcRedResult(entry.hit, ttml);
+  return result ? { result, score: entry.score } : null;
+}
+
+/** lrc.red adayından düz metin sonucu üretir. */
+async function loadLrcRedPlain(entry: LrcRedEntry): Promise<ResolvedLyrics | null> {
+  const plain = await fetchLrcRedPlainLyrics(entry.hit.isrc);
+  if (!plain) return null;
+  const result = buildLrcRedPlainResult(entry.hit, plain);
+  return result ? { result, score: entry.score } : null;
+}
+
+/**
+ * 7 kademeli sabit hiyerarşiyle çevrimiçi söz seçer.
+ *
+ * lrc.red araması ile LRCLIB araması paralel yürür; lrc.red adaylarının üst
+ * verisi de paralel okunur. Zamanlı bir sonuç bulunduğu anda düz metin
+ * kaynaklarına hiç inilmez — böylece senkron söz varken düz metne düşülmez.
+ */
+async function fetchByQualityOrder(
   title: string,
   artist: string,
   preference: LyricsSourcePreference,
   duration?: number
 ): Promise<ResolvedLyrics | null> {
+  const lrclibFirst = preference === 'lrclib_first';
+
   const [lrcHits, lrclibRes] = await Promise.all([
     searchLrcRed(title, artist, { duration }).catch(() => [] as LrcRedHit[]),
     searchLrclib(title, artist).catch(() => null),
@@ -1371,54 +1458,111 @@ async function searchSyncedSources(
     ? { result: lrclibRes, score: scoreLyricsResult(lrclibRes, title, artist) }
     : null;
 
-  // LRCLIB zaten çok iyi eşleşiyorsa ve kullanıcı onu öne aldıysa lrc.red'in
-  // TTML'ini indirmeye gerek yok.
-  if (preference === 'lrclib_first' && lrclibChoice && lrclibChoice.score >= LYRICS_STRONG_MATCH) {
+  // Kullanıcı LRCLIB'i öne aldıysa ve LRCLIB zaten hece senkronu veriyorsa
+  // sıranın en üstü odur: lrc.red TTML'ini indirmeye gerek yok.
+  if (lrclibFirst && lrclibChoice && hasWordTiming(lrclibChoice.result)) {
     return lrclibChoice;
   }
 
-  let lrcChoice: ResolvedLyrics | null = null;
   const rankedHits = lrcHits
     .map((hit) => ({ hit, score: scoreLrcRedHit(hit, title, artist, duration) }))
     .filter((entry) => entry.score >= LYRICS_WEAK_MATCH)
+    .sort((a, b) => b.score - a.score)
     .slice(0, 3);
 
-  // Arşivde zamanlaması olmayan (`sync: none`) belgeler de var; onları
-  // indirmeden atlamak hem boşa trafiği hem de "söz var ama görünmüyor"
-  // durumunu önler.
+  // `sync: none` belgelerinde TTML indirmek boşa trafiktir; düz metin
+  // kademesine kadar onları bekletiyoruz.
   const hitInfos = await Promise.allSettled(
     rankedHits.map((entry) => fetchLrcRedInfo(entry.hit.isrc))
   );
+  const entries: LrcRedEntry[] = rankedHits.map((entry, index) => {
+    const settled = hitInfos[index];
+    return {
+      ...entry,
+      info: settled && settled.status === 'fulfilled' ? settled.value : null,
+    };
+  });
 
-  for (let index = 0; index < rankedHits.length; index++) {
-    const entry = rankedHits[index];
-    const settledInfo = hitInfos[index];
-    const info = settledInfo && settledInfo.status === 'fulfilled' ? settledInfo.value : null;
-    if (info?.sync === 'none') continue;
+  const timedEntries = entries.filter((entry) => entry.info?.sync !== 'none');
+  const timed: ResolvedLyrics[] = [];
 
-    const ttml = await fetchLrcRedTtml(entry.hit.isrc);
-    if (!ttml) continue;
-    const result = buildLrcRedResult(entry.hit, ttml);
-    if (!result) continue;
-    lrcChoice = { result, score: entry.score };
-    break;
+  // Hece/satır senkronu bilinen adaylar önce denenir. Üst veri alınamayan
+  // adaylarda TTML indirilip sonucun kendisinden sınıflandırılır; ilk zamanlı
+  // sonuç bulununca kalanlar indirilmez (boşa trafik yok).
+  const knownWord = timedEntries.filter((entry) => entry.info?.sync === 'word');
+  const unknown = timedEntries.filter(
+    (entry) => !entry.info || entry.info.sync === 'unknown'
+  );
+  const knownLine = timedEntries.filter((entry) => entry.info?.sync === 'line');
+
+  async function firstTimed(candidates: LrcRedEntry[]): Promise<ResolvedLyrics | null> {
+    for (const entry of candidates) {
+      const resolved = await loadLrcRedTimed(entry);
+      if (resolved) return resolved;
+    }
+    return null;
   }
 
-  if (!lrcChoice) return lrclibChoice;
-  if (!lrclibChoice) return lrcChoice;
+  const knownWordResult = await firstTimed(knownWord);
+  if (knownWordResult) timed.push(knownWordResult);
 
-  const preferred = preference === 'lrclib_first' ? lrclibChoice : lrcChoice;
-  const other = preferred === lrcChoice ? lrclibChoice : lrcChoice;
-  if (other.score >= preferred.score + LYRICS_MATCH_MARGIN) return other;
-  return preferred;
+  if (timed.length === 0) {
+    let fallbackLine: ResolvedLyrics | null = null;
+    for (const entry of unknown) {
+      const resolved = await loadLrcRedTimed(entry);
+      if (!resolved) continue;
+      if (hasWordTiming(resolved.result)) {
+        timed.push(resolved);
+        break;
+      }
+      if (!fallbackLine) fallbackLine = resolved;
+    }
+    if (timed.length === 0 && fallbackLine) timed.push(fallbackLine);
+  }
+
+  if (timed.length === 0) {
+    const knownLineResult = await firstTimed(knownLine);
+    if (knownLineResult) timed.push(knownLineResult);
+  }
+
+  if (lrclibChoice && hasTimedLyrics(lrclibChoice.result)) timed.push(lrclibChoice);
+
+  const timedBest = pickBestRanked(timed, lrclibFirst);
+  if (timedBest) return timedBest;
+
+  // Zamanlı sonuç yok: Genius düz metni → lrc.red düz → LRCLIB düz.
+  const plain: ResolvedLyrics[] = [];
+  let geniusCandidate: ResolvedLyrics | null = null;
+
+  const geniusRes = await searchGenius(title, artist);
+  if (geniusRes) {
+    geniusCandidate = {
+      result: geniusRes,
+      score: scoreLyricsResult(geniusRes, title, artist),
+    };
+    if (geniusCandidate.score >= LYRICS_WEAK_MATCH) plain.push(geniusCandidate);
+  }
+
+  const plainSettled = await Promise.allSettled(entries.map((entry) => loadLrcRedPlain(entry)));
+  for (const settled of plainSettled) {
+    if (settled.status === 'fulfilled' && settled.value) plain.push(settled.value);
+  }
+
+  if (lrclibChoice) plain.push(lrclibChoice);
+
+  const plainBest = pickBestRanked(plain, lrclibFirst);
+  if (plainBest) return plainBest;
+
+  // Eşik altı sonuçlarla kullanıcıyı sözsüz bırakma: en iyi çabayı döndür.
+  return geniusCandidate ?? lrclibChoice ?? null;
 }
 
 /**
  * Çevrimiçi söz arar.
  *
- * Varsayılan sıra lrc.red → LRCLIB → Genius'tur. lrc.red ve LRCLIB paralel
- * sorgulanır (lrc.red yavaşsa bekleme hissedilmesin); güçlü eşleşme varsa
- * diğer kaynaklar hiç sorulmaz. Zayıf eşleşmede Genius son çare olarak denenir.
+ * Varsayılan sıra: lrc.red hece → LRCLIB hece → lrc.red satır → LRCLIB satır
+ * → Genius düz → lrc.red düz → LRCLIB düz. `genius_first` seçiliyse güçlü bir
+ * Genius eşleşmesi bu sıranın önüne geçer; aksi hâlde yine hiyerarşi uygulanır.
  */
 export async function fetchLyricsOnline(
   title: string,
@@ -1431,43 +1575,15 @@ export async function fetchLyricsOnline(
     const geniusScore = geniusRes ? scoreLyricsResult(geniusRes, title, artist) : -1;
     if (geniusRes && geniusScore >= LYRICS_STRONG_MATCH) return geniusRes;
 
-    const synced = await searchSyncedSources(title, artist, preference, duration);
-    if (synced && (!geniusRes || synced.score >= geniusScore + LYRICS_MATCH_MARGIN)) {
-      return synced.result;
+    const fallback = await fetchByQualityOrder(title, artist, 'lrc_red_first', duration);
+    if (fallback && (!geniusRes || fallback.score >= geniusScore + LYRICS_MATCH_MARGIN)) {
+      return fallback.result;
     }
-    return geniusRes ?? synced?.result ?? null;
+    return geniusRes ?? fallback?.result ?? null;
   }
 
-  const synced = await searchSyncedSources(title, artist, preference, duration);
-  const syncedHasTiming = !!synced && hasTimedLyrics(synced.result);
-  if (synced && syncedHasTiming && synced.score >= LYRICS_STRONG_MATCH) return synced.result;
-
-  // Senkron kaynaklar zayıf/boş: Genius düz metni son çare.
-  const geniusRes = await searchGenius(title, artist);
-  if (geniusRes) {
-    const geniusScore = scoreLyricsResult(geniusRes, title, artist);
-
-    /*
-     * Düz metin sözlerde varsayılan kaynak Genius'tur.
-     *
-     * LRCLIB bazen yalnızca zamanlamasız metin döndürüyor; bu durumda
-     * zamanlaması olmayan bir sonuç için iki kaynağı karşılaştırmanın anlamı
-     * yok. Genius'un düz metin kalitesi daha yüksek olduğu için (bölüm
-     * başlıkları, satır düzeni) eşleşme makul olduğu sürece Genius kullanılır.
-     */
-    if (synced && !syncedHasTiming) {
-      if (!geniusRes || geniusScore >= LYRICS_WEAK_MATCH) return geniusRes;
-      return synced.result;
-    }
-
-    if (!synced) return geniusRes;
-    const clearlyBetter = geniusScore >= synced.score + LYRICS_MATCH_MARGIN;
-    if (clearlyBetter && (synced.score < LYRICS_WEAK_MATCH || geniusScore >= LYRICS_EXACT_MATCH)) {
-      return geniusRes;
-    }
-  }
-
-  return synced?.result ?? geniusRes ?? null;
+  const chosen = await fetchByQualityOrder(title, artist, preference, duration);
+  return chosen?.result ?? null;
 }
 
 /**

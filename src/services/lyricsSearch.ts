@@ -1,5 +1,5 @@
 import type { LyricsCacheEntry } from './persistSanitize';
-import type { LyricsResult } from './lyricsTypes';
+import type { LyricsCandidate, LyricsResult } from './lyricsTypes';
 import { normalizeSearchText } from './searchUtils';
 
 /**
@@ -156,4 +156,97 @@ export function searchLyricsCache(
   }
 
   return hits;
+}
+
+/** Çevrimdışı aramada seçilebilir, önbellekten çözülmüş bir söz sonucu. */
+export interface CachedLyricsCandidate {
+  candidate: LyricsCandidate;
+  result: LyricsResult;
+}
+
+/** Önbellekteki bir kayıt zamanlı (senkron) söz taşıyor mu? */
+function entryHasTiming(result: LyricsResult): boolean {
+  if (result.syncedLyrics && result.syncedLyrics.trim()) return true;
+  if (result.lyricsfile && result.lyricsfile.trim()) return true;
+  if (result.ttml && result.ttml.trim()) return true;
+  return Array.isArray(result.parsedLines) && result.parsedLines.length > 0;
+}
+
+/** Önbellekteki bir kayıt hece (kelime) senkronu taşıyor mu? */
+function entryHasWordTiming(result: LyricsResult): boolean {
+  if (result.hasWordSync) return true;
+  return (
+    Array.isArray(result.parsedLines) &&
+    result.parsedLines.some((line) => !!line.words && line.words.length > 0)
+  );
+}
+
+/**
+ * Kayıtlı (önbellekteki) sözler arasında arama yapar.
+ *
+ * Çevrimdışıyken manuel söz araması ağa hiç çıkmaz; bunun yerine daha önce
+ * indirilmiş sözler taranır. Sorgu önce parça/sanatçı adında, bulunamazsa söz
+ * satırlarının içinde aranır. Dönen kayıtlar doğrudan seçilebilir: seçim
+ * sırasında ağ isteği üretilmez.
+ */
+export function searchCachedLyricsCandidates(
+  cache: Record<string, LyricsCacheEntry>,
+  query: string,
+  limit = 20
+): CachedLyricsCandidate[] {
+  const normalizedQuery = normalizeSearchText(query);
+  if (normalizedQuery.length < 2) return [];
+  const terms = normalizedQuery.split(' ').filter(Boolean);
+
+  const seen = new Set<string>();
+  const seenResults = new Set<string>();
+  const nameMatches: CachedLyricsCandidate[] = [];
+  const textMatches: CachedLyricsCandidate[] = [];
+
+  for (const key of Object.keys(cache)) {
+    const resolved = resolveEntry(cache, key);
+    if (!resolved) continue;
+    const { entry: result, canonicalKey } = resolved;
+    if (seen.has(canonicalKey)) continue;
+    seen.add(canonicalKey);
+
+    // Aynı söz birden çok anahtarla (id, url, arama anahtarı) kopyalanmış
+    // olabilir; sonuç kimliği/parça adı üzerinden tekrarı engelle.
+    const signature =
+      result.id || `${result.trackName || ''}|${result.artistName || ''}`;
+    if (seenResults.has(signature)) continue;
+    seenResults.add(signature);
+
+    const nameText = normalizeSearchText(
+      `${result.trackName || ''} ${result.artistName || ''}`
+    );
+    const matchesName = terms.every((term) => nameText.includes(term));
+    let matchesText = false;
+    if (!matchesName) {
+      matchesText = lyricsLines(result).some((line) => {
+        const normalizedLine = normalizeSearchText(line);
+        return terms.every((term) => normalizedLine.includes(term));
+      });
+    }
+    if (!matchesName && !matchesText) continue;
+
+    const source: LyricsCandidate['source'] =
+      result.source === 'custom' ? 'genius' : result.source;
+    const candidate: LyricsCandidate = {
+      id: `cache:${canonicalKey}`,
+      trackName: result.trackName || '',
+      artistName: result.artistName || '',
+      hasSynced: entryHasTiming(result),
+      hasWordSync: entryHasWordTiming(result),
+      syncedLyrics: result.syncedLyrics ?? null,
+      plainLyrics: result.plainLyrics ?? null,
+      lyricsfile: result.lyricsfile ?? null,
+      source,
+    };
+
+    (matchesName ? nameMatches : textMatches).push({ candidate, result });
+  }
+
+  // Ada göre eşleşenler daha alakalı; söz metninde bulunanlar onların ardına.
+  return [...nameMatches, ...textMatches].slice(0, limit);
 }

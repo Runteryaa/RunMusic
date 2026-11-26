@@ -90,6 +90,19 @@ const lrclibPlainHit = {
   hasWordSync: false,
 };
 
+/** LRCLIB'in hece (kelime) senkronlu sonucu. */
+const lrclibWordHit = {
+  id: 3,
+  trackName: 'Song',
+  artistName: 'Artist',
+  albumName: 'Album',
+  duration: 200,
+  syncedLyrics: '[00:01.00] hello world',
+  plainLyrics: 'hello world',
+  lyricsfile: null,
+  hasWordSync: true,
+};
+
 const lrcStudioHit = {
   isrc: STUDIO_ISRC,
   title: 'Song',
@@ -239,10 +252,20 @@ async function main(): Promise<void> {
     check('Genius son çare olarak çağrıldı', touched('genius.com'));
   }
 
-  section('5) lrclib_first — güçlü LRCLIB eşleşmesinde TTML indirilmez');
+  section('5) Varsayılan sırada lrc.red hece senkronu LRCLIB hecesinin önünde');
 
   {
-    reset({ lrc: [lrcStudioHit], lrclib: [lrclibHit] });
+    reset({ lrc: [lrcStudioHit], lrclib: [lrclibWordHit] });
+    const res = await fetchLyricsOnline('Song', 'Artist', undefined, 200);
+    check('sonuç lrc.red kaynaklı', res?.source === 'lrc.red', String(res?.source));
+    check('lrc.red TTML indirildi', ttmlDownloads().length === 1, calls.join(' | '));
+    check('Genius çağrılmadı', !touched('genius.com'), calls.join(' | '));
+  }
+
+  section('5b) lrclib_first — LRCLIB hece senkronu öne geçer, TTML indirilmez');
+
+  {
+    reset({ lrc: [lrcStudioHit], lrclib: [lrclibWordHit] });
     const res = await fetchLyricsOnline('Song', 'Artist', 'lrclib_first', 200);
     check('sonuç LRCLIB kaynaklı', res?.source === 'lrclib', String(res?.source));
     check('TTML indirilmedi', ttmlDownloads().length === 0, calls.join(' | '));
